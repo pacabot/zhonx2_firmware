@@ -26,16 +26,27 @@ static uint32_t now,deadline;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
+static unsigned char saved_snapshot[2048];
+static size_t saved_size;
+static uint32_t saved_schema,applied_pitch;
+static int save_failure;
 unsigned long hal_os_get_systicks(void) { return now; }
 void NVIC_SystemReset(void) { assert(0); }
 int hal_ui_display_prompt(HAL_UI_HANDLE h,const char *title,const char *str)
 { (void)h; fprintf(stderr,"Unexpected prompt: %s %s\n",title,str); assert(0); return -1; }
 int fw_store_load(const fw_flash_t *f,uint32_t schema,void *data,size_t size)
-{ (void)f;(void)schema;(void)data;(void)size;return -1; }
+{
+    (void)f;
+    if (schema!=saved_schema || size!=saved_size) return -1;
+    memcpy(data,saved_snapshot,size); return 0;
+}
 int fw_store_save(const fw_flash_t *f,uint32_t schema,const void *data,size_t size)
 {
-    (void)f;(void)schema;(void)size;assert(!busy);++saves;
+    (void)f;assert(!busy);++saves;
     assert(nm_valid((const nm_map_t *)((const unsigned char *)data+sizeof(robot_settings))));
+    if (save_failure) return -1;
+    assert(size<=sizeof saved_snapshot); memcpy(saved_snapshot,data,size);
+    saved_schema=schema; saved_size=size;
     return 0;
 }
 int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
@@ -49,6 +60,8 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
     *s=(hal_sensor_snapshot){now,now/10+5,bits,bits}; return 1;
 }
 void fw_motion_init(void) { busy=stopped=wall_arrival=0; }
+void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
+{ applied_pitch=pitch;(void)front;(void)inner; }
 void fw_motion_stop(void) { busy=0; }
 int fw_motion_busy(void) { return busy; }
 int fw_motion_fault(void) { return stopped; }
@@ -104,7 +117,7 @@ static void scenario(int obstacle)
     for(unsigned c=0;c<NM_CELLS;++c) ground.cell[c]=(nm_cell_t){15,15,0,0};
     edge(0,NM_NORTH);edge(9,NM_NORTH);edge(18,NM_EAST);edge(19,NM_EAST);
     edge(20,NM_EAST);edge(20,NM_NORTH);edge(21,NM_NORTH);edge(29,NM_EAST);
-    now=moves=turns=wall_arrivals=draws=saves=ack=0;
+    now=moves=turns=wall_arrivals=draws=saves=ack=0; saved_size=0;
     busy=stopped=0; inject_obstacle=obstacle; last_status[0]=0;
     physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
@@ -121,4 +134,28 @@ static void scenario(int obstacle)
         assert(!strcmp(last_status,"OBSTACLE HORS CASE"));
     }
 }
-int main(void) { scenario(0);scenario(1);puts("navigation: early obstacle remains an explicit stop");return 0; }
+static void calibration_snapshot(void)
+{
+    fw_cal_data_t d={.valid=1,.repetitions=3,.geometry={40000,90000,167000,179000},
+      .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
+    assert(fw_cal_valid(&d));
+    fw_motion_init(); assert(!fw_app_calibration_commit(&d));
+    assert(saved_schema==3 && applied_pitch==179000);
+    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    fw_cal_data_t changed=d; changed.front[0].on_um=75000;
+    save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
+    assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    size_t legacy_size=saved_size-sizeof d;
+    unsigned char legacy[2048]; memcpy(legacy,saved_snapshot,legacy_size);
+    saved_schema=2; saved_size=legacy_size;
+    fw_app_init(); assert(!fw_cal_valid(fw_app_calibration()) && !applied_pitch);
+    assert(!fw_app_calibration_commit(&d));
+    assert(!memcmp(saved_snapshot,legacy,legacy_size));
+    puts("snapshot: calibration reboot, failed-save rollback, schema 2 migration retains settings and map");
+}
+int main(void)
+{
+    scenario(0);scenario(1);puts("navigation: early obstacle remains an explicit stop");
+    calibration_snapshot(); return 0;
+}

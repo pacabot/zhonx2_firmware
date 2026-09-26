@@ -16,13 +16,14 @@
 #include "hal/hal_step_motor.h"
 #include <stdio.h>
 #include <string.h>
-#define SNAPSHOT_SCHEMA 2
+#define SNAPSHOT_SCHEMA 3
 /* ARM ABI-specific snapshot. Change schema for any layout or settings ABI change. */
 typedef struct {
     robot_settings settings;
     nm_map_t map;
     uint32_t corner, heading, search_speed, run_speed, search_ms, has_map;
-} snapshot_t;
+} snapshot_v2_t;
+typedef struct { snapshot_v2_t base; fw_cal_data_t calibration; } snapshot_t;
 _Static_assert(sizeof(snapshot_t)%4==0,"snapshot alignment");
 static nm_map_t maze;
 static uint32_t search_ms, search_epoch, search_base;
@@ -34,6 +35,21 @@ static uint32_t search_used(uint32_t now)
     return elapsed>=NM_SEARCH_MS-base ? NM_SEARCH_MS : base+elapsed;
 }
 static int has_map;
+static fw_cal_data_t calibration;
+int fw_cal_nose_tenth_mm, fw_cal_width_tenth_mm;
+int fw_cal_inner_mm=167, fw_cal_pitch_mm=179;
+const fw_cal_data_t *fw_app_calibration(void) { return &calibration; }
+static void apply_calibration(void)
+{
+    if (fw_cal_valid(&calibration)) {
+        fw_cal_nose_tenth_mm=(int)calibration.geometry.nose_um/100;
+        fw_cal_width_tenth_mm=(int)calibration.geometry.width_um/100;
+        fw_cal_inner_mm=(int)calibration.geometry.inner_um/1000;
+        fw_cal_pitch_mm=(int)calibration.geometry.pitch_um/1000;
+        fw_motion_geometry(calibration.geometry.pitch_um,calibration.front[0].on_um,
+                           calibration.geometry.inner_um);
+    } else fw_motion_geometry(0,0,0);
+}
 static nm_pose_t displayed_pose;
 volatile unsigned fw_last_stop_code;
 int fw_start_corner=0, fw_start_heading=NM_NORTH, fw_search_speed=220, fw_run_speed=260;
@@ -51,9 +67,16 @@ static int settings_valid(const robot_settings *s)
 }
 static int load(void)
 {
-    snapshot_t s;
-    int legacy=fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,&s,sizeof s)!=0;
-    if ((legacy && fw_store_load(&fw_stm32_flash,1,&s,sizeof s)) || !nm_valid(&s.map) ||
+    snapshot_t current={0}; snapshot_v2_t s;
+    int legacy=0;
+    if (!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,&current,sizeof current)) {
+        if (current.calibration.valid && !fw_cal_valid(&current.calibration)) return -1;
+        s=current.base;
+    } else if (fw_store_load(&fw_stm32_flash,2,&s,sizeof s)) {
+        legacy=1;
+        if (fw_store_load(&fw_stm32_flash,1,&s,sizeof s)) return -1;
+    }
+    if (!nm_valid(&s.map) ||
         !settings_valid(&s.settings) || s.corner>3 || s.heading>3 || s.search_speed<20 ||
         s.search_speed>300 || s.run_speed<20 || s.run_speed>300 || s.has_map>1 ||
         s.search_ms>NM_SEARCH_MS) return -1;
@@ -62,20 +85,31 @@ static int load(void)
     fw_start_corner=s.corner; fw_start_heading=s.heading;
     fw_search_speed=legacy && s.search_speed==120 ? 220 : (int)s.search_speed;
     fw_run_speed=legacy && s.run_speed==200 ? 260 : (int)s.run_speed;
+    calibration=current.calibration; apply_calibration();
     return 0;
 }
-void fw_app_init(void) { nm_init(&maze); (void)load(); }
+void fw_app_init(void) { nm_init(&maze); memset(&calibration,0,sizeof calibration); apply_calibration(); (void)load(); }
 static int save(void)
 {
     if (fw_motion_busy() || !parameters_valid() || !settings_valid(&zhonxSettings)) return -1;
     search_ms=search_used(hal_os_get_systicks());
     snapshot_t s; memset(&s,0,sizeof s);
-    s.settings=zhonxSettings; s.map=maze; s.has_map=has_map; s.search_ms=search_ms;
-    s.corner=fw_start_corner; s.heading=fw_start_heading;
-    s.search_speed=fw_search_speed; s.run_speed=fw_run_speed;
+    s.base.settings=zhonxSettings; s.base.map=maze; s.base.has_map=has_map; s.base.search_ms=search_ms;
+    s.base.corner=fw_start_corner; s.base.heading=fw_start_heading;
+    s.base.search_speed=fw_search_speed; s.base.run_speed=fw_run_speed;
+    s.calibration=calibration;
     /* Single-bank flash stalls instruction fetch. Never save while motors move. */
     fw_motion_stop();
     return fw_store_save(&fw_stm32_flash,SNAPSHOT_SCHEMA,&s,sizeof s);
+}
+int fw_app_calibration_commit(const fw_cal_data_t *data)
+{
+    if (!fw_cal_valid(data) || fw_motion_busy()) return -1;
+    fw_cal_data_t previous=calibration; calibration=*data;
+    int result=save();
+    if (result) calibration=previous;
+    apply_calibration();
+    return result;
 }
 int fw_app_save(void)
 {

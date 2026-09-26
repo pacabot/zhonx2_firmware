@@ -8,6 +8,12 @@ int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
 int fw_motion_straight_to(unsigned cells, unsigned speed_mm_s, int allow_front_wall);
 int fw_motion_wall_arrival(void);
 int fw_motion_turn(int clockwise_degrees);
+/* Deliberate contact/sensing moves: bounded, slow, no wall steering or F5 stop.
+ * Only the calibration menu may use these; stale sensors still stop the robot. */
+int fw_motion_calibration_move(int32_t distance_um, unsigned speed_mm_s);
+int fw_motion_calibration_turn(int clockwise_degrees);
+int32_t fw_motion_travelled_um(void);
+void fw_motion_geometry(uint32_t pitch_um, uint32_t front_on_um, uint32_t inner_um);
 void fw_motion_tick(uint32_t now_ms);
 void fw_motion_stop(void);
 int fw_motion_busy(void);

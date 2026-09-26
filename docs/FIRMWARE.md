@@ -342,3 +342,84 @@ Session locale : `backups/flash-sessions/20260926T174234Z-6HY8FN/`.
 Après redémarrage : VTOR `0x08010000`, CFSR/HFSR nuls, moteurs désactivés,
 ticks et séquence capteurs progressant. Ces contrôles au repos ne valident pas
 encore les déplacements, le départ à la main ni l'exploration sur le terrain.
+
+## Calibration des capteurs binaires dans une case à trois murs
+
+Menu `prameters` → `Calibration IR` : `Lancer calibration`, `Rapport memorise`,
+`Axe-avant x0.1mm`, `Largeur x0.1mm`, `Interieur mm`, `Pas cellule mm`.
+La procédure démarre uniquement après l'action `DROITE: LANCER` ; Retour arrête
+les moteurs pendant toute la mesure. Elle n'est jamais lancée au démarrage.
+
+Avant le premier essai, renseigner la distance de l'axe des roues au point avant
+qui touche le mur et la largeur hors tout, roues comprises. Ces deux dimensions
+restent à zéro tant qu'elles ne sont pas connues : la calibration refuse alors
+le départ. Le calcul d'encombrement suppose le robot centré sur l'axe des roues,
+avec le même encombrement devant et derrière. Il vérifie le rayon balayé par ce
+rectangle avec 2 mm de marge avant d'autoriser les positions de mesure latérales.
+Les valeurs 167 mm entre faces et 179 mm entre axes de murs sont préremplies,
+modifiables au menu. Le centre est donc à 83,5 mm d'une face de mur, pas à 89,5 mm.
+
+Placer le robot approximativement au centre, face au mur du fond, avec un mur à
+gauche et à droite et l'ouverture derrière ; laisser 10 cm libres derrière la case
+pour les reculs de mesure. Les trois capteurs 10 cm doivent détecter leurs murs.
+La première rotation suppose également cet espace latéral de départ : les
+capteurs binaires seuls ne peuvent pas certifier une position précise au départ.
+
+La séquence automatique est la suivante :
+
+1. Appui frontal à 20 mm/s. Le premier appui de chaque axe couvre au maximum
+   `largeur intérieure − 2 × axe-avant + 5 mm` de course moteur ; cela peut
+   commander plusieurs secondes de pas après le contact. Une fois la référence
+   établie, les appuis suivants ajoutent seulement 5 mm à la course attendue.
+2. Trois reculs/avances à 10 mm/s, depuis l'appui jusqu'à une distance axe-mur
+   égale à la largeur intérieure. Les transitions F5 et F10 sont confirmées sur
+   trois acquisitions brutes consécutives ; la position du premier échantillon
+   est retenue pour limiter le biais du filtrage. Les moyennes de déclenchement,
+   relâchement, hystérésis et dispersion sont calculées séparément.
+3. Recul au centre, rotation de 90°, appui sur le mur perpendiculaire et recul
+   de `largeur intérieure / 2 − axe-avant`. Pour mesurer le capteur gauche, le
+   robot se tourne vers le mur droit ; le mur initial se trouve alors à gauche.
+   La procédure est symétrique pour le capteur droit.
+4. À partir du centre, si le capteur latéral 5 cm détecte, le point suivant est
+   éloigné du mur de 1 mm ; sinon il est rapproché de 1 mm. Chaque point répète
+   les appuis et le recentrage. Trois recherches par côté donnent un intervalle
+   détecté/libre, élargi de la dispersion observée. La recherche s'arrête à
+   ±15 mm au plus, réduits si le rayon de rotation l'impose.
+5. Appui final et retour au centre dans l'orientation initiale. Sauvegarde
+   automatique de la calibration avec les réglages et la carte, puis rapport
+   OLED en cinq pages : géométrie, F5, F10, gauche 5 cm et droite 5 cm.
+
+Le rapport distingue l'hystérésis frontale, mesurée avec une orientation constante,
+des intervalles latéraux **statiques** : les rotations et appuis entre les points
+ne permettent pas d'isoler l'hystérésis optique latérale. Les distances sont
+estimées à partir des pas et de la géométrie des roues, par rapport au centre de
+rotation. Sans codeur ni contacteur, le firmware ne mesure ni l'effort contre le
+mur ni les pas perdus ; les résultats dépendent de la réussite des appuis, de
+l'absence de glissement et des cotes saisies.
+
+Un mur absent, une acquisition périmée, un seuil hors plage, des transitions
+instables ou une dispersion supérieure à 2 mm interrompent la procédure. Aucun
+résultat partiel ne remplace la calibration sauvegardée. Les mouvements de contact
+sont réservés à cette procédure : distance bornée à 180 mm, vitesse au plus 30 mm/s,
+rotations à 40 mm/s par roue, bouton Retour et surveillance des acquisitions actifs.
+
+Le snapshot passe au schéma 3 et importe les anciens schémas 1/2 sans perdre
+réglages ou carte. Le choix du secteur à effacer prend désormais en compte le
+dernier snapshot valide, même d'un autre schéma, pour conserver une copie lors
+d'une coupure pendant la migration.
+
+Après calibration réussie, les déplacements par case utilisent le pas mesuré/saisi
+(179 mm par défaut). À l'approche d'un mur final, le seuil frontal F5 mesuré définit
+la zone de détection attendue. Le robot termine son budget de pas jusqu'au centre,
+au lieu de déclarer immédiatement une arrivée jusqu'à 30 mm avant celui-ci.
+Un obstacle plus précoce reste un défaut. Les seuils latéraux sont mémorisés et
+consultables ; ils ne constituent pas une mesure continue de la distance et ne
+suffisent pas, à eux seuls, à valider un nouvel asservissement de trajectoire.
+
+Validation logicielle : simulation de la séquence complète avec appuis (pas
+commandés mais position bloquée), défaut de centrage initial, seuils et hystérésis
+connus, bruit ponctuel, seuil absent, annulation et encombrement en rotation ;
+tests des déplacements signés réels du contrôleur, arrêt sur acquisition périmée,
+arrivée calibrée, restauration après redémarrage, échec de sauvegarde et coupures
+pendant migration des deux secteurs. La calibration et la précision des
+trajectoires restent à vérifier sur le robot avec les dimensions réelles.

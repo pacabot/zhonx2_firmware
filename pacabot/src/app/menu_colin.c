@@ -144,6 +144,19 @@ menuItem sensor_settings =
 		{(char*)NULL,	0,				NULL}
     }
 };
+static menuItem ir_calibration_menu=
+{
+    "CALIBRATION IR",
+    {
+        {"Lancer calibration",'f',fw_calibrate_menu},
+        {"Rapport memorise",'f',fw_calibration_report},
+        {"Axe-avant x0.1mm",'i',(void*)&fw_cal_nose_tenth_mm},
+        {"Largeur x0.1mm",'i',(void*)&fw_cal_width_tenth_mm},
+        {"Interieur mm",'i',(void*)&fw_cal_inner_mm},
+        {"Pas cellule mm",'i',(void*)&fw_cal_pitch_mm},
+        {NULL,0,NULL}
+    }
+};
 menuItem paramters_menu=
 {
 		"parameters menu",
@@ -151,6 +164,7 @@ menuItem paramters_menu=
 			{"Motion settings",'m',			(void*)&motion_settings},
 			{"PID settings",'m',			(void*)&PID_settings},
 			{"Sensor settings",'m',			(void*)&sensor_settings},
+            {"Calibration IR",'m',(void*)&ir_calibration_menu},
             {"Sauver carte/regl.",'f',fw_app_save},
             {"Charger sauvegarde",'f',fw_app_restore},
 			{(char*)NULL,	0,				NULL}
@@ -464,4 +478,3 @@ listDote* doteGraph (int time, int value)
 //			time_base = hal_os_get_systicks();
 //	}while (time_base>(hal_os_get_systicks()-time_wait));
 //}
-

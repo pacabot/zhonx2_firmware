@@ -36,6 +36,7 @@ static void setup(void)
 {
     now=100; scan=(hal_sensor_snapshot){100,10,0x3f,0x3f};
     fw_motion_init(); assert(disabled);
+    fw_motion_geometry(0,0,0);
 }
 static void tick(int fresh)
 {
@@ -97,6 +98,30 @@ int main(void)
     assert(!fw_motion_straight(1,100));
     for(int i=0;i<100;++i) tick(1);
     assert(!fw_motion_fault()); fw_motion_stop();
-    puts("motion: exact pulse budgets at 20..300 mm/s, turn, collision/stale stop, timer wrap");
+    setup(); scan.raw &= ~SENSOR_F5_POS;
+    assert(!fw_motion_calibration_move(-43500,10));
+    assert(commanded[0]<0 && commanded[0]==commanded[1]);
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_fault() && abs(fw_motion_travelled_um()+43500)<30);
+    assert(!fw_motion_calibration_move(5000,20));
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_fault() && abs(fw_motion_travelled_um()-5000)<30);
+    assert(fw_motion_calibration_move(180001,20)); assert(fw_motion_calibration_move(5000,31));
+    assert(!fw_motion_calibration_move(5000,20));
+    for(int i=0;i<60;++i) tick(0);
+    assert(fw_motion_fault()==1 && disabled);
+    setup(); fw_motion_geometry(179000,95000,167000);
+    assert(!fw_motion_straight_to(1,220,1));
+    assert(commanded[0]==lroundf(179.f*2.f*(float)STEPS_PER_MM));
+    while(fw_motion_remaining()>10.f*2.f*(float)STEPS_PER_MM) tick(1);
+    scan.raw &= ~SENSOR_F5_POS; tick(1);
+    assert(fw_motion_busy() && fw_motion_wall_arrival());
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_fault() && total[0]==((unsigned long)commanded[0]+1u)/2*2);
+    setup(); fw_motion_geometry(179000,95000,167000);
+    assert(!fw_motion_straight_to(1,220,1));
+    for(int i=0;i<100;++i) tick(1);
+    scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
+    puts("motion: signed calibration travel, bounded contact, stale stop, calibrated final-cell budget");
     return 0;
 }

@@ -83,6 +83,25 @@ static void store_test(void)
     assert(fw_store_load(&flash,2,out,sizeof out));
     assert(fw_store_save(&flash,1,b,sizeof b-1));
     printf("store: %d torn-write/erase cut points, CRC fallback, unchanged save\n",writes+1);
+    /* Migration must preserve the latest old snapshot, whether it is A or B. */
+    for (unsigned old_slot=0;old_slot<2;++old_slot) {
+        memset(memory,0xff,sizeof memory); power(-1);
+        assert(!fw_store_save(&flash,2,a,sizeof a));
+        if (old_slot) assert(!fw_store_save(&flash,2,b,sizeof b));
+        memcpy(backup,memory,sizeof memory);
+        uint32_t upgraded[160]={0}, loaded[160]; memcpy(upgraded,b,sizeof b);
+        assert(!fw_store_save(&flash,3,upgraded,sizeof upgraded)); writes=operations;
+        for (int cut=0;cut<=writes;++cut) {
+            memcpy(memory,backup,sizeof memory); power(cut);
+            (void)fw_store_save(&flash,3,upgraded,sizeof upgraded); power(-1);
+            if (!fw_store_load(&flash,3,loaded,sizeof loaded)) assert(!memcmp(loaded,upgraded,sizeof loaded));
+            else {
+                assert(!fw_store_load(&flash,2,out,sizeof out));
+                assert(!memcmp(out,old_slot?b:a,sizeof out));
+            }
+        }
+    }
+    puts("store: schema migration power cuts preserve the newest old A/B snapshot");
 }
 static unsigned char image_data[4096];
 static void stage(fw_update_t *u)
