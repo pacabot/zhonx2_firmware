@@ -57,11 +57,11 @@ void fw_test_idle(void)
     if (mode==1) {
         char name[64];snprintf(name,sizeof name,"build/ui-placement-%u.pgm",diagram_side);
         save_image(name);
-        assert(ssd1306GetPixel(20,11)); /* Front wall. */
-        assert(!!ssd1306GetPixel(8,20)==(diagram_side!=2));
-        assert(!!ssd1306GetPixel(51,20)==(diagram_side!=1));
-        assert(ssd1306GetPixel(19,22) && ssd1306GetPixel(30,26)); /* Robot and heading. */
-        test_gpioc.IDR &= ~GPIO_Pin_13; return;
+        assert(ssd1306GetPixel(20,12)); /* Front wall. */
+        assert(!!ssd1306GetPixel(14,20)==(diagram_side!=2));
+        assert(!!ssd1306GetPixel(33,20)==(diagram_side!=1));
+        assert(ssd1306GetPixel(19,17) && ssd1306GetPixel(24,20)); /* Robot and heading. */
+        test_gpioc.IDR &= ~(1u<<8); return;
     }
     if (mode>=2) {
         now+=10;assert(now<2000);

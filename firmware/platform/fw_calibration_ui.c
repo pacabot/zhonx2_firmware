@@ -1,5 +1,6 @@
 #include "fw_app.h"
 #include "fw_motion.h"
+#include "fw_buttons.h"
 #include "hal/hal_os.h"
 #include "hal/hal_sensor.h"
 #include "stm32f4xx.h"
@@ -11,7 +12,7 @@ static const char *io_error;
 static char last_stage[22];
 static hal_sensor_snapshot last_scan;
 static int calibration_error(int error);
-static int cancelled(void) { return !(GPIOC->IDR&GPIO_Pin_13); }
+static int cancelled(void) { return fw_cancel_pressed(); }
 static int fresh(hal_sensor_snapshot *s)
 {
     int available=hal_sensor_snapshot_read(s);
@@ -21,14 +22,14 @@ static int fresh(hal_sensor_snapshot *s)
 static void line(unsigned y,const char *text) { ssd1306DrawString(0,y,text,&Font_5x8); }
 static int acknowledge(void)
 {
-    while (!(GPIOC->IDR&GPIO_Pin_11)) { if (cancelled()) return -1; __WFI(); }
-    while (GPIOC->IDR&GPIO_Pin_11) { if (cancelled()) return -1; __WFI(); }
-    while (!(GPIOC->IDR&GPIO_Pin_11)) { if (cancelled()) return -1; __WFI(); }
+    while (fw_select_pressed()) { if (cancelled()) return -1; __WFI(); }
+    while (!fw_select_pressed()) { if (cancelled()) return -1; __WFI(); }
+    while (fw_select_pressed()) { if (cancelled()) return -1; __WFI(); }
     return 0;
 }
 static void message(const char *title,const char *text)
 {
-    ssd1306ClearScreen(); line(0,title); line(20,text); line(54,"RIGHT:OK BACK:EXIT");
+    ssd1306ClearScreen(); line(0,title); line(20,text); line(54,"OK:NEXT LEFT:BACK");
     ssd1306Refresh(); (void)acknowledge();
 }
 /* Desired placement, viewed from above. fixture: 0=three walls,
@@ -38,21 +39,34 @@ static int placement(const char *title,unsigned fixture)
     io_error=0; snprintf(last_stage,sizeof last_stage,"CHECK FIXTURE");
     memset(&last_scan,0,sizeof last_scan);
     ssd1306ClearScreen(); line(0,title);
-    ssd1306FillRect(7,10,46,3); /* Front wall. */
-    if (fixture!=2) ssd1306FillRect(7,10,3,42);
-    if (fixture!=1) ssd1306FillRect(50,10,3,42);
-    if (fixture) ssd1306FillRect(fixture==1?6:49,48,5,4); /* End post. */
-    ssd1306DrawRect(19,22,22,22); /* 94 mm square in a 167 mm clear cell. */
-    ssd1306FillRect(17,30,2,7); ssd1306FillRect(41,30,2,7); /* Wheels / axle. */
-    ssd1306DrawLine(21,33,39,33);
-    ssd1306DrawLine(30,38,30,25);
-    ssd1306DrawLine(26,29,30,25); ssd1306DrawLine(30,25,34,29);
-    ssd1306DrawDashedLine(30,45,30,52); /* Open straight behind the robot. */
-    ssd1306DrawString(64,13,"TOP VIEW",&Font_5x8);
-    ssd1306DrawString(64,25,"FRONT ^",&Font_5x8);
-    ssd1306DrawString(64,37,fixture?"2 CELLS":"10CM FREE",&Font_5x8);
-    ssd1306DrawString(64,46,"BEHIND",&Font_3x6);
-    line(55,"RIGHT:GO BACK:EXIT"); ssd1306Refresh();
+    /* Two cells behind the reference corner: dotted edges are unrestricted.
+     * The side containing the measured post MUST be open in the next cell. */
+    unsigned x=14, y=12, pitch=18;
+    ssd1306FillRect(x,y,21,2);
+    if(fixture!=2) ssd1306FillRect(x,y,2,pitch+2);
+    if(fixture!=1) ssd1306FillRect(x+19,y,2,pitch+2);
+    if(fixture) {
+        unsigned post=fixture==1?x:x+19;
+        ssd1306FillRect(post-1,y+pitch-1,4,4);
+        /* Only the far-side boundaries of the straight are irrelevant. */
+        unsigned other=fixture==1?x+20:x;
+        ssd1306DrawDashedLine(other,y+pitch,other,52);
+        ssd1306DrawDashedLine(post,y+2*pitch,post,52);
+        ssd1306DrawDashedLine(x-10,y+pitch,x-2,y+pitch);
+        ssd1306DrawDashedLine(x+23,y+pitch,x+31,y+pitch);
+    }
+    ssd1306DrawLine(x+10,y+21,x+10,51); /* Clear travel axis. */
+    ssd1306DrawLine(x+7,47,x+10,51); ssd1306DrawLine(x+10,51,x+13,47);
+    ssd1306DrawRect(x+5,y+5,11,11);
+    ssd1306FillRect(x+3,y+9,2,5); ssd1306FillRect(x+16,y+9,2,5);
+    ssd1306DrawLine(x+10,y+14,x+10,y+7);
+    ssd1306DrawLine(x+7,y+10,x+10,y+7); ssd1306DrawLine(x+10,y+7,x+13,y+10);
+    ssd1306DrawString(57,12,"TOP VIEW",&Font_5x8);
+    ssd1306DrawString(57,23,fixture?"2 CELLS":"10CM FREE",&Font_5x8);
+    ssd1306DrawString(57,34,fixture?"FREE BEHIND":"BEHIND",&Font_5x8);
+    ssd1306DrawDashedLine(57,46,73,46);
+    ssd1306DrawString(77,42,"ANY WALL",&Font_3x6);
+    line(55,"OK:GO  LEFT:BACK"); ssd1306Refresh();
     return acknowledge();
 }
 static int healthy(hal_sensor_snapshot *scan)
@@ -128,7 +142,7 @@ static void status(void *context,const char *text,int32_t um)
     ssd1306ClearScreen(); line(0,context?(const char *)context:"WALL CALIBRATION"); line(16,text);
     snprintf(value,sizeof value,"AXLE-WALL %ld.%ld MM",(long)(um/1000),(long)(um%1000/100));
     if (um) line(32,value);
-    line(54,"BACK: STOP"); ssd1306Refresh();
+    line(54,"LEFT/ESC: STOP"); ssd1306Refresh();
 }
 static void distance_line(unsigned y,const char *label,uint32_t um)
 {
@@ -163,7 +177,7 @@ int fw_calibration_report(void)
             distance_line(32,"SPREAD",s->spread_um);
             line(42,"STATIC / 1 MM STEP");
         }
-        line(54,page==4?"RIGHT:END BACK:END":"RIGHT:NEXT BACK:END");
+        line(54,page==4?"OK:END  LEFT:BACK":"OK:NEXT LEFT:BACK");
         ssd1306Refresh(); if (acknowledge()) break;
     }
     return 0;
@@ -224,7 +238,7 @@ static int calibration_error(int error)
         line(12,reason); line(24,last_stage);
         snprintf(text,sizeof text,"F5:%u F10:%u RAW:%02X",!(last_scan.raw&SENSOR_F5_POS),
             !(last_scan.raw&SENSOR_F10_POS),last_scan.raw); line(36,text);
-        line(54,"RIGHT:OK BACK:EXIT"); ssd1306Refresh(); (void)acknowledge();
+        line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); (void)acknowledge();
     }
     return -1;
 }
@@ -243,7 +257,7 @@ int fw_rotation_report(void)
             snprintf(title,sizeof title,"90 CHECK %lu.%lu DEG",(unsigned long)(p->quarter_error_mdeg[dir]/1000),
                      (unsigned long)(p->quarter_error_mdeg[dir]%1000/100)); line(42,title);
         } else line(42,"90: PERIOD / 4 ONLY");
-        line(54,"RIGHT:NEXT BACK:END"); ssd1306Refresh(); if (acknowledge()) return 0;
+        line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); if (acknowledge()) return 0;
     }
     return 0;
 }
@@ -267,10 +281,11 @@ static void signed_distance_line(unsigned y,const char *label,int32_t um)
     snprintf(value,sizeof value,"%s %c%lu.%lu MM",label,um<0?'-':'+',
              (unsigned long)(magnitude/1000),(unsigned long)(magnitude%1000/100)); line(y,value);
 }
-int fw_corner_report(void)
+static int corner_report(int selected)
 {
     unsigned pages=0;
     for (unsigned fixture=0;fixture<2;++fixture) {
+        if(selected>=0 && fixture!=(unsigned)selected) continue;
         const fw_corner_data_t *d=fw_app_corner(fixture);
         if (!fw_corner_valid(d)) continue;
         for (unsigned facing=0;facing<2;++facing) for (unsigned v=0;v<FW_CAL_SPEEDS;++v)
@@ -284,13 +299,14 @@ int fw_corner_report(void)
                 signed_distance_line(26,"RAW CLOSE",p->raw_close_um[sensor]);
                 signed_distance_line(34,"FILT CLOSE",p->close_um[sensor]);
                 distance_line(42,"SPREAD",p->spread_um[sensor]);
-                line(54,"RIGHT:NEXT BACK:END"); ssd1306Refresh(); ++pages;
+                line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); ++pages;
                 if (acknowledge()) return 0;
             }
     }
     if (!pages) { message("CORNER REPORT","NO SAVED MEASUREMENT"); return -1; }
     return 0;
 }
+int fw_corner_report(void) { return corner_report(-1); }
 static int corner_menu(unsigned side)
 {
     fw_cal_geometry_t g;
@@ -305,7 +321,7 @@ static int corner_menu(unsigned side)
     int error=fw_corner_run(&io,&g,side,fw_cal_post_mm*1000u,&result); fw_motion_stop();
     if (error) return calibration_error(error);
     if (fw_app_corner_commit(&result)) { message("CORNER CALIBRATION","FLASH SAVE FAILED"); return -1; }
-    return fw_corner_report();
+    return corner_report((int)side);
 }
 int fw_corner_left_menu(void) { return corner_menu(0); }
 int fw_corner_right_menu(void) { return corner_menu(1); }

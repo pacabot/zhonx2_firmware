@@ -236,8 +236,8 @@ int fw_corner_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side
                     if ((mask&(1u<<s)) && scan.previous[s]!=(direction?1:0)) return FW_CAL_RANGE;
                 }
                 char label[24];
-                snprintf(label,sizeof label,"%c %s %s %u",sensor_side?'R':'L',direction?"CLOSE":"OPEN",
-                         (direction!=facing)?"FWD":"BACK",(unsigned)p->speed);
+                snprintf(label,sizeof label,"%c %s %s %u %u/3",sensor_side?'R':'L',direction?"CLOSE":"OPEN",
+                         (direction!=facing)?"FWD":"BACK",(unsigned)p->speed,repeat+1);
                 if (io->status) io->status(io->context,label,0);
                 int32_t travel=(int32_t)(end-centre);
                 if (!direction) travel=-travel;

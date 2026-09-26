@@ -13,6 +13,7 @@
 
 /* Declarations for this module */
 #include "hal/hal_ui.h"
+#include "fw_buttons.h"
 #include "hal/hal_adc.h"
 #include "hal/hal_led.h"
 #include "hal/hal_beeper.h"
@@ -217,13 +218,12 @@ int hal_ui_display_prompt(HAL_UI_HANDLE handle,
     // Draw prompt string
     ssd1306DrawTextBox(6, 18, 116, 30, str, &Font_5x8);
     // Draw instructions string
-    ssd1306DrawString(6, 53, "PRESS 'RIGHT' TO VALIDATE", &Font_3x6);
+    ssd1306DrawString(6, 53, "OK / LEFT:BACK / ESC", &Font_3x6);
     ssd1306Refresh();
 
     // Wait until 'Return' Button is pressed
-    while(GPIO_ReadInputDataBit(JOYSTICK_RIGHT) == Bit_SET);
-    // Wait until 'Return' Button is released
-    while(GPIO_ReadInputDataBit(JOYSTICK_RIGHT) == Bit_RESET);
+    while(!fw_select_pressed() && !fw_cancel_pressed()) __WFI();
+    while(fw_select_pressed() || fw_cancel_pressed()) __WFI();
     HAL_Delay(VALIDATE_WAIT_TIME);
 
     return 0;

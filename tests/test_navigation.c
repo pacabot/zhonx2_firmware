@@ -26,7 +26,7 @@ static uint32_t now,deadline;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
-static unsigned char saved_snapshot[2048];
+static unsigned char saved_snapshot[8192];
 static size_t saved_size;
 static uint32_t saved_schema,applied_pitch;
 static int save_failure;
@@ -62,6 +62,7 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
 void fw_motion_init(void) { busy=stopped=wall_arrival=0; }
 void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 { applied_pitch=pitch;(void)front;(void)inner; }
+void fw_motion_wall_profile(const fw_cal_data_t *d) { (void)d; }
 void fw_motion_rotation_profile(const fw_rotation_data_t *d) { (void)d; }
 void fw_motion_stop(void) { busy=0; }
 int fw_motion_busy(void) { return busy; }
@@ -129,9 +130,17 @@ static void scenario(int obstacle)
     if(!obstacle) {
         assert(!result && moves>=8 && turns>=4 && wall_arrivals>=2 && draws>=10);
         assert(physical.x==0 && physical.y==0 && !strcmp(last_status,"OPTIMAL PATH"));
+        assert(fw_app_ready() && fw_app_maze_count()==1);
+        fw_saved_maze_t entry=*fw_app_maze(0);
+        fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
+        assert(!memcmp(fw_app_maze(0),&entry,sizeof entry));
+        save_failure=1; assert(fw_app_maze_delete(0));save_failure=0;
+        assert(fw_app_maze_count()==1);
+        assert(!fw_app_maze_load(0));
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
     } else {
         assert(result==-1 && fw_last_stop_code==2 && moves==1);
+        assert(!fw_app_ready() && !fw_app_maze_count());
         assert(!strcmp(last_status,"EARLY OBSTACLE"));
     }
 }
@@ -141,13 +150,16 @@ static void calibration_snapshot(void)
       .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
     assert(fw_cal_valid(&d));
     fw_motion_init(); assert(!fw_app_calibration_commit(&d));
-    assert(saved_schema==4 && applied_pitch==179000);
+    assert(saved_schema==5 && applied_pitch==179000);
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_cal_data_t changed=d; changed.front[0].on_um=75000;
     save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
     assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
-    size_t legacy_size=saved_size-sizeof d-sizeof(fw_rotation_data_t)-2*sizeof(fw_corner_data_t);
+    size_t old_size=saved_size-sizeof(fw_library_t)-24;
+    saved_schema=4; saved_size=old_size;
+    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    size_t legacy_size=old_size-sizeof d-sizeof(fw_rotation_data_t)-2*sizeof(fw_corner_data_t);
     saved_schema=3; saved_size=legacy_size+sizeof d;
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     unsigned char legacy[2048]; memcpy(legacy,saved_snapshot,legacy_size);

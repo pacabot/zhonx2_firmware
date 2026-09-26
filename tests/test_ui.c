@@ -1,4 +1,5 @@
 #include "fw_ui.h"
+#include "fw_menu.h"
 #include "oled/ssd1306.h"
 #include <assert.h>
 #include <stdio.h>
@@ -36,5 +37,17 @@ int main(void)
     fw_ui_maze(&map,(nm_pose_t){2,2,NM_NORTH},"EXPLORATION",220,72000,0x37);
     image("build/ui-maze.pgm");
     puts("OLED: actual renderer, clipped menu text, wrapped prompts, all 81 map positions");
+    fw_ui_card("ZHONX II","Calibration","",FW_ICON_CALIBRATE,1,4);image("build/ui-menu-home.pgm");
+    fw_ui_card("MAZE","Load maze","Library",FW_ICON_MAZE,1,4);image("build/ui-menu-maze.pgm");
+    fw_ui_card("RUNS","Slow run","120 mm/s",FW_ICON_RUN,0,4);image("build/ui-menu-run.pgm");
+    const int values[]={470,940,167,179,173,220,260,0,0};
+    for(unsigned i=0;i<9;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
+        fw_ui_setting(i,values[i]);image(file);}
+    fw_saved_maze_t saved={.map=map,.route={.direction={0,0,1,1},.length=4},.id=7};
+    fw_ui_library(&saved,0,2,0);image("build/ui-library-off.pgm");
+    unsigned char off[1024];memcpy(off,buffer,sizeof off);
+    fw_ui_library(&saved,0,2,1);image("build/ui-library-on.pgm");
+    assert(memcmp(off,buffer,sizeof off));
+    puts("OLED: large icon cards, nine illustrated settings, blinking stored route");
     return 0;
 }

@@ -18,6 +18,14 @@ static int front_calibrated;
 static fw_rotation_data_t rotation_profile;
 static float velocity, cruise;
 static wall_control_t wall;
+static fw_cal_data_t wall_profile;
+void fw_motion_wall_profile(const fw_cal_data_t *d)
+{
+    if(active) return;
+    if(fw_cal_valid(d)) wall_profile=*d;
+    else memset(&wall_profile,0,sizeof wall_profile);
+    wall_control_reset(&wall);
+}
 static uint32_t last_scan, started;
 static const float max_accel = 800.0f; /* mm/s^2 */
 static const float end_speed = 40.0f; /* Avoid the former 5 mm/s crawl at every cell. */
@@ -148,7 +156,7 @@ void fw_motion_tick(uint32_t now)
     }
     if (scan.sequence!=last_scan) {
         last_scan=scan.sequence;
-        if (straight) wall_control_step(&wall,scan.filtered);
+        if (straight) wall_control_calibrated(&wall,scan.filtered,&wall_profile);
     }
     float distance=(float)remaining/TICKS_PER_MM;
     /* Braking-distance envelope with bounded acceleration; no proportional

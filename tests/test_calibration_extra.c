@@ -140,6 +140,7 @@ int main(void)
     assert(fw_rotation_run(&io,&geometry,&rotation)==FW_CAL_RANGE && !memcmp(&rotation,&previous,sizeof rotation));
     r=initial(-1);r.cancel_spin=4;
     assert(fw_rotation_run(&io,&geometry,&rotation)==FW_CAL_MOTION && !memcmp(&rotation,&previous,sizeof rotation));
+    unsigned left_moves=0,left_turns=0;
     for(unsigned side=0;side<2;++side) {
         r=initial((int)side); fw_corner_data_t corner={0};
         result=fw_corner_run(&io.base,&geometry,side,173000,&corner);
@@ -157,6 +158,8 @@ int main(void)
         assert(!fw_corner_offset(&corner,1,160,1,1,&offset) && offset<0);
         assert(fw_corner_offset(&corner,1,260,1,1,&offset));
         assert(r.x==83500 && r.y==83500);
+        if(!side) {left_moves=r.moves;left_turns=r.turns;}
+        else assert(r.moves==left_moves && r.turns==left_turns);
         printf("corner: %s fixture, 3 speeds, both orientations, raw and filtered offsets, signed forward reference\n",side?"right":"left");
     }
     puts("extra calibration: stopped-turn refinement, directional tracks, missing optical reference and cancellation");

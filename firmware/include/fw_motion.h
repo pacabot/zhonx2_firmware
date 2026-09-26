@@ -15,6 +15,7 @@ int fw_motion_calibration_move(int32_t distance_um, unsigned speed_mm_s);
 int fw_motion_calibration_turn(int clockwise_degrees);
 int fw_motion_calibration_spin(int32_t wheel_um,unsigned speed_mm_s);
 int fw_motion_calibration_traverse(int32_t distance_um,unsigned speed_mm_s);
+void fw_motion_wall_profile(const fw_cal_data_t *);
 void fw_motion_rotation_profile(const fw_rotation_data_t *);
 int32_t fw_motion_travelled_um(void);
 void fw_motion_geometry(uint32_t pitch_um, uint32_t front_on_um, uint32_t inner_um);

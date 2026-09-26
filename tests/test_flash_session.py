@@ -68,3 +68,28 @@ class FlashSessionTest(unittest.TestCase):
                 (session / 'post-flash.bin').write_bytes(expected[:-1])
                 with self.assertRaises(ValueError):
                     flash.verify(session)
+
+
+class FastFlashTest(unittest.TestCase):
+    def test_fast_checks_persistence_images_and_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            before = bytes(range(256))*1024
+            (p/'pre-flash.bin').write_bytes(before)
+            (p/'post-calibration.bin').write_bytes(before[0x4000:0xC000])
+            report = dict(mode='app', backup_size=len(before), images={})
+            markers = []
+            for name, _ in flash.images_for('app'):
+                (p/name).write_bytes(b'firmware')
+                report['images'][name] = dict(sha256=flash.digest(b'firmware'))
+                markers.append('IMAGE_VERIFIED:'+name)
+            (p/'program.log').write_text('\n'.join(markers)+'\n')
+            result = flash.verify_fast(p, report)
+            self.assertTrue(result['persistence_verified'])
+            self.assertFalse(result['untouched_flash_verified'])
+            (p/'program.log').write_text(markers[0]+'\n')
+            with self.assertRaises(ValueError): flash.verify_fast(p, report)
+            (p/'program.log').write_text('\n'.join(markers)+'\n')
+            bad = bytearray(before[0x4000:0xC000]); bad[17] ^= 1
+            (p/'post-calibration.bin').write_bytes(bad)
+            with self.assertRaises(ValueError): flash.verify_fast(p, report)

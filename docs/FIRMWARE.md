@@ -332,7 +332,7 @@ Les rendus de test sont `build/ui-maze.pgm` et `build/ui-prompt.pgm`.
 ### Installation des corrections — 26 septembre 2026
 
 Firmware `812789e` installé avec la version antérieure de
-`.scripts/build/build.sh --test` via la ST-Link
+`scripts/build/build.sh --test` via la ST-Link
 V2J16S4 à 1000 kHz. Sauvegarde préalable des 1 Mio, programmation puis comparaison
 complète : images conformes, secteurs de persistance et autres zones non écrites
 inchangés. Application de 54 996 octets, SHA-256
@@ -573,3 +573,108 @@ Validation : balayages complets avec zones proches non détectées, recalage de
 rotation avec cette même condition, lecture de montage avec R5 alternant à chaque
 scan, refus d'un F10 réellement instable, annulation depuis les trois schémas et
 rendu OLED des erreurs. Application et bootloader compilés Debug et Release.
+
+
+## Interface, bibliothèque et flash rapide
+
+### Navigation
+
+Le menu principal est maintenant `Maze`, `Calibration`, `Settings`, `Update`.
+Une seule action occupe l'écran, avec icône et texte 7×16 pixels. Haut/bas parcourt,
+droite **ou appui central** valide, gauche du joystick revient. PC13 est Escape,
+également actif pour arrêter les mouvements. Le relâchement est consommé pour
+éviter qu'un seul appui fasse revenir de deux niveaux. Le choix reste mémorisé
+lorsqu'on revient dans un menu. Les anciens réglages PID/moteurs sans effet sur
+le contrôleur moderne ne sont plus présentés comme réglages de navigation.
+
+`Settings` regroupe neuf paramètres effectifs : axe–avant, largeur, intérieur et
+pas de cellule, centre du poteau, vitesses d'exploration/run rapide, coin et cap
+de départ. Les valeurs sont bornées, illustrées, sauvegardées sur validation ;
+gauche annule l'édition. Les dimensions saisies préparent la prochaine calibration ;
+elles ne remplacent pas silencieusement la géométrie des mesures déjà validées.
+
+Les schémas d'angle montrent le poteau, la cellule arrière, le trajet libre
+(flèche), les murs obligatoires en trait plein et les segments indifférents en
+pointillés. La prolongation du mur **après le poteau du côté mesuré doit rester
+ouverte**. La frontière frontale de la cellule de départ et le mur latéral opposé
+suivent le montage à deux murs indiqué. Les murs supplémentaires ne doivent pas
+couper le trajet libre. Le montage droit est le miroir du gauche.
+
+Les séquences gauche/droite ont le même nombre d'avances/reculs et de rotations,
+vérifié en simulation. Après une mesure, le rapport n'affiche plus que le montage
+qui vient d'être mesuré. Auparavant, le second lancement affichait les deux jeux
+de résultats, donc davantage de pages. Le temps d'attente d'un signal stable peut
+aussi varier entre côtés ; il n'y a pas de séquence droite volontairement doublée.
+
+### Bibliothèque de labyrinthes
+
+Le schéma de sauvegarde **5** ajoute huit emplacements au snapshot transactionnel
+existant. Le préfixe contenant réglages, carte active et calibrations conserve son
+ABI ARM ; migration des versions 1 à 4. L'espace reste inférieur aux 16 Kio de
+chaque secteur A/B. La mémoire de travail du snapshot est statique pour ne pas
+consommer la pile de 8 Kio utilisée par la recherche de chemin.
+
+La carte partielle active reste sauvegardée séparément. Une nouvelle entrée est
+archivée à l'issue de la recherche certifiée et du retour au départ réussis. Une
+carte certifiée exige une arrivée unique et un chemin connu ayant le même coût
+que la borne optimiste autorisant les passages inconnus. Cela n'exige pas de visiter
+toutes les cellules sans intérêt pour le chemin optimal.
+
+La bibliothèque déduplique les cartes identiques, conserve le départ, la durée et
+le chemin calculé. Le défilement affiche murs et chemin clignotant toutes les
+500 ms. Valider charge la carte et ouvre directement les runs. La bibliothèque
+pleine ne supprime rien automatiquement : la carte active est conservée et une
+suppression explicite avec confirmation libère un emplacement.
+
+Les runs sont bloqués côté firmware et masqués au menu tant que l'apprentissage
+n'est pas validé. La certification est recontrôlée pour le départ sélectionné.
+Le run lent commande 120 mm/s sans modifier la vitesse rapide sauvegardée. Les
+virages restent des rotations sur place suivies de lignes droites ; la carte
+`Curves / Unavailable` annonce honnêtement l'absence de contrôleur de courbes.
+
+### Utilisation des calibrations
+
+| Données | Exploration | Runs | Fonction |
+|---|---|---|---|
+| Pas de cellule | Oui | Oui | Distance commandée par cellule |
+| Frontal F5 | Oui | Oui | Fenêtre d'arrivée devant un mur final |
+| Rotation CW/CCW | Oui | Oui | Budget de pas des virages |
+| Intervalles latéraux 5 cm | Oui, nouveau | Oui, nouveau | Bornes de position pour le centrage |
+| Hystérésis F10 / offsets de poteau | Rapport | Rapport | Pas encore utilisés pour anticiper les virages |
+
+Le centrage construit un intervalle possible de distance axe–mur gauche à partir
+des deux observations binaires et des intervalles calibrés. Si cet intervalle
+contient le centre, aucune correction arbitraire n'est demandée. Sinon, l'écart
+minimal certain donne une correction bornée ; filtrage et variation limitée de
+commande restent actifs. En cas d'absence de murs ou de bornes contradictoires,
+la correction décroît. Sans calibration valide, l'ancien contrôle logique reste
+le repli. Une position continue exacte n'est pas observable avec ces capteurs.
+
+### Flash et extraction
+
+`scripts/flash/flash.sh --release --fast` conserve une sauvegarde préalable de la
+zone basse jusque la fin du dernier secteur susceptible d'être effacé (incluant
+A/B). `verify_image` contrôle chaque image ; une relecture des 32 Kio A/B vérifie
+leur identité exacte. Le mode complet, sans `--fast`, garde les deux dumps de
+1 Mio et la vérification de tous les octets hors zones programmées. Aucun mode
+n'efface les secteurs A/B. Le débit SWD reste 1 MHz, compatible avec l'ancienne sonde.
+
+`scripts/flash/dump.sh [--calibration-only]` ne programme rien. Il capture flash ou
+A/B, écrit une empreinte SHA-256 et produit `calibrations.json` avec le décodeur
+`tools/calibration_dump.py`. Le rapport contrôle CRC et générations, expose les
+mesures signées par vitesse/sens, et signale les valeurs hors bornes ou les
+incohérences à examiner. Un CRC correct ne valide pas la précision mécanique.
+
+### Validation et limite matérielle de cette révision
+
+Tests ASan/UBSan : bibliothèque pleine/déduplication/suppression/chemin invalide,
+sauvegarde automatique et restauration, migration 2/3/4 vers 5, commandes joystick,
+blocage des runs, chargement direct, centrage avec seuils asymétriques et rendu OLED.
+Tests Python : sauvegarde rapide, identité des secteurs persistants, marqueurs de
+vérification des images, décodage CRC/générations et offsets négatifs.
+
+La lecture demandée du robot a été tentée : sonde V2J16S4 détectée, mais tension
+cible ~0,03 V, connexion impossible. L'archive antérieure au dernier essai ne contient
+que le schéma 2, sans calibrations. **Aucune conclusion sur les calibrations actuelles
+ne peut donc être tirée de cette archive.** Aucun flash ni mouvement automatique
+n'a été exécuté pour cette révision ; le dump actuel nécessite une cible alimentée.

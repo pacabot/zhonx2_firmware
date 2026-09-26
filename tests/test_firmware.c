@@ -303,7 +303,17 @@ static void wall_test(void)
     assert(a.output>0);
     for(int i=0;i<100;++i) wall_control_step(&a,0x3f);
     assert(a.output==0);
-    puts("control: chatter slew limit, symmetry, doorway decay");
+    fw_cal_data_t measured={.valid=1,.geometry={47000,94000,167000,179000},
+        .side={{78500,79500,0},{88500,89500,0}}};
+    wall_control_reset(&a);
+    /* At centre: L5 clear, R5 detecting. Unequal sensor placement is NOT a yaw error. */
+    for(int i=0;i<100;++i) wall_control_calibrated(&a,0x1c,&measured);
+    assert(a.output==0);
+    for(int i=0;i<100;++i) wall_control_calibrated(&a,0x0c,&measured);
+    assert(a.output>0); /* Left too near. */
+    for(int i=0;i<100;++i) wall_control_calibrated(&a,0x1e,&measured);
+    assert(a.output>0); /* Right far constrains robot left of centre. */
+    puts("control: measured asymmetric thresholds, centred dead band, slew limit");
 }
 static void interaction_test(void)
 {

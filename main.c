@@ -30,6 +30,7 @@
 
 #include <stdio.h>
 #include "app/menu_colin.h"
+#include "fw_menu.h"
 //extern int display_main_menu(void);
 extern int menu_colin(menuItem menu);
 extern menuItem menu_c;
@@ -53,7 +54,7 @@ int main(void)
     //rv = test_maze_trajectoire();
     //rv = display_main_menu();
     while(1)
-    	rv=menu_colin(menu_c);
+        fw_menu_run();
     //rv = test_hal_beeper();
     //rv = test_hal_step_motor();
     //rv = test_hal_beeper();

@@ -5,7 +5,7 @@ cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage : .scripts/build/build.sh [--bootloader | --all] [--debug | --release] [--test] [--clean]
+Usage : scripts/build/build.sh [--bootloader | --all] [--debug | --release] [--test] [--clean]
 Sans option : compile uniquement l'application en mode debug (-Og -g3).
   --bootloader  Compile uniquement le bootloader.
   --all         Compile l'application et le bootloader, puis le paquet complet.

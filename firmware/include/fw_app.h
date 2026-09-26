@@ -3,10 +3,18 @@
 #include <stdint.h>
 #include "fw_calibration.h"
 #include "fw_cal_extra.h"
+#include "fw_library.h"
 void fw_app_init(void);
 int fw_app_discover(void);
 int fw_app_resume(void);
 int fw_app_run(void);
+int fw_app_run_slow(void);
+int fw_app_ready(void);
+unsigned fw_app_maze_count(void);
+const fw_saved_maze_t *fw_app_maze(unsigned index);
+int fw_app_maze_load(unsigned index);
+int fw_app_maze_delete(unsigned index);
+int fw_app_settings_save(void);
 int fw_app_save(void);
 int fw_app_show_map(void);
 extern volatile unsigned fw_last_stop_code;

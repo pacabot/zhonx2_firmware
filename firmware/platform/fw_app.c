@@ -4,6 +4,7 @@
 #include "fw_layout.h"
 #include "fw_store.h"
 #include "fw_motion.h"
+#include "fw_buttons.h"
 #include "nimes.h"
 #include "stm32f4xx.h"
 #include "stm32f4xx_gpio.h"
@@ -16,7 +17,7 @@
 #include "hal/hal_step_motor.h"
 #include <stdio.h>
 #include <string.h>
-#define SNAPSHOT_SCHEMA 4
+#define SNAPSHOT_SCHEMA 5
 /* ARM ABI-specific snapshot. Change schema for any layout or settings ABI change. */
 typedef struct {
     robot_settings settings;
@@ -29,8 +30,23 @@ typedef struct {
     fw_rotation_data_t rotation;
     fw_corner_data_t corner[2];
 } calibration_bundle_t;
-typedef struct { snapshot_v2_t base; calibration_bundle_t measurements; } snapshot_t;
+typedef struct { snapshot_v2_t base; calibration_bundle_t measurements; } snapshot_v4_t;
+typedef struct {
+    snapshot_v2_t base;
+    calibration_bundle_t measurements;
+    fw_library_t library;
+    uint32_t learned;
+    int32_t nose, width, inner, pitch, post;
+} snapshot_t;
+static fw_library_t library;
+static int learned;
+static snapshot_t snapshot_buffer; /* Foreground only; keep the 8 KiB stack for planning. */
+_Static_assert(sizeof(snapshot_t)<FW_STORE_SIZE-32,"persistent library capacity");
 _Static_assert(sizeof(snapshot_t)%4==0,"snapshot alignment");
+#ifdef __arm__
+_Static_assert(sizeof(snapshot_v2_t)==412,"calibration dump ARM ABI");
+_Static_assert(sizeof(calibration_bundle_t)==832,"calibration dump layout");
+#endif
 static nm_map_t maze;
 static uint32_t search_ms, search_epoch, search_base;
 static int search_clock_running;
@@ -73,6 +89,7 @@ static void apply_calibration(void)
     }
     fw_motion_geometry(g?g->pitch_um:179000,wall->valid?wall->front[0].on_um:0,g?g->inner_um:167000);
     fw_motion_rotation_profile(&measurements.rotation);
+    fw_motion_wall_profile(wall);
     if (measurements.corner[0].valid) fw_cal_post_mm=(int)measurements.corner[0].post_um/1000;
     else if (measurements.corner[1].valid) fw_cal_post_mm=(int)measurements.corner[1].post_um/1000;
 }
@@ -93,16 +110,19 @@ static int settings_valid(const robot_settings *s)
 }
 static int load(void)
 {
-    snapshot_t current={0}; snapshot_v2_t s;
-    int legacy=0;
-    if (!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,&current,sizeof current)) {
-        if (!bundle_valid(&current.measurements)) return -1;
-        s=current.base;
+    snapshot_t *current=&snapshot_buffer; memset(current,0,sizeof *current); snapshot_v2_t s;
+    int legacy=0, format5=0;
+    if (!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,current,sizeof *current)) {
+        if (!bundle_valid(&current->measurements) || !fw_library_valid(&current->library) || current->learned>1) return -1;
+        format5=1; s=current->base;
     } else {
-        snapshot_v3_t old;
-        if (!fw_store_load(&fw_stm32_flash,3,&old,sizeof old)) {
+        snapshot_v4_t old4; snapshot_v3_t old;
+        if (!fw_store_load(&fw_stm32_flash,4,&old4,sizeof old4)) {
+            if (!bundle_valid(&old4.measurements)) return -1;
+            s=old4.base; current->measurements=old4.measurements;
+        } else if (!fw_store_load(&fw_stm32_flash,3,&old,sizeof old)) {
             if (old.calibration.valid && !fw_cal_valid(&old.calibration)) return -1;
-            s=old.base; current.measurements.wall=old.calibration;
+            s=old.base; current->measurements.wall=old.calibration;
         } else if (fw_store_load(&fw_stm32_flash,2,&s,sizeof s)) {
             legacy=1;
             if (fw_store_load(&fw_stm32_flash,1,&s,sizeof s)) return -1;
@@ -117,22 +137,35 @@ static int load(void)
     fw_start_corner=s.corner; fw_start_heading=s.heading;
     fw_search_speed=legacy && s.search_speed==120 ? 220 : (int)s.search_speed;
     fw_run_speed=legacy && s.run_speed==200 ? 260 : (int)s.run_speed;
-    measurements=current.measurements; apply_calibration();
+    measurements=current->measurements; library=current->library;
+    nm_route_t route;
+    learned=has_map && (!format5 || current->learned) && fw_maze_certify(&maze,fw_start_corner,fw_start_heading,&route);
+    /* Import a certified pre-library maze without losing the active partial map. */
+    if(learned && !library.count) (void)fw_library_put(&library,&maze,fw_start_corner,fw_start_heading,search_ms);
+    apply_calibration();
+    if(current->nose>=100 && current->nose<=750 && current->width>=400 && current->width<=1400 &&
+        current->inner>=140 && current->inner<=190 && current->pitch>current->inner && current->pitch<=210 &&
+        current->post>=100 && current->post<=250) {
+        fw_cal_nose_tenth_mm=current->nose; fw_cal_width_tenth_mm=current->width;
+        fw_cal_inner_mm=current->inner; fw_cal_pitch_mm=current->pitch; fw_cal_post_mm=current->post;
+    }
     return 0;
 }
-void fw_app_init(void) { nm_init(&maze); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
+void fw_app_init(void) { has_map=learned=0; memset(&library,0,sizeof library); nm_init(&maze); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
 static int save(void)
 {
     if (fw_motion_busy() || !parameters_valid() || !settings_valid(&zhonxSettings)) return -1;
     search_ms=search_used(hal_os_get_systicks());
-    snapshot_t s; memset(&s,0,sizeof s);
-    s.base.settings=zhonxSettings; s.base.map=maze; s.base.has_map=has_map; s.base.search_ms=search_ms;
-    s.base.corner=fw_start_corner; s.base.heading=fw_start_heading;
-    s.base.search_speed=fw_search_speed; s.base.run_speed=fw_run_speed;
-    s.measurements=measurements;
+    snapshot_t *s=&snapshot_buffer; memset(s,0,sizeof *s);
+    s->base.settings=zhonxSettings; s->base.map=maze; s->base.has_map=has_map; s->base.search_ms=search_ms;
+    s->base.corner=fw_start_corner; s->base.heading=fw_start_heading;
+    s->base.search_speed=fw_search_speed; s->base.run_speed=fw_run_speed;
+    s->measurements=measurements; s->library=library; s->learned=learned;
+    s->nose=fw_cal_nose_tenth_mm; s->width=fw_cal_width_tenth_mm;
+    s->inner=fw_cal_inner_mm; s->pitch=fw_cal_pitch_mm; s->post=fw_cal_post_mm;
     /* Single-bank flash stalls instruction fetch. Never save while motors move. */
     fw_motion_stop();
-    return fw_store_save(&fw_stm32_flash,SNAPSHOT_SCHEMA,&s,sizeof s);
+    return fw_store_save(&fw_stm32_flash,SNAPSHOT_SCHEMA,s,sizeof *s);
 }
 static void discard_other_geometry(const fw_cal_geometry_t *g)
 {
@@ -184,6 +217,31 @@ int fw_app_restore(void)
     hal_ui_display_prompt(app_context.ui,"RESTORE",result ? "NO SAVED DATA" : "SETTINGS AND MAP LOADED");
     return result;
 }
+int fw_app_settings_save(void) { return save(); }
+unsigned fw_app_maze_count(void) { return library.count; }
+const fw_saved_maze_t *fw_app_maze(unsigned index) { return index<library.count?&library.item[index]:0; }
+int fw_app_ready(void)
+{
+    nm_route_t route;
+    return learned && has_map && fw_maze_certify(&maze,fw_start_corner,fw_start_heading,&route);
+}
+int fw_app_maze_load(unsigned index)
+{
+    if(fw_motion_busy() || index>=library.count) return -1;
+    const fw_saved_maze_t *m=&library.item[index];
+    maze=m->map; fw_start_corner=(int)m->corner; fw_start_heading=(int)m->heading;
+    search_ms=m->search_ms; search_clock_running=0; has_map=learned=1;
+    displayed_pose=fw_maze_origin(m->corner,m->heading); return 0;
+}
+int fw_app_maze_delete(unsigned index)
+{
+    if(fw_motion_busy() || index>=library.count) return -1;
+    fw_saved_maze_t previous=library.item[index]; unsigned count=library.count;
+    if(fw_library_remove(&library,index)) return -1;
+    if(!save()) return 0;
+    memmove(&library.item[index+1],&library.item[index],(count-index-1)*sizeof previous);
+    library.item[index]=previous; library.count=count; return -1;
+}
 static nm_pose_t start_pose(void)
 {
     /* 0=SW, 1=SE, 2=NE, 3=NW; heading 0=N,1=E,2=S,3=W. */
@@ -221,7 +279,7 @@ static int wait_hand(nm_pose_t pose)
     fw_start_gate_t gate={0}; uint32_t draw=hal_os_get_systicks()-100;
     for (;;) {
         uint32_t now=hal_os_get_systicks(); hal_sensor_snapshot scan;
-        if (!(GPIOC->IDR & GPIO_Pin_13)) return -1;
+        if (fw_cancel_pressed()) return -1;
         int fresh=hal_sensor_snapshot_read(&scan) && now-scan.timestamp<=50;
         if (fw_start_gate(&gate,now,fresh && !(scan.filtered&SENSOR_F10_POS),fresh)) return 0;
         if (now-draw>=100) {
@@ -236,8 +294,8 @@ static void map_message(nm_pose_t pose, const char *message)
 {
     fw_ui_maze(&maze,pose,message,0,search_ms,live_sensors());
     /* Keep the map and the full stop reason visible until acknowledged. */
-    while ((GPIOC->IDR & (GPIO_Pin_11|GPIO_Pin_13))==(GPIO_Pin_11|GPIO_Pin_13)) __WFI();
-    while (!(GPIOC->IDR & GPIO_Pin_11)) __WFI();
+    while (!fw_select_pressed() && !fw_cancel_pressed()) __WFI();
+    while (fw_select_pressed()) __WFI();
 }
 int fw_app_show_map(void)
 {
@@ -246,16 +304,18 @@ int fw_app_show_map(void)
 }
 /* Foreground state machine. The pulse IRQs, 200 Hz acquisition phases and
  * 1 kHz motion controller run independently while path planning/OLED run here. */
+static unsigned run_speed_override;
 static int execute(int timed_run, int fresh)
 {
     if (!parameters_valid()) {
         hal_ui_display_prompt(app_context.ui,"9x9","INVALID SETTINGS"); return -1;
     }
-    if (timed_run && !has_map) {
-        hal_ui_display_prompt(app_context.ui,"9x9","EXPLORE OR LOAD A MAP"); return -1;
+    if (timed_run && !fw_app_ready()) {
+        hal_ui_display_prompt(app_context.ui,"9x9","LEARN A MAZE FIRST"); return -1;
     }
+    unsigned commanded_speed=timed_run?(run_speed_override?run_speed_override:(unsigned)fw_run_speed):(unsigned)fw_search_speed;
     fw_motion_init();
-    if (fresh) { nm_init(&maze); search_ms=0; has_map=1; search_clock_running=0; }
+    if (fresh) { learned=0; nm_init(&maze); search_ms=0; has_map=1; search_clock_running=0; }
     nm_pose_t origin=start_pose(), pose=origin;
     displayed_pose=pose; fw_last_stop_code=0;
     if (wait_hand(pose)) return -1;
@@ -273,7 +333,7 @@ static int execute(int timed_run, int fresh)
     const char *message="STOPPED";
     for (;;) {
         uint32_t now=hal_os_get_systicks();
-        if (!(GPIOC->IDR & GPIO_Pin_13)) { message="USER STOP"; break; }
+        if (fw_cancel_pressed()) { message="USER STOP"; break; }
         if (!timed_run && search_used(now)>=NM_SEARCH_MS) { message="5 MIN ELAPSED"; break; }
         if (fw_motion_fault()) {
             fw_last_stop_code=(unsigned)fw_motion_fault();
@@ -281,7 +341,7 @@ static int execute(int timed_run, int fresh)
         }
         if (now-ui_time>=100) {
             fw_ui_maze(&maze,pose,returning?"RETURN":timed_run?"RUN":"EXPLORATION",
-                       fw_motion_busy()?(unsigned)(timed_run?fw_run_speed:fw_search_speed):0,
+                       fw_motion_busy()?commanded_speed:0,
                        timed_run?now-started:search_used(now),live_sensors());
             ui_time=now;
         }
@@ -357,7 +417,7 @@ static int execute(int timed_run, int fresh)
              * passage ahead must never be mistaken for a normal wall arrival. */
             unsigned bit=1u<<pose.heading;
             int accept_wall=!(maze.cell[c].known & bit) || (maze.cell[c].walls & bit);
-            if (fw_motion_straight_to(moving,timed_run?fw_run_speed:fw_search_speed,accept_wall)) {
+            if (fw_motion_straight_to(moving,commanded_speed,accept_wall)) {
                 message="MOVE REJECTED"; break;
             }
             state=1;
@@ -368,9 +428,15 @@ static int execute(int timed_run, int fresh)
     if (!timed_run) {
         search_ms=search_used(hal_os_get_systicks());
     }
-    /* Save even a partial map; pose is deliberately NOT restored after reset. */
+    /* Completed learning is archived; partial work remains separately resumable. */
+    int archive_failed=0;
+    if(!timed_run) {
+        learned=result==0 && certified;
+        if(learned) archive_failed=fw_library_put(&library,&maze,fw_start_corner,fw_start_heading,search_ms)<0;
+    }
     int saved=save();
     map_message(pose,message);
+    if (archive_failed) hal_ui_display_prompt(app_context.ui,"LIBRARY FULL","ACTIVE MAZE SAVED");
     if (saved) hal_ui_display_prompt(app_context.ui,"FLASH","FLASH SAVE FAILED");
     USART1->CR1 |= USART_CR1_UE; /* Local diagnostics outside the trial. */
     return result;
@@ -382,6 +448,11 @@ int fw_app_resume(void)
     return execute(0,0);
 }
 int fw_app_run(void) { return execute(1,0); }
+int fw_app_run_slow(void)
+{
+    run_speed_override=120;
+    int result=execute(1,0); run_speed_override=0; return result;
+}
 int fw_app_bootloader(void)
 {
     fw_motion_stop();
