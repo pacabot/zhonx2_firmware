@@ -37,6 +37,12 @@ que le script de compilation, avec en plus `--fast`. Sans option, il compile pui
 l'application et son manifeste. `--bootloader` n'écrit que le bootloader ; `--all`
 écrit les trois images. Il sauvegarde les 1 Mio de Flash avant toute écriture,
 puis compare la relecture complète à l'image attendue, y compris les secteurs conservés.
+Avant une mise à jour de l'application seule, il vérifie que les vecteurs du
+bootloader restent dans le secteur 0. Un ancien firmware monolithique installé
+à `0x08000000` est refusé avant écriture : utiliser alors
+`scripts/flash/flash.sh --all --release` pour installer le bootloader et l'application.
+Avec un autre outil, utiliser le fichier `initial-install.hex` pour l'installation
+complète ; ne pas programmer `application.ota.bin` à `0x08000000`.
 Les réglages, la carte et la zone de téléchargement sont préservés.
 Pour l'application, il redémarre ensuite le robot au menu et contrôle les
 interruptions, les capteurs, l'absence de défaut processeur et la désactivation

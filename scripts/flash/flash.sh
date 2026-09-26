@@ -16,6 +16,7 @@ Sans option : compile et flashe uniquement l'application en mode debug.
   --fast        Sauvegarde la zone basse concernée, vérifie les images et les calibrations.
   --help        Affiche cette aide.
 La Flash est sauvegardée avant écriture et relue après. Les réglages sont préservés.
+Le mode application exige un bootloader en secteur 0 ; sinon utiliser --all.
 Variables facultatives : JOBS=4, SWD_KHZ=1000, STLINK_SERIAL=<numéro>.
 Robot alimenté et sonde ST-Link branchée ; OpenOCD requis.
 HELP
@@ -48,15 +49,18 @@ done
 ./scripts/build/build.sh ${build_args[@]+"${build_args[@]}"}
 mkdir -p backups/flash-sessions
 session=$(mktemp -d "backups/flash-sessions/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
-trap 'echo "Échec : consulter $session. Le flash peut être incomplet." >&2' ERR
+failure='Aucune écriture en flash effectuée.'
+trap 'echo "Échec : consulter $session. $failure" >&2' ERR
 helper=scripts/flash/flash_session.py
 python3 "$helper" prepare "$session" "$mode" "$profile" "$backup_mode"
 echo "Sauvegarde avant programmation : $session/pre-flash.bin"
 openocd -f "$session/backup.cfg" 2>&1 | tee "$session/backup.log"
 python3 "$helper" backup "$session"
 echo 'Programmation et vérification…'
+failure='La programmation peut être incomplète.'
 openocd -f "$session/program.cfg" 2>&1 | tee "$session/program.log"
 python3 "$helper" verify "$session"
+failure='Images programmées et vérifiées, mais contrôle du démarrage non validé.'
 echo 'Redémarrage et contrôle au repos…'
 openocd -f "$session/startup.cfg" 2>&1 | tee "$session/startup.log"
 python3 "$helper" complete "$session"

@@ -2,6 +2,10 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import struct
+import json
+import subprocess
+import sys
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -11,6 +15,38 @@ spec.loader.exec_module(flash)
 
 
 class FlashSessionTest(unittest.TestCase):
+    def test_boot_vectors_reject_monolithic_and_damaged_images(self):
+        vectors = [0x20020000] + [0x08000045] * 15
+        for i in (7, 8, 9, 10, 13):
+            vectors[i] = 0
+        self.assertTrue(flash.check_boot_vectors(struct.pack('<16I', *vectors))[
+            'core_vectors_in_boot_sector'])
+        for index, value in ((0, 0x2001ffff), (1, 0x08018959),
+                             (1, 0xffffffff), (1, 0x08000044), (3, 0x0800d1b9)):
+            with self.subTest(index=index, value=value):
+                bad = vectors.copy()
+                bad[index] = value
+                with self.assertRaisesRegex(ValueError, '--all'):
+                    flash.check_boot_vectors(struct.pack('<16I', *bad))
+
+    def test_backup_rejects_app_update_but_keeps_recovery_dump(self):
+        for fast in (False, True):
+            with self.subTest(fast=fast), tempfile.TemporaryDirectory() as directory:
+                p = Path(directory)
+                size = 0x40000 if fast else flash.FLASH_SIZE
+                dump = struct.pack('<II', 0x2001ffff, 0x08018959) + b'\xff' * (size-8)
+                (p/'pre-flash.bin').write_bytes(dump)
+                (p/'report.json').write_text(json.dumps(dict(mode='app', backup_size=size)))
+                result = subprocess.run([sys.executable, str(spec.origin), 'backup', str(p)],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('--all', result.stderr)
+                report = json.loads((p/'report.json').read_text())
+                self.assertEqual(report['status'], 'preflight_rejected')
+                self.assertEqual(report['pre_flash_sha256'], flash.digest(dump))
+                self.assertEqual((p/'pre-flash.bin').read_bytes(), dump)
+                self.assertTrue((p/'pre-flash.bin.sha256').exists())
+
     def test_selection(self):
         self.assertEqual([name for name, _ in flash.images_for('app')],
                          ['image-manifest.bin', 'application.ota.bin'])
