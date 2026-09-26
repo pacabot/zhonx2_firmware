@@ -215,7 +215,7 @@ int hal_ui_display_prompt(HAL_UI_HANDLE handle,
     ssd1306DrawString(5, 3, touppercase((char *)title, strlen(title)), &Font_3x6);
     ssd1306InvertArea(5, 3, 118, 8);
     // Draw prompt string
-    ssd1306DrawString(6, 20, str, &Font_5x8);
+    ssd1306DrawTextBox(6, 18, 116, 30, str, &Font_5x8);
     // Draw instructions string
     ssd1306DrawString(6, 53, "PRESS 'RIGHT' TO VALIDATE", &Font_3x6);
     ssd1306Refresh();

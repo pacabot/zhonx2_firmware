@@ -1,3 +1,5 @@
+#include "fw_start.h"
+#include "fw_text.h"
 #include "fw_store.h"
 #include "fw_update.h"
 #include "fw_protocol.h"
@@ -284,10 +286,32 @@ static void wall_test(void)
     assert(a.output==0);
     puts("control: chatter slew limit, symmetry, doorway decay");
 }
+static void interaction_test(void)
+{
+    fw_start_gate_t g={0};
+    for(unsigned t=0;t<1000;t+=10) assert(!fw_start_gate(&g,t,0,1));
+    assert(g.state==FW_WAIT_HAND); /* Never start without a hand. */
+    for(unsigned t=1000;t<=1200;t+=10) assert(!fw_start_gate(&g,t,1,1));
+    assert(g.state==FW_WAIT_RELEASE);
+    for(unsigned t=1210;t<1310;t+=10) assert(!fw_start_gate(&g,t,0,1));
+    assert(fw_start_gate(&g,1310,0,1));
+    g=(fw_start_gate_t){0};
+    fw_start_gate(&g,UINT32_MAX-100,1,1);
+    fw_start_gate(&g,99,1,1); assert(g.state==FW_WAIT_RELEASE);
+    fw_start_gate(&g,110,0,1); fw_start_gate(&g,220,0,0);
+    assert(!fw_start_gate(&g,230,0,1)); assert(fw_start_gate(&g,330,0,1));
+    char line[20]; const char *p="REGLAGES ET CARTE CHARGES";
+    p=fw_text_line(p,line,19); assert(!strcmp(line,"REGLAGES ET CARTE"));
+    p=fw_text_line(p,line,19); assert(!strcmp(line,"CHARGES") && !*p);
+    p=fw_text_line("ABCDEFGHIJKLMNOPQRSTUV",line,19);
+    assert(strlen(line)==19 && !strcmp(p,"TUV"));
+    p=fw_text_line("A\nB",line,19); assert(!strcmp(line,"A") && !strcmp(p,"B"));
+    puts("interaction: hand present/released, stale scans, timer wrap and OLED text wrapping");
+}
 int main(void)
 {
     assert(fw_crc32("123456789",9)==0xcbf43926);
     assert(fw_crc32_more(fw_crc32("1234",4),"56789",5)==0xcbf43926);
-    store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); wall_test();
+    interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); wall_test();
     puts("All firmware core tests passed."); return 0;
 }

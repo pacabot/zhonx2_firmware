@@ -51,13 +51,16 @@ static void tick(int fresh)
 }
 int main(void)
 {
+    unsigned previous_elapsed=20000;
     for(unsigned speed=20;speed<=300;speed+=20) {
         setup(); assert(!fw_motion_straight(1,speed));
-        assert(commanded[0]==lroundf(180.f*2.f*(float)STEPS_PER_MM));
+        assert(commanded[0]==lroundf((float)CELL_LENGTH*2.f*(float)STEPS_PER_MM));
         assert(commanded[0]==commanded[1]);
         unsigned elapsed=0;
         while(fw_motion_busy() && elapsed++<20000) tick(1);
         assert(!fw_motion_busy() && !fw_motion_fault() && elapsed<20000);
+        assert(elapsed<previous_elapsed); previous_elapsed=elapsed;
+        if (speed==220) { assert(elapsed<1250); printf("178 mm at 220 mm/s: %u ms\n",elapsed); }
         assert(total[0]==total[1] && total[0]==((unsigned long)commanded[0]+1u)/2*2);
     }
     setup(); assert(!fw_motion_turn(90)); assert(commanded[0]<0 && commanded[1]>0);
@@ -72,6 +75,22 @@ int main(void)
     setup(); assert(!fw_motion_straight(1,100));
     for(int i=0;i<60;++i) tick(0);
     assert(fw_motion_fault()==1 && !fw_motion_busy() && disabled);
+    /* Ordinary final-cell wall detection must allow the next turn. */
+    setup(); assert(!fw_motion_straight_to(1,220,1));
+    while(fw_motion_remaining()>25.f*2.f*(float)STEPS_PER_MM) tick(1);
+    scan.raw &= ~SENSOR_F5_POS;
+    tick(1); assert(!fw_motion_fault() && !fw_motion_busy() && fw_motion_wall_arrival());
+    assert(!rates[0] && !rates[1]);
+    assert(!fw_motion_turn(90));
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_fault() && !fw_motion_wall_arrival());
+    /* An early obstacle, or a wall across a known passage, must still fault. */
+    setup(); assert(!fw_motion_straight_to(2,220,1));
+    for(int i=0;i<100;++i) tick(1);
+    scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
+    setup(); assert(!fw_motion_straight_to(1,220,0));
+    while(fw_motion_remaining()>20.f*2.f*(float)STEPS_PER_MM) tick(1);
+    scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
     setup(); assert(fw_motion_straight(0,100)); assert(fw_motion_straight(1,301));
     assert(fw_motion_turn(30));
     now=UINT32_MAX-30; scan.timestamp=now;

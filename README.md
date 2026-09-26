@@ -19,7 +19,7 @@ Les fichiers utilisés de la STM32F4 Standard Peripheral Library et de CMSIS ont
 
 ## Sauvegarde de la carte
 
-La copie complète de la Flash et ses informations de vérification sont dans `backups/`. Le nouveau binaire n'a pas été écrit sur la carte. La compilation seule ne prouve pas le fonctionnement sur le robot ; les paramètres persistants et le comportement des moteurs devront être contrôlés avant toute mise à jour matérielle.
+La copie complète de la Flash et ses informations de vérification sont dans `backups/`. La version `446199d` a été écrite et vérifiée le 26 septembre 2026 ; les corrections suivantes sont documentées dans `docs/FIRMWARE.md`. La compilation seule ne prouve pas le fonctionnement sur le robot ; les paramètres persistants et le comportement des moteurs devront être contrôlés avant toute mise à jour matérielle.
 
 ## Évolutions firmware
 

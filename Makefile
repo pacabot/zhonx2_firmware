@@ -71,4 +71,13 @@ test:
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_motion.c \
 	 firmware/platform/fw_motion.c firmware/core/wall_control.c -o $(BUILD)/test_motion
 	$(BUILD)/test_motion
+	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_navigation.c \
+	 firmware/platform/fw_app.c firmware/core/nimes.c firmware/core/fw_start.c -o $(BUILD)/test_navigation
+	$(BUILD)/test_navigation
+	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_ui.c \
+	 firmware/platform/fw_ui.c firmware/core/nimes.c firmware/core/fw_text.c \
+	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_ui
+	$(BUILD)/test_ui
 	python3 -m unittest discover -s tests -p 'test_*.py'

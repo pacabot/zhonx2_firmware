@@ -2,8 +2,10 @@
 
 ## État de cette branche
 
-Code compilé pour STM32F405RG, tests logiciels exécutables sur ordinateur. **Aucun
-nouveau firmware n'a été programmé sur le robot.** Le transport SPI, les seuils IR,
+Code compilé pour STM32F405RG, tests logiciels exécutables sur ordinateur. La
+version `446199d` a été programmée par SWD le 26 septembre 2026, relue intégralement
+et démarrée jusqu’au menu. Les corrections décrites ci-dessous restent à installer.
+Le transport SPI, les seuils IR,
 la géométrie et les profils moteurs restent à valider sur la carte. Le module radio
 sera choisi ensuite ; son logiciel de pont n'est pas inclus. L'outil d'envoi TCP
 attend le protocole de pont décrit ci-dessous : il ne fonctionne pas directement
@@ -244,11 +246,10 @@ un mouvement, jusqu'à la première destination non visitée. Les cellules incon
 et les rotations gardent des arrêts ; les virages courbes et la cartographie de
 nouvelles cellules sans arrêt ne sont pas activés sans validation physique.
 
-Le nouveau contrôleur utilise un profil avec accélération et variation
-d'accélération bornées, correction différentielle filtrée, terme dérivé et vitesse
+Le nouveau contrôleur utilise un profil avec accélération bornée, correction différentielle filtrée, terme dérivé et vitesse
 de correction limitée. Pas d'intégrale accumulée dans une ouverture. Les budgets
 d'impulsions indépendants arrêtent chaque roue à sa cible ; une correction bornée
-réduit leur décalage. Trame âgée de plus de 50 ms, obstacle frontal 5 cm ou mouvement
+réduit leur décalage. Trame âgée de plus de 50 ms, obstacle frontal inattendu ou mouvement
 supérieur à 60 s : arrêt et défaut mémorisé. Le bouton retour arrête l'essai.
 
 Les timers moteurs étaient calculés à 42 MHz alors que leur horloge APB1 doublée
@@ -257,8 +258,8 @@ de basculement STEP par impulsion ; le pilote historique compensait déjà ce fa
 2 dans ses déplacements, sa macro de conversion est conservée. Le nouveau pilote
 fait cette conversion explicitement. Les GPIO moteurs sont initialisés complètement.
 
-Vitesses initiales : exploration 120 mm/s, course 200 mm/s, plage 20–300 mm/s ;
-rotation sur place 80 mm/s par roue. Géométrie reprise du projet (roues 24,45 mm,
+Vitesses initiales : exploration 220 mm/s, course 260 mm/s, plage 20–300 mm/s ;
+rotation sur place 120 mm/s par roue. Géométrie reprise du projet (roues 24,45 mm,
 entraxe 83,5 mm). Gains, hystérésis, vitesse et freinage nécessitent des mesures sur
 robot : un test logiciel ne démontre ni absence de perte de pas, ni diminution des
 oscillations sur le sol réel. Le robot n'a pas d'estimation métrique des distances
@@ -288,3 +289,42 @@ Les simulations d'effacement/programme ne modélisent pas les baisses de tension
 analogiques du silicium. Restent les essais au banc : SWD avec la sonde ancienne,
 démarrage réel du BL, SPI et changement de sens DATA, coupure d'alimentation réelle,
 mesure d'une case/rotation et réglage des oscillations, puis exploration sur sol.
+
+
+## Corrections après essai sur le robot
+
+Régressions signalées : exploration lente, arrêt en ligne droite, départ à la main
+absent, carte absente et textes débordant de l'écran.
+
+- Départ rétabli par F10 : main détectée pendant 200 ms, puis retrait confirmé
+  pendant 100 ms. Les moteurs restent désactivés durant cette attente. Retour annule.
+- Carte 9×9, murs inconnus en pointillés, salles d'arrivée et pose/orientation
+  affichés pendant l'attente, la navigation et sur le résultat. Menu `Voir carte`.
+- Titres courts, textes des boîtes découpés en lignes ; le rendu coupe à la bordure
+  avant la conversion des coordonnées en octets. Correction d'un décalage binaire
+  indéfini dans le rendu des polices de hauteur 8.
+- Le précédent profil descendait à 5 mm/s à chaque case. Remplacement par une
+  enveloppe de freinage avec accélération bornée à 800 mm/s² et vitesse finale de
+  40 mm/s (ou vitesse demandée si inférieure). Une case simulée passe de 2115 ms
+  à 120 mm/s avec l'ancien profil à 992 ms à 220 mm/s avec le nouveau. Ce sont des
+  mesures de simulation, pas des chronométrages du robot.
+- Réutilisation de `CELL_LENGTH=178` comme distance **calibrée** de commande,
+  déjà employée par le pilote historique ; la géométrie logique Nîmes reste 180 mm.
+  La base des timers moteurs passe à 2 MHz pour réduire la quantification des
+  corrections de vitesse.
+- F5 ne doit plus abandonner toute l'exploration lors d'une arrivée normale devant
+  un mur. Cette fin de mouvement est autorisée seulement dans les 30 derniers mm
+  de la dernière case et si le passage frontal de destination n'est pas déjà connu
+  ouvert. Les autres détections arrêtent toujours le robot avec `OBSTACLE HORS CASE`.
+  La pose est alors estimée à la case d'arrivée ; ce seuil nécessite une vérification
+  physique de l'alignement. Il ne remplace pas une mesure métrique de distance.
+- Une contradiction de mesure est relue pendant 150 ms avant arrêt explicite ;
+  aucune contradiction persistante n'est effacée silencieusement de la carte.
+- Snapshot schéma 2 : import du schéma 1, migration unique des anciennes vitesses
+  par défaut 120/200 vers 220/260. Les autres valeurs et la carte sont conservées.
+
+Tests supplémentaires : départ à la main et capteurs périmés, arrêt devant un mur
+puis rotation, obstacle trop précoce, trajectoire d'application complète (10
+mouvements, 6 rotations, découverte de salle et retour), rendu réel du framebuffer
+OLED sur les 81 positions, découpage et absence de rebouclage du texte à gauche.
+Les rendus de test sont `build/ui-maze.pgm` et `build/ui-prompt.pgm`.

@@ -72,15 +72,16 @@ menuItem maze_menu =
 {
     "NIMES 9x9",
     {
-        {"New exploration",'f',fw_app_discover},
-        {"Resume from start",'f',fw_app_resume},
-        {"Run from start",'f',fw_app_run},
+        {"Explorer",'f',fw_app_discover},
+        {"Reprendre au depart",'f',fw_app_resume},
+        {"Course du depart",'f',fw_app_run},
+        {"Voir carte",'f',fw_app_show_map},
         {"Corner 0SW1SE2NE3NW",'i',(void*)&fw_start_corner},
         {"Head 0N 1E 2S 3W",'i',(void*)&fw_start_heading},
-        {"Search mm/s",'i',(void*)&fw_search_speed},
-        {"Run mm/s",'i',(void*)&fw_run_speed},
-        {"Save maze + settings",'f',fw_app_save},
-        {"Restore snapshot",'f',fw_app_restore},
+        {"Exploration mm/s",'i',(void*)&fw_search_speed},
+        {"Course mm/s",'i',(void*)&fw_run_speed},
+        {"Sauver carte/regl.",'f',fw_app_save},
+        {"Charger sauvegarde",'f',fw_app_restore},
         {NULL,0,NULL}
     }
 };
@@ -150,8 +151,8 @@ menuItem paramters_menu=
 			{"Motion settings",'m',			(void*)&motion_settings},
 			{"PID settings",'m',			(void*)&PID_settings},
 			{"Sensor settings",'m',			(void*)&sensor_settings},
-            {"Save settings + maze",'f',fw_app_save},
-            {"Restore snapshot",'f',fw_app_restore},
+            {"Sauver carte/regl.",'f',fw_app_save},
+            {"Charger sauvegarde",'f',fw_app_restore},
 			{(char*)NULL,	0,				NULL}
 //			{"Save settings",'m',			&save_settings},
 //			{"Restore settings",'m',		&restore_settings}
@@ -185,7 +186,7 @@ menuItem tests_menu=
 };
 menuItem menu_c =
 {
-		"ZHONX II                 V2.0",
+		"ZHONX II NIMES",
 		{
 			{"Maze menu",'m',			(void*)&maze_menu },
 			{"prameters",'m',			(void*)&paramters_menu},

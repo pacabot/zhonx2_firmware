@@ -1,3 +1,4 @@
+#include "fw_text.h"
 /**************************************************************************/
 /*!
     @file     ssd1306.h
@@ -231,11 +232,9 @@ static void ssd1306DrawChar(unsigned int x, unsigned int y, unsigned char c, con
 	unsigned int xoffset, yoffset;
 	for (xoffset = 0; xoffset < font->u8Width; xoffset++)
 	{
-		for (yoffset = 0; yoffset < (font->u8Height + 1); yoffset++)
+		for (yoffset = 0; yoffset < (font->u8Height + 1u) && yoffset < 8u; yoffset++)
 		{
-			unsigned char bit = 0x00;
-			bit = (column[xoffset] << (8 - (yoffset + 1)));     // Shift current row bit left
-			bit = (bit >> 7);                                   // Shift current row but right (results in 0x01 for black, and 0x00 for white)
+			unsigned char bit = (column[xoffset] >> yoffset) & 1u;
 			if (bit)
 			{
 				ssd1306DrawPixel(x + xoffset, y + yoffset);
@@ -458,11 +457,31 @@ void ssd1306Refresh(void)
 /**************************************************************************/
 void ssd1306DrawString(unsigned int x, unsigned int y, const char *text, const FONT_DEF *font)
 {
-	unsigned char l;
-	for (l = 0; l < strlen(text); l++)
-	{
-		ssd1306DrawChar(x + (l * (font->u8Width + 1)), y, text[l], font);
-	}
+    if (!text || !font || x>=SSD1306_LCDWIDTH || y>=SSD1306_LCDHEIGHT) return;
+    /* Clip before unsigned-char pixel coordinates can wrap around to the left. */
+    for (unsigned i=0;text[i] && x+font->u8Width<=SSD1306_LCDWIDTH;++i) {
+        if (y+font->u8Height>SSD1306_LCDHEIGHT) break;
+        ssd1306DrawChar(x,y,text[i],font);
+        x+=font->u8Width+1u;
+    }
+}
+
+void ssd1306DrawTextBox(unsigned x,unsigned y,unsigned width,unsigned height,
+                       const char *text,const FONT_DEF *font)
+{
+    char line[33];
+    if (!text || !font || x>=128 || y>=64) return;
+    if (width>128-x) width=128-x;
+    if (height>64-y) height=64-y;
+    unsigned columns=width/(font->u8Width+1u);
+    if (columns>32) columns=32;
+    if (!columns) return;
+    unsigned bottom=y+height;
+    while (*text && y+font->u8Height<=bottom) {
+        text=fw_text_line(text,line,columns);
+        ssd1306DrawString(x,y,line,font);
+        y+=font->u8Height+2u;
+    }
 }
 
 void ssd1306DrawStringAtLine(unsigned int x, unsigned int line, const char *text, const FONT_DEF *font)
@@ -478,7 +497,7 @@ void ssd1306PrintInt(unsigned int x, unsigned int y, const char *text, unsigned 
 	unsigned char nb_char;
 
 	nb_char = strlen(text);
-    sprintf(str, "%d      ", val);
+    snprintf(str, sizeof str, "%u      ", val);
     ssd1306DrawString(x, y, text, font);
     ssd1306DrawString(x + ((nb_char + 1) * font->u8Width), y, str, font);
 }

@@ -23,7 +23,7 @@
 # define MOTOR_TIMER_CLOCK 84000000
 /* Timer base frequency (in Hz) */
 // TODO: Analyser pourquoi une fr�quence de 64000 ne fonctionne pas correctement
-# define TIMER_FREQ 350000
+# define TIMER_FREQ 2000000
 
 /* Toggle frequency (in Hz) */
 #define STEP_MOTOR_FREQ 50
