@@ -1,3 +1,4 @@
+#include "fw_app.h"
 /*---------------------------------------------------------------------------
  *
  *      menus.c
@@ -47,7 +48,7 @@ extern int test_step_motor_driver(void);
 extern int test_motor_rotate(void);
 extern int distance_cal(void);
 extern int mazeBertrand(int i, int str);
-static int start_maze(void) { return mazeBertrand(0, 0); }
+static int start_maze(void) { return fw_app_discover(); }
 
 extern int sensor_calibrate(void);
 
@@ -431,54 +432,14 @@ int display_sensor_settings(void)
 // Displays the 'Save settings' menu
 int display_save_settings(void)
 {
-    int     rv;
-    int     selected_index = 0;
-    char    str[50];
-
-    rv = hal_ui_display_menu(app_context.ui,
-                             (void *)settings_menu, &selected_index, true);
-    if (rv != HAL_UI_E_SUCCESS)
-    {
-        return rv;
-    }
-
-    if (selected_index > 0)
-    {
-        rv = hal_nvm_write(app_context.nvm,
-                           (void *)&stored_settings[selected_index - 1],
-                           &zhonxSettings, sizeof(robot_settings));
-        sprintf(str, "Saved on [%i]!", selected_index);
-        hal_ui_display_prompt(app_context.ui, "SETTINGS SAVED", str);
-    }
-
-    return rv;
+    return fw_app_save();
 }
 
 
 // Displays the 'Restore settings' menu
 int display_restore_settings(void)
 {
-    int     rv;
-    int     selected_index = 0;
-    char    str[50];
-
-    rv = hal_ui_display_menu(app_context.ui,
-                             (void *)settings_menu, &selected_index, true);
-    if (rv != HAL_UI_E_SUCCESS)
-    {
-        return rv;
-    }
-
-    if (selected_index > 0)
-    {
-        memcpy(&zhonxSettings,
-               &stored_settings[selected_index - 1],
-               sizeof(robot_settings));
-        sprintf(str, "[%i] restored!", selected_index);
-        hal_ui_display_prompt(app_context.ui, "SETTINGS RESTORED", str);
-    }
-
-    return selected_index;
+    return fw_app_restore();
 }
 
 

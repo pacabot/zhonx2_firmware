@@ -26,6 +26,7 @@
 #include "app/app_def.h"
 
 #include <math.h>
+#include "fw_app.h"
 
 #include <stdio.h>
 #include "app/menu_colin.h"
@@ -89,6 +90,7 @@ int app_initialization(void)
     zhonxSettings.wall_know_cost=1;
     zhonxSettings.cell_cost=5;
     zhonxSettings.start_orientation = 0;
+    fw_app_init();
     rv = hal_os_init();
     if (rv != HAL_OS_SUCCESS)
     {

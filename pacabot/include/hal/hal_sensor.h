@@ -6,6 +6,9 @@
 
 #ifndef __HAL_SENSOR_H__
 #define __HAL_SENSOR_H__
+#include <stdint.h>
+typedef struct { uint32_t timestamp, sequence; uint8_t raw, filtered; } hal_sensor_snapshot;
+int hal_sensor_snapshot_read(hal_sensor_snapshot *out);
 
 
 /* Module Identifier */

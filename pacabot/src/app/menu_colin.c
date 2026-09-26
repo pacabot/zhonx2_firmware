@@ -5,6 +5,7 @@
  *      Author: colin
  */
 #include <stdio.h>
+#include "fw_app.h"
 #include <string.h>
 #include "config/basetypes.h"
 #include "hal/hal_os.h"
@@ -69,19 +70,19 @@ extern app_config app_context;
 
 menuItem maze_menu =
 {
-		"maze menu",
-		{
-				{"New maze",'f',			maze_solver_new_maze},
-                {"wall know cost",'i',      (void*)&zhonxSettings.wall_know_cost},
-                {"move cost",'i',           (void*)&zhonxSettings.cell_cost},
-                {"direction",'i',           (void*)&zhonxSettings.start_orientation},
-				{"x finish",'i',			(void*)&zhonxSettings.x_finish_maze},
-				{"y finish",'i',			(void*)&zhonxSettings.y_finish_maze},
-				{"color finish",'b',		(void*)&zhonxSettings.color_sensor_enabled},
-				{"calib. enabled",'b',		(void*)&zhonxSettings.calibration_enabled},
-				{"calibration",'f',			(void*)calibrateSimple},
-				{(char*)NULL,	0,				NULL}
-		}
+    "NIMES 9x9",
+    {
+        {"New exploration",'f',fw_app_discover},
+        {"Resume from start",'f',fw_app_resume},
+        {"Run from start",'f',fw_app_run},
+        {"Corner 0SW1SE2NE3NW",'i',(void*)&fw_start_corner},
+        {"Head 0N 1E 2S 3W",'i',(void*)&fw_start_heading},
+        {"Search mm/s",'i',(void*)&fw_search_speed},
+        {"Run mm/s",'i',(void*)&fw_run_speed},
+        {"Save maze + settings",'f',fw_app_save},
+        {"Restore snapshot",'f',fw_app_restore},
+        {NULL,0,NULL}
+    }
 };
 menuItem motor_menu=
 {
@@ -149,6 +150,8 @@ menuItem paramters_menu=
 			{"Motion settings",'m',			(void*)&motion_settings},
 			{"PID settings",'m',			(void*)&PID_settings},
 			{"Sensor settings",'m',			(void*)&sensor_settings},
+            {"Save settings + maze",'f',fw_app_save},
+            {"Restore snapshot",'f',fw_app_restore},
 			{(char*)NULL,	0,				NULL}
 //			{"Save settings",'m',			&save_settings},
 //			{"Restore settings",'m',		&restore_settings}
@@ -188,7 +191,7 @@ menuItem menu_c =
 			{"prameters",'m',			(void*)&paramters_menu},
 			{"test menu",'m',			(void*)&tests_menu},
 			{"beeper enabled?",'b',		(void*)&zhonxSettings.beeper_enabled},
-			{"test graph",'m',			(void*)&testGraphicMenu},
+			{"Firmware update",'f',fw_app_bootloader},
 			{(char*)NULL,	0,				NULL}
 		}
 };

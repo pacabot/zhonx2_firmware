@@ -22,7 +22,7 @@
 
 /*----------Stack Configuration-----------------------------------------------*/
 #define STACK_SIZE       0x00002000      /*!< Stack size (in Words)           */
-__attribute__ ((section(".co_stack")))
+__attribute__ ((section(".co_stack"), aligned(8)))
 unsigned long pulStack[STACK_SIZE];
 
 
@@ -153,7 +153,7 @@ __attribute__ ((section(".isr_vector")))
 void (* const g_pfnVectors[])(void) =
 {
   /*----------Core Exceptions------------------------------------------------ */
-  (void *)&pulStack[STACK_SIZE-1],     /*!< The initial stack pointer         */
+  (void *)&pulStack[STACK_SIZE],     /*!< The initial stack pointer         */
   Reset_Handler,             /*!< Reset Handler                               */
   NMI_Handler,               /*!< NMI Handler                                 */
   HardFault_Handler,         /*!< Hard Fault Handler                          */

@@ -3,7 +3,7 @@ ENTRY(Reset_Handler)
 /* Internal Memory Map*/
 MEMORY
 {
-	rom (rx)  : ORIGIN = 0x08000000, LENGTH = 0x00100000
+	rom (rx)  : ORIGIN = 0x08010000, LENGTH = 0x00060000
 	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00020000
 	ram1 (rwx) : ORIGIN = 0x10000000, LENGTH = 0x00010000
 }

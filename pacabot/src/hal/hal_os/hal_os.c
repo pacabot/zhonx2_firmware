@@ -26,6 +26,9 @@
 #define DEBUG_LOG_SIZE  100
 
 
+#include "misc.h"
+#include "fw_motion.h"
+#include "fw_layout.h"
 extern void SystemInit(void);    /*!< Setup the microcontroller system(CMSIS) */
 
 
@@ -63,7 +66,10 @@ int hal_os_init(void)
     while(RCC_WaitForHSEStartUp() == ERROR);
 
     /* Initialize System tick interrupts to 1tick/ms */
+    SCB->VTOR = FW_APP_BASE;
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
     SysTick_Config(SystemCoreClock / 1000);
+    NVIC_SetPriority(SysTick_IRQn,4);
 
     /* Initialize serial module */
     rv = hal_serial_init();
@@ -168,4 +174,5 @@ int hal_os_diag(const char *fmt, ...)
 void SysTick_Handler(void)
 {
     os_context.system_ticks++;
+    fw_motion_tick(os_context.system_ticks);
 }

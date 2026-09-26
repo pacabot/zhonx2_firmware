@@ -37,14 +37,14 @@
 /* Timer configuration */
 #define SENSOR_TIMER    TIM6
 
-/* APB2 bus frequency (in Hz) */
-#define APB2_FREQ 42000000
+/* TIM6 clock: APB1 at 42 MHz, timer multiplier x2. */
+#define SENSOR_TIMER_CLOCK 84000000
 /* Sensors Timer base frequency (in Hz) */
 #define TIMER_FREQ 4000
 /* Capture frequency (in Hz) */
-#define CAPTURE_FREQ 100
+#define CAPTURE_FREQ 200
 /* Timer prescaler (PSC register) */
-#define TIMER_PRESCALER (((APB2_FREQ) / (TIMER_FREQ)) - 1)
+#define TIMER_PRESCALER (((SENSOR_TIMER_CLOCK) / (TIMER_FREQ)) - 1)
 /* Timer period (ARR register) */
 #define TIMER_PERIOD (((TIMER_FREQ) / (CAPTURE_FREQ)) - 1)
 
@@ -73,6 +73,27 @@ typedef struct
 sensor_handle;
 
 sensor_handle sensors_handle;
+static hal_sensor_snapshot scan;
+static unsigned char confidence[6];
+int hal_sensor_snapshot_read(hal_sensor_snapshot *out)
+{
+    uint32_t mask=__get_PRIMASK(); __disable_irq();
+    *out=scan;
+    __set_PRIMASK(mask);
+    return out->sequence>=3;
+}
+static void publish_scan(void)
+{
+    scan.raw=sensors_handle.state;
+    for (unsigned i=0;i<6;++i) {
+        if (scan.raw & (1u<<i)) { if (confidence[i]<3) ++confidence[i]; }
+        else if (confidence[i]) --confidence[i];
+        if (confidence[i]==3) scan.filtered |= 1u<<i;
+        else if (confidence[i]==0) scan.filtered &= ~(1u<<i);
+    }
+    scan.timestamp=hal_os_get_systicks();
+    ++scan.sequence;
+}
 
 
 int hal_sensor_init(void)
@@ -80,6 +101,8 @@ int hal_sensor_init(void)
     TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
 
     memset(&sensors_handle, 0, sizeof(sensor_handle));
+    sensors_handle.state=0x3f; scan.raw=scan.filtered=0x3f;
+    scan.sequence=0; memset(confidence,3,sizeof confidence);
 
     /* System Clocks Configuration */
     RCC_Configuration();
@@ -99,6 +122,7 @@ int hal_sensor_init(void)
 
     /* Enable interrupts on Update event */
     TIM_ITConfig(SENSOR_TIMER, TIM_IT_Update, ENABLE);
+    DISABLE_10; ENABLE_5;
     TIM_Cmd(SENSOR_TIMER, ENABLE);
 
     return HAL_SENSOR_E_SUCCESS;
@@ -108,6 +132,8 @@ int hal_sensor_init(void)
 int hal_sensor_terminate(void)
 {
     memset(&sensors_handle, 0, sizeof(sensor_handle));
+    sensors_handle.state=0x3f; scan.raw=scan.filtered=0x3f;
+    scan.sequence=0; memset(confidence,3,sizeof confidence);
 
     return HAL_SENSOR_E_SUCCESS;
 }
@@ -261,6 +287,7 @@ void RCC_Configuration(void)
 void GPIO_Configuration(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
+    GPIO_StructInit(&GPIO_InitStructure);
 
     /* IR Sensors configuration */
     GPIO_InitStructure.GPIO_Pin = SENSOR_R10_PIN |
@@ -311,6 +338,7 @@ void TIM6_DAC_IRQHandler(void)
     else
     {
         CAPTURE_10;
+        publish_scan();
         DISABLE_10;
         ENABLE_5;
     }

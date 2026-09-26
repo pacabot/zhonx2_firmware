@@ -19,8 +19,8 @@
 
 #include <string.h>
 
-/* APB1 bus frequency (in Hz) */
-# define APB1_FREQ 42000000
+/* TIM2/TIM3 clock: APB1 at 42 MHz, timer multiplier x2. */
+# define MOTOR_TIMER_CLOCK 84000000
 /* Timer base frequency (in Hz) */
 // TODO: Analyser pourquoi une fr�quence de 64000 ne fonctionne pas correctement
 # define TIMER_FREQ 350000
@@ -28,7 +28,7 @@
 /* Toggle frequency (in Hz) */
 #define STEP_MOTOR_FREQ 50
 /* Timer prescaler (PSC register) */
-#define TIMER_PRESCALER (((APB1_FREQ) / (TIMER_FREQ)) - 1)
+#define TIMER_PRESCALER (((MOTOR_TIMER_CLOCK) / (TIMER_FREQ)) - 1)
 /* Timer period (ARR register) */
 #define TIMER_PERIOD    (((TIMER_FREQ) / (STEP_MOTOR_FREQ)) - 1)
 
@@ -90,6 +90,8 @@ typedef struct
 step_motor_handle;
 
 static step_motor_handle step_motor[MAX_CHANNELS];
+static volatile unsigned long pair_limit[2];
+static volatile int pair_owned;
 
 
 int hal_step_motor_init(void)
@@ -546,6 +548,7 @@ void RCC_Configuration(void)
 void GPIO_Configuration(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
+    GPIO_StructInit(&GPIO_InitStructure);
 
     GPIO_PinAFConfig(GPIOA, STEP_1_PIN_SOURCE, GPIO_AF_TIM2);
     GPIO_PinAFConfig(GPIOA, STEP_2_PIN_SOURCE, GPIO_AF_TIM3);
@@ -591,14 +594,14 @@ void NVIC_Configuration(void)
 
     /* Enable TIMER 2 Interrupt handling */
     NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 5;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 
     /* Enable TIMER 3 Interrupt handling */
     NVIC_InitStructure.NVIC_IRQChannel = TIM3_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 5;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 2;
     NVIC_Init(&NVIC_InitStructure);
 }
@@ -617,6 +620,13 @@ void TIM2_IRQHandler(void)
     STEP_MOTOR1_TIM->SR = ~TIM_FLAG_CC2;
 
     step_motor[0].steps++;
+    if (pair_owned) {
+        if ((unsigned long)step_motor[0].steps >= pair_limit[0]) {
+            step_motor[0].timer->CR1 &= ~TIM_CR1_CEN;
+            step_motor[0].freq = 0;
+        }
+        return;
+    }
 
     switch(step_motor[0].current_state)
     {
@@ -658,6 +668,13 @@ void TIM3_IRQHandler(void)
     STEP_MOTOR2_TIM->SR = ~TIM_FLAG_CC2;
 
     step_motor[1].steps++;
+    if (pair_owned) {
+        if ((unsigned long)step_motor[1].steps >= pair_limit[1]) {
+            step_motor[1].timer->CR1 &= ~TIM_CR1_CEN;
+            step_motor[1].freq = 0;
+        }
+        return;
+    }
 
     switch(step_motor[1].current_state)
     {
@@ -686,4 +703,63 @@ void TIM3_IRQHandler(void)
     }
     UPDATE_FREQ(step_motor[1], step_motor[1].freq);
     //hal_step_motor_set_freq((HAL_STEP_MOTOR_HANDLE)&step_motor[1], step_motor[1].freq);
+}
+
+/* Finite moves count hardware toggle events; two events form a full STEP pulse.
+ * The pulse ISR stops at the target even if foreground path planning is busy. */
+void hal_step_motor_pair_stop(void)
+{
+    uint32_t mask = __get_PRIMASK(); __disable_irq();
+    for (int i=0;i<2;++i) {
+        if (step_motor[i].timer) step_motor[i].timer->CR1 &= ~TIM_CR1_CEN;
+        step_motor[i].freq=0;
+    }
+    pair_limit[0]=pair_limit[1]=0;
+    pair_owned=1;
+    __set_PRIMASK(mask);
+}
+void hal_step_motor_pair_start(long right, long left)
+{
+    uint32_t mask = __get_PRIMASK(); __disable_irq();
+    long distances[2]={right,left};
+    pair_owned=1;
+    for (int i=0;i<2;++i) {
+        step_motor_handle *h=&step_motor[i];
+        h->timer->CR1 &= ~TIM_CR1_CEN;
+        h->steps=0; h->freq=0; h->current_state=STATE_MAINTAIN;
+        pair_limit[i]=(unsigned long)(distances[i]<0 ? -distances[i] : distances[i]);
+        pair_limit[i]=(pair_limit[i]+1u)&~1u;
+        hal_step_motor_set_direction(h,distances[i]<0 ? DIRECTION_BKW : DIRECTION_FWD);
+        h->timer->CNT=0; h->timer->SR=0;
+    }
+    __set_PRIMASK(mask);
+}
+unsigned long hal_step_motor_pair_remaining(unsigned int wheel)
+{
+    if (wheel>1) return 0;
+    unsigned long count=(unsigned long)step_motor[wheel].steps, limit=pair_limit[wheel];
+    return count<limit ? limit-count : 0;
+}
+void hal_step_motor_pair_rate(unsigned long right, unsigned long left)
+{
+    uint32_t mask = __get_PRIMASK(); __disable_irq();
+    unsigned long rates[2]={right,left};
+    for (int i=0;i<2;++i) {
+        if (!hal_step_motor_pair_remaining(i)) rates[i]=0;
+        if (rates[i]>MAX_SPEED) rates[i]=MAX_SPEED;
+        step_motor_handle *h=&step_motor[i];
+        if (!rates[i]) { h->timer->CR1 &= ~TIM_CR1_CEN; h->freq=0; continue; }
+        h->timer->ARR=TIMER_FREQ/rates[i]-1;
+        if (!(h->timer->CR1 & TIM_CR1_CEN)) {
+            h->timer->EGR=TIM_EGR_UG;
+            h->timer->CNT=0; h->timer->SR=0;
+            h->timer->CR1 |= TIM_CR1_CEN;
+        }
+        h->freq=rates[i];
+    }
+    __set_PRIMASK(mask);
+}
+void hal_step_motor_pair_release(void)
+{
+    hal_step_motor_pair_stop(); pair_owned=0;
 }

@@ -243,4 +243,9 @@ void hal_step_motor_curve_rotate(HAL_STEP_MOTOR_HANDLE handle,
 int hal_step_motor_get_state(HAL_STEP_MOTOR_HANDLE handle);
 
 
+void hal_step_motor_pair_start(long right, long left);
+void hal_step_motor_pair_stop(void);
+void hal_step_motor_pair_rate(unsigned long right, unsigned long left);
+unsigned long hal_step_motor_pair_remaining(unsigned int wheel);
+void hal_step_motor_pair_release(void);
 #endif /* __HAL_STEP_MOTOR_H__ */
