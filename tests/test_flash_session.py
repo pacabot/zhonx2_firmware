@@ -5,12 +5,40 @@ import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location(
-    "flash_session", Path(__file__).resolve().parents[1] / ".scripts/build/flash_session.py")
+    "flash_session", Path(__file__).resolve().parents[1] / "scripts/flash/flash_session.py")
 flash = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flash)
 
 
 class FlashSessionTest(unittest.TestCase):
+    def test_selection(self):
+        self.assertEqual([name for name, _ in flash.images_for('app')],
+                         ['image-manifest.bin', 'application.ota.bin'])
+        self.assertEqual(flash.images_for('boot'), [('bootloader.bin', 0)])
+
+    def test_app_and_boot_preserve_other_image(self):
+        for mode in ('app', 'boot'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                session = Path(directory)
+                before = b'\xa5' * flash.FLASH_SIZE
+                (session / 'pre-flash.bin').write_bytes(before)
+                expected = bytearray(before)
+                if mode == 'app':
+                    expected[0xC000:0x20000] = b'\xff' * 0x14000
+                else:
+                    expected[:0x4000] = b'\xff' * 0x4000
+                for name, offset in flash.images_for(mode):
+                    data = b'\x42' * (32 if name == 'image-manifest.bin' else 100)
+                    (session / name).write_bytes(data)
+                    expected[offset:offset + len(data)] = data
+                (session / 'post-flash.bin').write_bytes(expected)
+                self.assertTrue(flash.verify(session, mode)['untouched_flash_verified'])
+                other = 0 if mode == 'app' else 0xC000
+                expected[other] ^= 1
+                (session / 'post-flash.bin').write_bytes(expected)
+                with self.assertRaises(ValueError):
+                    flash.verify(session, mode)
+
     def test_readback_and_preserved_sectors(self):
         for length, erase_end in [(0xD6D4, 0x20000), (0x10004, 0x40000),
                                   (0x60000, 0x80000)]:
@@ -24,7 +52,7 @@ class FlashSessionTest(unittest.TestCase):
                 expected = bytearray(before)
                 expected[:0x4000] = b'\xff' * 0x4000
                 expected[0xC000:erase_end] = b'\xff' * (erase_end - 0xC000)
-                for name, offset in flash.IMAGES:
+                for name, offset in flash.images_for('all'):
                     data = (session / name).read_bytes()
                     expected[offset:offset + len(data)] = data
                 (session / 'post-flash.bin').write_bytes(expected)

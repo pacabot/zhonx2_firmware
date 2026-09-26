@@ -45,15 +45,22 @@ def ihex(segments):
     return "\n".join(lines) + "\n"
 
 
-def package(directory):
+def package_app(directory):
     directory = Path(directory)
     data = (directory / "ZHONX_II_M4.bin").read_bytes()
     data += b"\xff" * (-len(data) % 4)
     validate(data)
+    (directory / "application.ota.bin").write_bytes(data)
+    (directory / "image-manifest.bin").write_bytes(manifest(data))
+    return data
+
+
+def package(directory):
+    directory = Path(directory)
+    data = package_app(directory)
     boot = (directory / "bootloader.bin").read_bytes()
     if len(boot) > 16384:
         raise ValueError("Bootloader exceeds sector zero")
-    (directory / "application.ota.bin").write_bytes(data)
     # Only initial installation: boot + metadata + app. No stage/saved data.
     (directory / "initial-install.hex").write_text(ihex([
         (0x08000000, boot), (0x0800C000, manifest(data)), (APP_BASE, data)]))
@@ -68,4 +75,8 @@ def package(directory):
 
 
 if __name__ == "__main__":
-    package(sys.argv[1] if len(sys.argv) > 1 else "build")
+    if len(sys.argv) > 1 and sys.argv[1] == "--app":
+        data = package_app(sys.argv[2] if len(sys.argv) > 2 else "build")
+        print(f"Application {len(data)} bytes")
+    else:
+        package(sys.argv[1] if len(sys.argv) > 1 else "build")

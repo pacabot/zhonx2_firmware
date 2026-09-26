@@ -193,7 +193,7 @@ restreint par le pont choisi, avant usage réel.
 
 ```sh
 # Seulement avec un pont qui implémente le contrat ci-dessus et le robot dans le BL :
-python3 tools/fw_upload.py build/application.ota.bin ADRESSE_DU_PONT
+python3 tools/fw_upload.py build/release/application.ota.bin ADRESSE_DU_PONT
 ```
 
 ### Coupures pendant une mise à jour
@@ -331,7 +331,8 @@ Les rendus de test sont `build/ui-maze.pgm` et `build/ui-prompt.pgm`.
 
 ### Installation des corrections — 26 septembre 2026
 
-Firmware `812789e` installé avec `.scripts/build/build.sh --test` via la ST-Link
+Firmware `812789e` installé avec la version antérieure de
+`.scripts/build/build.sh --test` via la ST-Link
 V2J16S4 à 1000 kHz. Sauvegarde préalable des 1 Mio, programmation puis comparaison
 complète : images conformes, secteurs de persistance et autres zones non écrites
 inchangés. Application de 54 996 octets, SHA-256

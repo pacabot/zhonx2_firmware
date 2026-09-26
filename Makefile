@@ -2,8 +2,10 @@ CC := arm-none-eabi-gcc
 OBJCOPY := arm-none-eabi-objcopy
 SIZE := arm-none-eabi-size
 
-BUILD := build
+BUILD ?= build
 TARGET := $(BUILD)/ZHONX_II_M4
+OPT ?= -O2
+DEBUG_FLAGS ?= -g3
 
 # Source set from the original ZHONX_II_M4 Xcode project.
 SOURCES := $(shell python3 tools/project_sources.py)
@@ -20,13 +22,14 @@ DEFINES := -DSTM32F405RG -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_
 INCLUDES := -Ifirmware/include -I. -Icmsis -Icmsis_boot -Icmsis_lib/include -Ipacabot -Ipacabot/include \
  -Ipacabot/include/app -Ipacabot/include/config -Ipacabot/include/oled \
  -Ipacabot/include/hal -Ipacabot/include/drivers -Ipacabot/include/util -Ipacabot/src
-CFLAGS := $(CPUFLAGS) $(DEFINES) $(INCLUDES) -std=gnu11 -O2 -g3 -fcommon \
+CFLAGS := $(CPUFLAGS) $(DEFINES) $(INCLUDES) -std=gnu11 $(OPT) $(DEBUG_FLAGS) -fcommon \
  -ffunction-sections -fdata-sections -MMD -MP
 LDFLAGS := $(CPUFLAGS) -Tpacabot_link.ld -Wl,--gc-sections,-Map=$(TARGET).map \
  --specs=nano.specs -lm
 
-.PHONY: all clean boot test package
-all: $(TARGET).elf $(TARGET).bin $(TARGET).hex boot package
+.PHONY: all app clean boot test package
+all: package
+app: $(TARGET).elf $(TARGET).bin $(TARGET).hex $(BUILD)/application.ota.bin
 
 $(BUILD)/firmware/%.o: CFLAGS += -Wall -Wextra -Werror
 
@@ -44,6 +47,9 @@ $(TARGET).bin: $(TARGET).elf
 $(TARGET).hex: $(TARGET).elf
 	$(OBJCOPY) -O ihex $< $@
 
+$(BUILD)/application.ota.bin: $(TARGET).bin tools/fw_package.py
+	python3 tools/fw_package.py --app $(BUILD)
+
 clean:
 	rm -rf $(BUILD)
 
@@ -55,12 +61,12 @@ BOOT_SOURCES := firmware/boot/startup.c firmware/boot/boot.c firmware/core/fw_cr
 boot: $(BUILD)/bootloader.bin
 $(BUILD)/bootloader.elf: Makefile $(BOOT_SOURCES) firmware/boot/boot.ld $(wildcard firmware/include/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Wall -Wextra -Werror -Os -nostartfiles $(BOOT_SOURCES) -Tfirmware/boot/boot.ld \
+	$(CC) $(CFLAGS) -Wall -Wextra -Werror -nostartfiles $(BOOT_SOURCES) -Tfirmware/boot/boot.ld \
 	 -Wl,--gc-sections,-Map=$(BUILD)/bootloader.map --specs=nano.specs -o $@
 	$(SIZE) $@
 $(BUILD)/bootloader.bin: $(BUILD)/bootloader.elf
 	$(OBJCOPY) -O binary $< $@
-package: $(TARGET).bin $(BUILD)/bootloader.bin
+package: app boot
 	python3 tools/fw_package.py $(BUILD)
 test:
 	@mkdir -p $(BUILD)
