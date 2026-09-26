@@ -7,6 +7,7 @@
 #include "hal/hal_sensor.h"
 #include "hal/hal_step_motor.h"
 #include <math.h>
+#include <string.h>
 #define TICKS_PER_MM (2.0f * (float)STEPS_PER_MM)
 static volatile int active, fault;
 static int straight, allow_wall, wall_arrival;
@@ -14,11 +15,18 @@ static int calibration, travel_sign;
 static uint32_t travel_ticks;
 static uint32_t cell_pitch_um=CELL_LENGTH*1000u, front_allowance_um;
 static int front_calibrated;
+static fw_rotation_data_t rotation_profile;
 static float velocity, cruise;
 static wall_control_t wall;
 static uint32_t last_scan, started;
 static const float max_accel = 800.0f; /* mm/s^2 */
 static const float end_speed = 40.0f; /* Avoid the former 5 mm/s crawl at every cell. */
+void fw_motion_rotation_profile(const fw_rotation_data_t *data)
+{
+    if (active) return;
+    if (fw_rotation_valid(data)) rotation_profile=*data;
+    else memset(&rotation_profile,0,sizeof rotation_profile);
+}
 void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 {
     if (active) return;
@@ -61,7 +69,7 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     TIM_Cmd(TIM5,DISABLE); /* New controller exclusively owns speed corrections. */
     straight=is_straight; allow_wall=accept_wall; wall_arrival=0;
     calibration=calibrating;
-    cruise=(float)speed; velocity=fminf(calibration?5.0f:end_speed,cruise);
+    cruise=(float)speed; velocity=fminf(calibration==1?5.0f:end_speed,cruise);
     started=hal_os_get_systicks();
     wall_control_reset(&wall); last_scan=scan.sequence;
     hal_step_motor_pair_start(right,left);
@@ -84,10 +92,13 @@ int fw_motion_straight_to(unsigned cells, unsigned speed, int accept_wall)
 static int turn(int degrees,int calibrating)
 {
     if (degrees!=90 && degrees!=-90 && degrees!=180 && degrees!=-180) return -1;
-    long ticks=lroundf(fabsf((float)degrees)*((float)M_PI/180.0f)*
-                      ((float)WHEELS_DISTANCE/2.0f)*TICKS_PER_MM);
+    unsigned speed=calibrating?40:120;
+    uint32_t quarter=fw_rotation_quarter(&rotation_profile,speed,degrees<0);
+    float distance=quarter?(float)quarter*0.001f*fabsf((float)degrees)/90.0f:
+        fabsf((float)degrees)*((float)M_PI/180.0f)*((float)WHEELS_DISTANCE/2.0f);
+    long ticks=lroundf(distance*TICKS_PER_MM);
     /* Motor zero is the right wheel. Clockwise: right backwards, left forwards. */
-    return start(degrees>0 ? -ticks : ticks, degrees>0 ? ticks : -ticks,calibrating?40:120,0,0,calibrating);
+    return start(degrees>0 ? -ticks : ticks, degrees>0 ? ticks : -ticks,speed,0,0,0);
 }
 int fw_motion_turn(int degrees) { return turn(degrees,0); }
 int fw_motion_calibration_turn(int degrees) { return turn(degrees,1); }
@@ -96,6 +107,20 @@ int fw_motion_calibration_move(int32_t um,unsigned speed)
     if (!um || um<-180000 || um>180000 || speed<5 || speed>30) return -1;
     long pulses=lroundf((float)um*0.001f*TICKS_PER_MM);
     return start(pulses,pulses,speed,0,0,1);
+}
+int fw_motion_calibration_traverse(int32_t um,unsigned speed)
+{
+    if (!um || um<-300000 || um>300000 || speed<40 || speed>220) return -1;
+    long pulses=lroundf((float)um*0.001f*TICKS_PER_MM);
+    return start(pulses,pulses,speed,0,0,2);
+}
+int fw_motion_calibration_spin(int32_t um,unsigned speed)
+{
+    if (!um || um<-1600000 || um>1600000 || speed<40 || speed>120) return -1;
+    long pulses=lroundf((float)um*0.001f*TICKS_PER_MM);
+    int r=start(-pulses,pulses,speed,0,0,2);
+    if (!r) travel_sign=um<0?-1:1;
+    return r;
 }
 void fw_motion_tick(uint32_t now)
 {
@@ -128,8 +153,8 @@ void fw_motion_tick(uint32_t now)
     float distance=(float)remaining/TICKS_PER_MM;
     /* Braking-distance envelope with bounded acceleration; no proportional
      * asymptotic tail and no speed-dependent discontinuity near the endpoint. */
-    float accel=calibration?100.0f:max_accel;
-    float floor=fminf(calibration?5.0f:end_speed,cruise);
+    float accel=calibration==1?100.0f:max_accel;
+    float floor=fminf(calibration==1?5.0f:end_speed,cruise);
     float target=fminf(cruise,sqrtf(floor*floor+2.0f*accel*distance));
     float change=target-velocity, step=accel*0.001f;
     if (change>step) change=step;

@@ -47,8 +47,9 @@ typedef struct {
     uint8_t previous[2], count[2], seen[2];
     int outward, bad;
 } sweep_t;
-static void observe(void *context,int32_t travelled,uint8_t raw)
+static void observe(void *context,int32_t travelled,uint8_t raw,uint8_t filtered)
 {
+    (void)filtered;
     sweep_t *s=context;
     uint32_t distance=(uint32_t)((int32_t)s->origin-travelled);
     for (unsigned i=0;i<2;++i) {
@@ -68,12 +69,23 @@ static int move(const fw_cal_io_t *io,int32_t um)
 static int seat(const fw_cal_io_t *io,const fw_cal_geometry_t *g,uint32_t distance)
 {
     uint8_t raw;
-    status(io,"APPUI LENT MUR",distance);
+    status(io,"SLOW WALL CONTACT",distance);
     if (move(io,(int32_t)(distance-g->nose_um+OVERTRAVEL)) || io->read(io->context,&raw))
         return FW_CAL_MOTION;
     return (raw&(F5|F10))?FW_CAL_WALLS:0;
 }
 /* Return to the original heading after every lateral measurement. */
+int fw_cal_reference(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side)
+{
+    if (!io || !fw_cal_geometry_valid(g) || side>1) return FW_CAL_GEOMETRY;
+    int angle=side?90:-90;
+    if (io->turn(io->context,angle)) return FW_CAL_MOTION;
+    int r=seat(io,g,g->inner_um-g->nose_um); if (r) return r;
+    if (move(io,-(int32_t)(g->inner_um/2-g->nose_um)) || io->turn(io->context,-angle))
+        return FW_CAL_MOTION;
+    r=seat(io,g,g->inner_um-g->nose_um); if (r) return r;
+    return move(io,-(int32_t)(g->inner_um/2-g->nose_um))?FW_CAL_MOTION:0;
+}
 static int side_point(const fw_cal_io_t *io,const fw_cal_geometry_t *g,
                       unsigned side,uint32_t *position,uint32_t distance,int *detected,int *axis_known)
 {
@@ -88,7 +100,7 @@ static int side_point(const fw_cal_io_t *io,const fw_cal_geometry_t *g,
         return FW_CAL_MOTION;
     *axis_known=1;
     if (raw&(side?R10:L10)) return FW_CAL_WALLS;
-    status(io,side?"MESURE DROITE 5":"MESURE GAUCHE 5",distance);
+    status(io,side?"RIGHT 5CM SAMPLE":"LEFT 5CM SAMPLE",distance);
     *detected=!(raw&(side?R5:L5));
     if (io->turn(io->context,side?90:-90)) return FW_CAL_MOTION;
     *position=distance;
@@ -116,7 +128,7 @@ int fw_cal_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,fw_cal_data_t *o
             if ((raw&(F5|F10))!=(outward?0:(F5|F10))) return FW_CAL_RANGE;
             sweep_t sweep={.origin=outward?g->nose_um:g->inner_um,.outward=outward};
             sweep.previous[0]=!!(raw&F5); sweep.previous[1]=!!(raw&F10);
-            status(io,outward?"RECUL F5 / F10":"AVANCE F5 / F10",sweep.origin);
+            status(io,outward?"REVERSE F5 / F10":"FORWARD F5 / F10",sweep.origin);
             int32_t travel=(int32_t)(g->inner_um-g->nose_um);
             if (io->move(io->context,outward?-travel:travel,10,observe,&sweep)) return FW_CAL_MOTION;
             if (sweep.bad) return FW_CAL_UNSTABLE;

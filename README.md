@@ -58,10 +58,12 @@ La branche `fw/remote-update-motion-nimes` ajoute le bootloader SPI, les sauvega
 transactionnelles, le solveur Nîmes 9×9 et le pilotage asynchrone. Voir
 [architecture, protocole, usage et limites des validations](docs/FIRMWARE.md).
 
-Le menu `prameters` → `Calibration IR` mesure les seuils frontaux 5/10 cm et
-les zones de déclenchement latérales 5 cm dans une case à trois murs, affiche
-un rapport et le sauvegarde avec la carte. Renseigner d'abord la cote axe–avant
-et la largeur hors tout ; voir la [procédure de calibration](docs/FIRMWARE.md#calibration-des-capteurs-binaires-dans-une-case-à-trois-murs).
+Le menu anglais `Calibration` regroupe `Wall calibration`, `Rotation cal.` et
+`Corner detection` (montages gauche/droit), leurs rapports et la sauvegarde flash.
+La géométrie par défaut est de 47 mm entre axe et avant, 94 mm de largeur,
+167 mm entre faces de murs et 179 mm de pas. Voir la
+[procédure et les montages](docs/FIRMWARE.md#calibration-des-capteurs-binaires-dans-une-case-à-trois-murs).
+Le menu du labyrinthe s'appelle désormais `9x9 maze`.
 
 Le mode `--all` produit aussi `bootloader.bin`, `application.ota.bin`,
 `initial-install.hex` et les empreintes dans `firmware-manifest.json` sous le profil choisi.

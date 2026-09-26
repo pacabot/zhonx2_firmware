@@ -13,7 +13,7 @@ typedef struct {
     fw_cal_front_t front[2]; /* F5, F10: continuous approach/recession thresholds. */
     fw_cal_side_t side[2]; /* L5, R5: static 1 mm brackets, not optical hysteresis. */
 } fw_cal_data_t;
-typedef void (*fw_cal_observer)(void *, int32_t travelled_um, uint8_t raw);
+typedef void (*fw_cal_observer)(void *, int32_t travelled_um, uint8_t raw, uint8_t filtered);
 typedef struct {
     void *context;
     int (*move)(void *, int32_t um, unsigned mm_s, fw_cal_observer, void *);
@@ -26,4 +26,7 @@ enum { FW_CAL_OK=0, FW_CAL_GEOMETRY=-1, FW_CAL_WALLS=-2,
 int fw_cal_geometry_valid(const fw_cal_geometry_t *);
 int fw_cal_valid(const fw_cal_data_t *);
 int fw_cal_run(const fw_cal_io_t *, const fw_cal_geometry_t *, fw_cal_data_t *);
+/* Establish both coordinates by seating on the selected side, then the front.
+ * side: 0=left, 1=right; the caller verifies the required walls before movement. */
+int fw_cal_reference(const fw_cal_io_t *, const fw_cal_geometry_t *, unsigned side);
 #endif

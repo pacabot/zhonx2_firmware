@@ -37,6 +37,7 @@ static void setup(void)
     now=100; scan=(hal_sensor_snapshot){100,10,0x3f,0x3f};
     fw_motion_init(); assert(disabled);
     fw_motion_geometry(0,0,0);
+    fw_motion_rotation_profile(0);
 }
 static void tick(int fresh)
 {
@@ -122,6 +123,31 @@ int main(void)
     assert(!fw_motion_straight_to(1,220,1));
     for(int i=0;i<100;++i) tick(1);
     scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
+    setup();
+    fw_rotation_data_t profile={.valid=1,.geometry={47000,94000,167000,179000}};
+    for(unsigned i=0;i<3;++i) profile.point[i]=(fw_rotation_point_t){
+        .speed=40+40*i,.quarter_um={66000+100*i,65000+100*i}};
+    fw_motion_rotation_profile(&profile);
+    assert(!fw_motion_turn(90));
+    assert(commanded[0]==-lroundf(66.2f*2.f*(float)STEPS_PER_MM));
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_turn(-180));
+    assert(commanded[0]==lroundf(130.4f*2.f*(float)STEPS_PER_MM));
+    while(fw_motion_busy()) tick(1);
+    assert(!fw_motion_calibration_turn(-90));
+    assert(commanded[0]==lroundf(65.f*2.f*(float)STEPS_PER_MM));
+    while(fw_motion_busy()) tick(1);
+    for(int dir=-1;dir<=1;dir+=2) {
+        assert(!fw_motion_calibration_spin(dir*67000,80));
+        while(fw_motion_busy()) tick(1);
+        assert(abs(fw_motion_travelled_um()-dir*67000)<30);
+    }
+    assert(!fw_motion_calibration_traverse(-200000,220));
+    while(fw_motion_busy()) tick(1);
+    assert(abs(fw_motion_travelled_um()+200000)<30 && !fw_motion_fault());
+    assert(fw_motion_calibration_traverse(300001,220));
+    assert(fw_motion_calibration_spin(1600001,120));
+    puts("motion: measured CW/CCW budgets, spin sign, free traverse and bounds");
     puts("motion: signed calibration travel, bounded contact, stale stop, calibrated final-cell budget");
     return 0;
 }

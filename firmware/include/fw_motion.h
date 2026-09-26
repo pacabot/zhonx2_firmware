@@ -1,6 +1,7 @@
 #ifndef FW_MOTION_H
 #define FW_MOTION_H
 #include <stdint.h>
+#include "fw_cal_extra.h"
 void fw_motion_init(void);
 /* Nonblocking: whole calibrated cells, speeds in mm/s, clockwise turns in degrees. */
 int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
@@ -12,6 +13,9 @@ int fw_motion_turn(int clockwise_degrees);
  * Only the calibration menu may use these; stale sensors still stop the robot. */
 int fw_motion_calibration_move(int32_t distance_um, unsigned speed_mm_s);
 int fw_motion_calibration_turn(int clockwise_degrees);
+int fw_motion_calibration_spin(int32_t wheel_um,unsigned speed_mm_s);
+int fw_motion_calibration_traverse(int32_t distance_um,unsigned speed_mm_s);
+void fw_motion_rotation_profile(const fw_rotation_data_t *);
 int32_t fw_motion_travelled_um(void);
 void fw_motion_geometry(uint32_t pitch_um, uint32_t front_on_um, uint32_t inner_um);
 void fw_motion_tick(uint32_t now_ms);

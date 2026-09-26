@@ -2,6 +2,7 @@
 #define FW_APP_H
 #include <stdint.h>
 #include "fw_calibration.h"
+#include "fw_cal_extra.h"
 void fw_app_init(void);
 int fw_app_discover(void);
 int fw_app_resume(void);
@@ -17,4 +18,14 @@ const fw_cal_data_t *fw_app_calibration(void);
 int fw_app_calibration_commit(const fw_cal_data_t *);
 int fw_calibrate_menu(void);
 int fw_calibration_report(void);
+const fw_rotation_data_t *fw_app_rotation(void);
+const fw_corner_data_t *fw_app_corner(unsigned reference_side);
+int fw_app_rotation_commit(const fw_rotation_data_t *);
+int fw_app_corner_commit(const fw_corner_data_t *);
+int fw_rotation_menu(void);
+int fw_rotation_report(void);
+int fw_corner_left_menu(void);
+int fw_corner_right_menu(void);
+int fw_corner_report(void);
+extern int fw_cal_post_mm;
 #endif

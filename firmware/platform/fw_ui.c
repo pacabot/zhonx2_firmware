@@ -39,9 +39,9 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t p,const char *status,
     snprintf(text,sizeof text,"%u MM/S",speed); ssd1306DrawString(60,20,text,&Font_3x6);
     snprintf(text,sizeof text,"%lu:%02lu",(unsigned long)(ms/60000),(unsigned long)(ms/1000%60));
     ssd1306DrawString(60,29,text,&Font_3x6);
-    snprintf(text,sizeof text,"MURS %c%c%c",(sensors&0x20)?'-':'G',(sensors&0x08)?'-':'F',(sensors&0x01)?'-':'D');
+    snprintf(text,sizeof text,"WALL %c%c%c",(sensors&0x20)?'-':'L',(sensors&0x08)?'-':'F',(sensors&0x01)?'-':'R');
     ssd1306DrawString(60,38,text,&Font_3x6);
     snprintf(text,sizeof text,"IR %02X",sensors); ssd1306DrawString(60,47,text,&Font_3x6);
-    ssd1306DrawString(60,56,"RETOUR:STOP",&Font_3x6);
+    ssd1306DrawString(60,56,"BACK:STOP",&Font_3x6);
     ssd1306Refresh();
 }

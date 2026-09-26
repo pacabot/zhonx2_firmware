@@ -70,18 +70,18 @@ extern app_config app_context;
 
 menuItem maze_menu =
 {
-    "NIMES 9x9",
+    "9x9",
     {
-        {"Explorer",'f',fw_app_discover},
-        {"Reprendre au depart",'f',fw_app_resume},
-        {"Course du depart",'f',fw_app_run},
-        {"Voir carte",'f',fw_app_show_map},
-        {"Corner 0SW1SE2NE3NW",'i',(void*)&fw_start_corner},
-        {"Head 0N 1E 2S 3W",'i',(void*)&fw_start_heading},
-        {"Exploration mm/s",'i',(void*)&fw_search_speed},
-        {"Course mm/s",'i',(void*)&fw_run_speed},
-        {"Sauver carte/regl.",'f',fw_app_save},
-        {"Charger sauvegarde",'f',fw_app_restore},
+        {"Explore",'f',fw_app_discover},
+        {"Resume from start",'f',fw_app_resume},
+        {"Run from start",'f',fw_app_run},
+        {"Show map",'f',fw_app_show_map},
+        {"Corner 0..3",'i',(void*)&fw_start_corner},
+        {"Heading 0..3",'i',(void*)&fw_start_heading},
+        {"Search mm/s",'i',(void*)&fw_search_speed},
+        {"Run mm/s",'i',(void*)&fw_run_speed},
+        {"Save map/settings",'f',fw_app_save},
+        {"Load saved data",'f',fw_app_restore},
         {NULL,0,NULL}
     }
 };
@@ -90,10 +90,8 @@ menuItem motor_menu=
     "MOTOR MENU",
     {
 		{"Random move",'f',				null},
-		{"Rotate calib.",'f',			test_motor_rotate},
-		{"Distance calib.",'f',			distance_cal},
 		{"Stepper motor move",'f',		test_step_motor_driver},
-		{"Test moteur",'f',		test_hal_step_motor},
+		{"Motor test",'f',		test_hal_step_motor},
 		{(char*)NULL,	0,				NULL}
     }
 };
@@ -106,7 +104,7 @@ menuItem testGraphicMenu =
 		{"Default accel :",'l',			(void*)&toto},
 		{"Max speed dist:",'l',			(void*)&titi},
 		{"Default accel :",'l',			(void*)&tata},
-		{"graphique",'g',null},
+		{"Graph",'g',null},
 		{(char*)NULL,	0,				NULL}
     }
 };
@@ -138,35 +136,50 @@ menuItem sensor_settings =
     "COLOR SENSOR SETTINGS",
     {
 		{"Enabled?      :",'b',			(void*)&zhonxSettings.color_sensor_enabled},
-		{"Calibrate color",'f',			sensor_calibrate},
 		{"Threshold val :",'l',			(void*)&zhonxSettings.threshold_color},
 		{"End Greater?  :",'b',			(void*)&zhonxSettings.threshold_greater},
 		{(char*)NULL,	0,				NULL}
     }
 };
-static menuItem ir_calibration_menu=
+static menuItem corner_calibration_menu=
 {
-    "CALIBRATION IR",
+    "CORNER DETECTION",
     {
-        {"Lancer calibration",'f',fw_calibrate_menu},
-        {"Rapport memorise",'f',fw_calibration_report},
-        {"Axe-avant x0.1mm",'i',(void*)&fw_cal_nose_tenth_mm},
-        {"Largeur x0.1mm",'i',(void*)&fw_cal_width_tenth_mm},
-        {"Interieur mm",'i',(void*)&fw_cal_inner_mm},
-        {"Pas cellule mm",'i',(void*)&fw_cal_pitch_mm},
+        {"Left wall fixture",'f',fw_corner_left_menu},
+        {"Right wall fixture",'f',fw_corner_right_menu},
+        {"Corner report",'f',fw_corner_report},
+        {"Post ctr mm",'i',(void*)&fw_cal_post_mm},
+        {NULL,0,NULL}
+    }
+};
+static menuItem calibration_menu=
+{
+    "CALIBRATION",
+    {
+        {"Wall calibration",'f',fw_calibrate_menu},
+        {"Rotation cal.",'f',fw_rotation_menu},
+        {"Corner detection",'m',(void*)&corner_calibration_menu},
+        {"Wall report",'f',fw_calibration_report},
+        {"Rotation report",'f',fw_rotation_report},
+        {"Manual turn test",'f',test_motor_rotate},
+        {"Distance calib.",'f',distance_cal},
+        {"Color calibration",'f',sensor_calibrate},
+        {"Nose x0.1mm",'i',(void*)&fw_cal_nose_tenth_mm},
+        {"Width x0.1mm",'i',(void*)&fw_cal_width_tenth_mm},
+        {"Cell clear mm",'i',(void*)&fw_cal_inner_mm},
+        {"Cell pitch mm",'i',(void*)&fw_cal_pitch_mm},
         {NULL,0,NULL}
     }
 };
 menuItem paramters_menu=
 {
-		"parameters menu",
+		"PARAMETERS",
 		{
 			{"Motion settings",'m',			(void*)&motion_settings},
 			{"PID settings",'m',			(void*)&PID_settings},
 			{"Sensor settings",'m',			(void*)&sensor_settings},
-            {"Calibration IR",'m',(void*)&ir_calibration_menu},
-            {"Sauver carte/regl.",'f',fw_app_save},
-            {"Charger sauvegarde",'f',fw_app_restore},
+            {"Save map/settings",'f',fw_app_save},
+            {"Load saved data",'f',fw_app_restore},
 			{(char*)NULL,	0,				NULL}
 //			{"Save settings",'m',			&save_settings},
 //			{"Restore settings",'m',		&restore_settings}
@@ -184,7 +197,7 @@ static const menuItem oled_menu =
 };
 menuItem tests_menu=
 {
-		"test menu",
+		"TESTS",
 		{
 				{"test bezier",'f',				test_bezier_menu},
 				{"Test ADC",'f',				test_hal_adc},
@@ -200,12 +213,13 @@ menuItem tests_menu=
 };
 menuItem menu_c =
 {
-		"ZHONX II NIMES",
+		"ZHONX II 9x9",
 		{
-			{"Maze menu",'m',			(void*)&maze_menu },
-			{"prameters",'m',			(void*)&paramters_menu},
-			{"test menu",'m',			(void*)&tests_menu},
-			{"beeper enabled?",'b',		(void*)&zhonxSettings.beeper_enabled},
+			{"9x9 maze",'m',			(void*)&maze_menu },
+			{"Calibration",'m',(void*)&calibration_menu},
+            {"Parameters",'m',			(void*)&paramters_menu},
+			{"TESTS",'m',			(void*)&tests_menu},
+			{"Beeper enabled?",'b',		(void*)&zhonxSettings.beeper_enabled},
 			{"Firmware update",'f',fw_app_bootloader},
 			{(char*)NULL,	0,				NULL}
 		}

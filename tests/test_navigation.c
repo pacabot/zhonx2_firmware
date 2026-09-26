@@ -62,6 +62,7 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
 void fw_motion_init(void) { busy=stopped=wall_arrival=0; }
 void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 { applied_pitch=pitch;(void)front;(void)inner; }
+void fw_motion_rotation_profile(const fw_rotation_data_t *d) { (void)d; }
 void fw_motion_stop(void) { busy=0; }
 int fw_motion_busy(void) { return busy; }
 int fw_motion_fault(void) { return stopped; }
@@ -101,7 +102,7 @@ void fw_test_idle(void)
         if(inject_obstacle && moves==1 && turns==0) stopped=2;
         else physical=destination;
     }
-    if(!strcmp(last_status,"CHEMIN OPTIMAL") || !strcmp(last_status,"OBSTACLE HORS CASE")) {
+    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE")) {
         if(!ack++) test_gpioc.IDR &= ~GPIO_Pin_11;
         else test_gpioc.IDR |= GPIO_Pin_11;
     }
@@ -127,11 +128,11 @@ static void scenario(int obstacle)
     assert(saves==1);
     if(!obstacle) {
         assert(!result && moves>=8 && turns>=4 && wall_arrivals>=2 && draws>=10);
-        assert(physical.x==0 && physical.y==0 && !strcmp(last_status,"CHEMIN OPTIMAL"));
+        assert(physical.x==0 && physical.y==0 && !strcmp(last_status,"OPTIMAL PATH"));
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
     } else {
         assert(result==-1 && fw_last_stop_code==2 && moves==1);
-        assert(!strcmp(last_status,"OBSTACLE HORS CASE"));
+        assert(!strcmp(last_status,"EARLY OBSTACLE"));
     }
 }
 static void calibration_snapshot(void)
@@ -140,19 +141,40 @@ static void calibration_snapshot(void)
       .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
     assert(fw_cal_valid(&d));
     fw_motion_init(); assert(!fw_app_calibration_commit(&d));
-    assert(saved_schema==3 && applied_pitch==179000);
+    assert(saved_schema==4 && applied_pitch==179000);
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_cal_data_t changed=d; changed.front[0].on_um=75000;
     save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
     assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
-    size_t legacy_size=saved_size-sizeof d;
+    size_t legacy_size=saved_size-sizeof d-sizeof(fw_rotation_data_t)-2*sizeof(fw_corner_data_t);
+    saved_schema=3; saved_size=legacy_size+sizeof d;
+    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     unsigned char legacy[2048]; memcpy(legacy,saved_snapshot,legacy_size);
     saved_schema=2; saved_size=legacy_size;
-    fw_app_init(); assert(!fw_cal_valid(fw_app_calibration()) && !applied_pitch);
+    fw_app_init(); assert(!fw_cal_valid(fw_app_calibration()) && applied_pitch==179000);
     assert(!fw_app_calibration_commit(&d));
     assert(!memcmp(saved_snapshot,legacy,legacy_size));
-    puts("snapshot: calibration reboot, failed-save rollback, schema 2 migration retains settings and map");
+    fw_rotation_data_t rotation={.valid=1,.geometry=d.geometry};
+    for(unsigned i=0;i<3;++i) rotation.point[i]=(fw_rotation_point_t){.speed=40+40*i,.quarter_um={66000,65000}};
+    assert(!fw_app_rotation_commit(&rotation));
+    fw_corner_data_t corner={.valid=1,.side=0,.post_um=173000,.geometry=d.geometry};
+    for(unsigned f=0;f<2;++f) for(unsigned i=0;i<3;++i)
+        corner.point[f][i]=(fw_corner_point_t){.speed=i==0?40:i==1?120:220,.mask=2,
+            .raw_open_um={0,10000},.raw_close_um={0,8000},.open_um={0,12000},.close_um={0,7000}};
+    assert(!fw_app_corner_commit(&corner));
+    fw_app_init();
+    assert(!memcmp(fw_app_rotation(),&rotation,sizeof rotation));
+    assert(!memcmp(fw_app_corner(0),&corner,sizeof corner));
+    save_failure=1; assert(fw_app_rotation_commit(&rotation)); save_failure=0;
+    assert(!memcmp(fw_app_corner(0),&corner,sizeof corner));
+    assert(!fw_app_rotation_commit(&rotation));
+    fw_app_init(); assert(!fw_app_corner(0)->valid);
+    assert(!fw_app_corner_commit(&corner));
+    rotation.geometry.nose_um=47000; rotation.geometry.width_um=94000;
+    assert(!fw_app_rotation_commit(&rotation));
+    fw_app_init(); assert(!fw_app_calibration()->valid && !fw_app_corner(0)->valid);
+    puts("snapshot: schema 2/3 migration, complete profiles reboot, save rollback, dependent calibration invalidation");
 }
 int main(void)
 {

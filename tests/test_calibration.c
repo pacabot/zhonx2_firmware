@@ -63,9 +63,9 @@ static int move_robot(void *context,int32_t um,unsigned speed,fw_cal_observer sa
         if(r->heading==1 && r->x>127000) r->x=127000;
         if(r->heading==3 && r->x<40000) r->x=40000;
         uint8_t bits=sensors(r);
-        if(sample) sample(data,sign*moved,bits);
+        if(sample) sample(data,sign*moved,bits,bits);
     }
-    for(unsigned i=0;i<5;++i) if(sample) sample(data,um,sensors(r));
+    for(unsigned i=0;i<5;++i) if(sample) sample(data,um,r->bits,r->bits);
     return 0;
 }
 static int turn_robot(void *context,int degrees)

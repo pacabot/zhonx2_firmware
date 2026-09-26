@@ -345,15 +345,13 @@ encore les déplacements, le départ à la main ni l'exploration sur le terrain.
 
 ## Calibration des capteurs binaires dans une case à trois murs
 
-Menu `prameters` → `Calibration IR` : `Lancer calibration`, `Rapport memorise`,
-`Axe-avant x0.1mm`, `Largeur x0.1mm`, `Interieur mm`, `Pas cellule mm`.
-La procédure démarre uniquement après l'action `DROITE: LANCER` ; Retour arrête
+Menu `Calibration` → `Wall calibration`, rapport `Wall report`.
+Réglages : `Nose x0.1mm`, `Width x0.1mm`, `Cell clear mm`, `Cell pitch mm`.
+La procédure démarre uniquement après l'action `RIGHT: START` ; Retour arrête
 les moteurs pendant toute la mesure. Elle n'est jamais lancée au démarrage.
 
-Avant le premier essai, renseigner la distance de l'axe des roues au point avant
-qui touche le mur et la largeur hors tout, roues comprises. Ces deux dimensions
-restent à zéro tant qu'elles ne sont pas connues : la calibration refuse alors
-le départ. Le calcul d'encombrement suppose le robot centré sur l'axe des roues,
+Les cotes fournies sont préremplies : **47 mm entre axe et avant, 94 mm de largeur**
+(robot carré). Le calcul d'encombrement suppose le robot centré sur l'axe des roues,
 avec le même encombrement devant et derrière. Il vérifie le rayon balayé par ce
 rectangle avec 2 mm de marge avant d'autoriser les positions de mesure latérales.
 Les valeurs 167 mm entre faces et 179 mm entre axes de murs sont préremplies,
@@ -403,13 +401,13 @@ résultat partiel ne remplace la calibration sauvegardée. Les mouvements de con
 sont réservés à cette procédure : distance bornée à 180 mm, vitesse au plus 30 mm/s,
 rotations à 40 mm/s par roue, bouton Retour et surveillance des acquisitions actifs.
 
-Le snapshot passe au schéma 3 et importe les anciens schémas 1/2 sans perdre
+Le snapshot utilise le schéma 4 et importe les anciens schémas 1/2/3 sans perdre
 réglages ou carte. Le choix du secteur à effacer prend désormais en compte le
 dernier snapshot valide, même d'un autre schéma, pour conserver une copie lors
 d'une coupure pendant la migration.
 
-Après calibration réussie, les déplacements par case utilisent le pas mesuré/saisi
-(179 mm par défaut). À l'approche d'un mur final, le seuil frontal F5 mesuré définit
+Les déplacements par case utilisent le pas saisi (179 mm par défaut, également
+sans calibration). Après calibration des murs, à l'approche d'un mur final, le seuil frontal F5 mesuré définit
 la zone de détection attendue. Le robot termine son budget de pas jusqu'au centre,
 au lieu de déclarer immédiatement une arrivée jusqu'à 30 mm avant celui-ci.
 Un obstacle plus précoce reste un défaut. Les seuils latéraux sont mémorisés et
@@ -423,3 +421,115 @@ tests des déplacements signés réels du contrôleur, arrêt sur acquisition p�
 arrivée calibrée, restauration après redémarrage, échec de sauvegarde et coupures
 pendant migration des deux secteurs. La calibration et la précision des
 trajectoires restent à vérifier sur le robot avec les dimensions réelles.
+
+
+## Calibration de rotation avec les capteurs tout ou rien
+
+`Calibration` → `Rotation cal.`, dans la même case à trois murs, robot au centre,
+face au mur du fond, ouverture derrière. Les appuis successifs sur le mur gauche
+puis frontal établissent les deux références. Aucun module ou capteur supplémentaire
+n'est nécessaire. Durée : plusieurs minutes ; `BACK` interrompt les moteurs.
+
+La référence optique est le milieu du **plus grand intervalle libre du capteur
+frontal 10 cm**, correspondant à l'ouverture arrière. Ce repère réapparaît tous
+les 360° pour le même capteur et le même sens. La différence entre passages
+annule l'angle de montage fixe et le seuil propre au capteur. Si plusieurs
+intervalles rendent la période ambiguë ou si aucun repère n'est exploitable,
+la calibration est refusée.
+
+Pour chacune des vitesses **40, 80 et 120 mm/s par roue**, dans les deux sens :
+
+1. Appuis et recentrage ; cinq tours nominaux pour estimer la période en course
+   de roue. L'entraxe effectif vaut `course par tour / pi`.
+2. Retour à une orientation de tour complet, puis **16 quarts de tour avec
+   arrêts**, suivant le profil d'accélération/freinage réellement utilisé.
+   Jusqu'à trois passes corrigent le budget de pas à partir de la période optique.
+3. Lorsque le frontal 5 cm sépare les trois murs en trois zones détectées,
+   leurs centres fournissent aussi un contrôle optique à 90°. Un écart supérieur
+   à 2° rejette la mesure. Sinon le rapport indique explicitement
+   `90: PERIOD / 4 ONLY` : seule la division de la période est disponible.
+4. Sauvegarde après réussite des six profils ; rapport `Rotation report` :
+   entraxe effectif, course pour 90°, dispersion des périodes et contrôle à 90°.
+
+La correction est appliquée aux virages normaux (120 mm/s par roue) et aux
+rotations de référence (40 mm/s), séparément CW/CCW. L'API interpole entre profils
+mesurés, sans extrapolation. Un demi-tour utilise deux fois le budget du quart de
+tour ; son effet de glissement propre n'est pas calibré indépendamment.
+
+Il s'agit d'un **entraxe effectif**, incluant les effets reproductibles de roulement,
+non d'une mesure mécanique des roues. Les appuis et le sol doivent être répétables.
+La littérature [UMBmark, Borenstein et Feng](https://websites.umich.edu/~ykoren/uploads/Umbmark.pdf)
+distingue les erreurs systématiques d'entraxe des erreurs dues au sol et au
+glissement, et motive les essais dans les deux sens. La référence optique de la
+case à trois murs et les séquences décrites ici sont l'implémentation de ce projet,
+pas le parcours carré UMBmark. Un tour correct ne garantit pas à lui seul chaque
+quart de tour ; le contrôle F5 et l'essai réel restent nécessaires.
+
+## Calibration de détection d'angle et de porte
+
+`Calibration` → `Corner detection` → `Left wall fixture` ou `Right wall fixture`.
+Faire les deux montages. La calibration de rotation doit être enregistrée pour
+la même géométrie. Chaque lancement commence dans la case d'angle : mur frontal,
+un seul mur latéral, côté opposé ouvert. Une portion droite libre d'au moins deux
+cases prolonge le trajet derrière le robot.
+
+Exemple du montage gauche, vu de dessus :
+
+```text
+           mur frontal
+       +-------------------
+       |       ^ robot     côté droit ouvert
+       |       |           axe à 83,5 mm de la face frontale
+       |
+       # poteau de fin du mur gauche
+               |           parcours aller/retour
+               |
+```
+
+`Post ctr mm` est la distance **face intérieure du mur frontal → centre du poteau**.
+Par défaut **173 mm** : 167 mm libres + 6 mm (demi-épaisseur du mur de 12 mm).
+Ce n'est pas le pas de 179 mm entre centres de murs. Modifier cette cote si le
+montage réel diffère ; elle est enregistrée avec chaque résultat.
+
+- Appui sur le mur latéral choisi, recul au centre, rotation vers le mur frontal,
+  appui frontal, puis recul au centre : les deux zéros sont établis.
+- Trois aller/retours à chacune des vitesses **40, 120 et 220 mm/s**. Le robot
+  dépasse le poteau jusqu'à 100 mm derrière son centre. Les fronts doivent se
+  produire sur le plateau de vitesse, pas pendant accélération ou freinage.
+- Première orientation : recul jusqu'à l'ouverture puis avance jusqu'à la
+  fermeture. Après retournement de 180°, la même géométrie mesure une **ouverture
+  en marche avant** et une fermeture en marche arrière avec le capteur opposé.
+  Chaque répétition reprend les appuis de référence.
+- Acquisition des seuils 5 et 10 cm du côté concerné. Le 10 cm est obligatoire ;
+  le 5 cm est omis s'il ne voit pas le mur à la position centrale.
+- Rapport `Corner report` : côté physique L/R, capteur, sens d'ouverture, vitesse,
+  positions brutes/filtrées d'ouverture et de fermeture et dispersion, en mm
+  **par rapport au centre du poteau**. Positif signifie au-delà du poteau, en
+  s'éloignant du mur frontal, quelle que soit l'orientation du robot.
+
+Les fronts bruts sont confirmés sur trois scans en conservant la position du
+premier ; les fronts filtrés enregistrent le retard réellement vu par le contrôleur.
+La dispersion maximale acceptée est 5 mm, l'offset maximal 60 mm. Les données des
+deux montages sont sauvegardées séparément. Une nouvelle calibration de rotation
+invalide les anciennes données d'angle ; un changement de géométrie invalide les
+mesures incompatibles. Une erreur de sauvegarde conserve les anciens profils.
+
+`fw_corner_offset()` expose les offsets filtrés interpolés dans la plage mesurée.
+Ces mesures sont consultables et persistées ; **le déclenchement anticipé de virages
+pendant l'exploration n'utilise pas encore ces offsets**. Cela nécessite une
+validation sur la piste avec les murs et les capteurs réels.
+
+## Validation de cette extension
+
+- `make test` : ASan/UBSan, simulations géométriques des capteurs binaires,
+  entraxes distincts selon sens/vitesse, effet des arrêts, deux montages d'angle
+  et deux orientations, référence absente et annulation.
+- Contrôleur réel testé avec moteurs simulés : budgets CW/CCW 90°/180°, signe de
+  course en rotation, limites de déplacement, acquisitions périmées.
+- Migration des snapshots 2/3 vers 4, restauration des profils après redémarrage,
+  échec de sauvegarde et invalidation des mesures dépendantes.
+- 35 pages de rapports rendues avec le pilote OLED réel ; compilation application
+  et bootloader en Debug (`-Og`) et Release (`-O3`).
+
+Aucun mouvement matériel ni flash exécuté pour cette extension. Les résultats
+numériques des tests sont simulés ; la précision physique n'est pas encore validée.
