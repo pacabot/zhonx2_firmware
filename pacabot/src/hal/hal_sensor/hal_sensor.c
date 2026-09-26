@@ -49,14 +49,14 @@
 #define TIMER_PERIOD (((TIMER_FREQ) / (CAPTURE_FREQ)) - 1)
 
 /* Macros */
-#define ENABLE_5    (SENSORS_PORT->BSRRL = SENSOR_EN_5_PIN)
-#define DISABLE_5   (SENSORS_PORT->BSRRH = SENSOR_EN_5_PIN)
+#define ENABLE_5    (SENSORS_PORT->BSRR = SENSOR_EN_5_PIN)
+#define DISABLE_5   (SENSORS_PORT->BSRR = (uint32_t)SENSOR_EN_5_PIN << 16)
 
 #define CAPTURE_5   sensors_handle.state &= ~SENSORS_5CM; \
                     sensors_handle.state |= ((SENSORS_PORT->IDR) & SENSORS_5CM)
 
-#define ENABLE_10   (SENSORS_PORT->BSRRL = SENSOR_EN_10_PIN)
-#define DISABLE_10  (SENSORS_PORT->BSRRH = SENSOR_EN_10_PIN)
+#define ENABLE_10   (SENSORS_PORT->BSRR = SENSOR_EN_10_PIN)
+#define DISABLE_10  (SENSORS_PORT->BSRR = (uint32_t)SENSOR_EN_10_PIN << 16)
 #define CAPTURE_10  sensors_handle.state &= ~SENSORS_10CM; \
                     sensors_handle.state |= ((SENSORS_PORT->IDR) & SENSORS_10CM)
 

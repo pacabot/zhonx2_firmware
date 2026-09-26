@@ -3,6 +3,7 @@
 /* peripherale inlcudes*/
 #include "drivers/step_motor_driver.h"
 #include "hal/hal_ui.h"
+#include "oled/ssd1306.h"
 #include "hal/hal_sensor.h"
 #include "hal/hal_step_motor.h"
 #include "app/app_def.h"

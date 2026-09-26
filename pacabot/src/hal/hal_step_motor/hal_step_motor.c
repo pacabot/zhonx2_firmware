@@ -111,7 +111,7 @@ int hal_step_motor_init(void)
 
 int hal_step_motor_terminate(void)
 {
-    memset(step_motor, 0, sizeof(step_motor_handle) * sizeof(step_motor));
+    memset(step_motor, 0, sizeof(step_motor));
 
     return HAL_STEP_MOTOR_E_SUCCESS;
 }

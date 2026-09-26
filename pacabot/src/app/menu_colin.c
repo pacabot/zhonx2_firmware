@@ -30,7 +30,6 @@
 #include "hal/hal_os.h"
 #include "app/app_def.h"
 
-#include "oled/arrows_bmp.h"
 #include "oled/ssd1306.h"
 #include "oled/smallfonts.h"
 
@@ -58,9 +57,11 @@ extern int test_oled3(void);
 extern int test_step_motor_driver(void);
 extern int test_motor_rotate(void);
 extern int distance_cal(void);
-extern int maze(void);
+extern int mazeBertrand(int i, int str);
+static int start_maze(void) { return mazeBertrand(0, 0); }
 extern void calibrateSimple(void);
 extern void test1Bezier(void);
+static int test_bezier_menu(void) { test1Bezier(); return 0; }
 
 extern int sensor_calibrate(void);
 extern void* calloc_s (size_t nombre, size_t taille);
@@ -71,7 +72,7 @@ menuItem maze_menu =
 {
 		"maze menu",
 		{
-				{"New maze",'f',			(void*)&maze},
+				{"New maze",'f',			start_maze},
                 {"wall know cost",'i',      (void*)&zhonxSettings.wall_know_cost},
                 {"move cost",'i',           (void*)&zhonxSettings.cell_cost},
                 {"direction",'i',           (void*)&zhonxSettings.start_orientation},
@@ -168,7 +169,7 @@ menuItem tests_menu=
 {
 		"test menu",
 		{
-				{"test bezier",'f',				test1Bezier},
+				{"test bezier",'f',				test_bezier_menu},
 				{"Test ADC",'f',				test_hal_adc},
 				{"Test beeper",'f',				test_hal_beeper},
 				{"Test OLED",'m',				(void*)&oled_menu},

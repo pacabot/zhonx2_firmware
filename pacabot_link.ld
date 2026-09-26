@@ -1,9 +1,9 @@
 OUTPUT_FORMAT ("elf32-littlearm", "elf32-bigarm", "elf32-littlearm")
+ENTRY(Reset_Handler)
 /* Internal Memory Map*/
 MEMORY
 {
-	rom (rx)  : ORIGIN = 0x08008000, LENGTH = 0x000F8000
-  rom1 (rx) : ORIGIN = 0x08000000, LENGTH = 0x00007FFF
+	rom (rx)  : ORIGIN = 0x08000000, LENGTH = 0x00100000
 	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00020000
 	ram1 (rwx) : ORIGIN = 0x10000000, LENGTH = 0x00010000
 }
@@ -35,7 +35,7 @@ SECTIONS
     .robot_settings :
     {
         *(.robot_settings)
-    } > rom1
+    } > rom
     
     . = ALIGN(4); 
     _etext = .;

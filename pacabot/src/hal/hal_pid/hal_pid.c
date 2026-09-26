@@ -89,7 +89,7 @@ int hal_pid_init(void)
 
 int hal_pid_terminate(void)
 {
-    memset(&pid, 0, sizeof(pid_handle) * sizeof(pid));
+    memset(&pid, 0, sizeof(pid));
 
     return HAL_PID_E_SUCCESS;
 }

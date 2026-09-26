@@ -2,23 +2,22 @@
   ******************************************************************************
   * @file    stm32f4xx_usart.h
   * @author  MCD Application Team
-  * @version V1.0.0
-  * @date    30-September-2011
+  * @version V1.8.1
+  * @date    27-January-2022
   * @brief   This file contains all the functions prototypes for the USART 
-  *          firmware library.
+  *          firmware library.    
   ******************************************************************************
   * @attention
   *
-  * THE PRESENT FIRMWARE WHICH IS FOR GUIDANCE ONLY AIMS AT PROVIDING CUSTOMERS
-  * WITH CODING INFORMATION REGARDING THEIR PRODUCTS IN ORDER FOR THEM TO SAVE
-  * TIME. AS A RESULT, STMICROELECTRONICS SHALL NOT BE HELD LIABLE FOR ANY
-  * DIRECT, INDIRECT OR CONSEQUENTIAL DAMAGES WITH RESPECT TO ANY CLAIMS ARISING
-  * FROM THE CONTENT OF SUCH FIRMWARE AND/OR THE USE MADE BY CUSTOMERS OF THE
-  * CODING INFORMATION CONTAINED HEREIN IN CONNECTION WITH THEIR PRODUCTS.
+  * Copyright (c) 2016 STMicroelectronics.
+  * All rights reserved.
   *
-  * <h2><center>&copy; COPYRIGHT 2011 STMicroelectronics</center></h2>
-  ******************************************************************************  
-  */ 
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef __STM32F4xx_USART_H
@@ -66,7 +65,7 @@ typedef struct
                                                  the word length is set to 9 data bits; 8th bit when the
                                                  word length is set to 8 data bits). */
  
-  uint16_t USART_Mode;                /*!< Specifies wether the Receive or Transmit mode is enabled or disabled.
+  uint16_t USART_Mode;                /*!< Specifies whether the Receive or Transmit mode is enabled or disabled.
                                            This parameter can be a value of @ref USART_Mode */
 
   uint16_t USART_HardwareFlowControl; /*!< Specifies wether the hardware flow control mode is enabled
@@ -106,7 +105,11 @@ typedef struct
                                      ((PERIPH) == USART3) || \
                                      ((PERIPH) == UART4)  || \
                                      ((PERIPH) == UART5)  || \
-                                     ((PERIPH) == USART6))
+                                     ((PERIPH) == USART6) || \
+                                     ((PERIPH) == UART7)  || \
+                                     ((PERIPH) == UART8)  || \
+                                     ((PERIPH) == UART9)  || \
+                                     ((PERIPH) == UART10)) 
 
 #define IS_USART_1236_PERIPH(PERIPH) (((PERIPH) == USART1) || \
                                       ((PERIPH) == USART2) || \
@@ -342,7 +345,7 @@ typedef struct
                               
 #define IS_USART_CLEAR_FLAG(FLAG) ((((FLAG) & (uint16_t)0xFC9F) == 0x00) && ((FLAG) != (uint16_t)0x00))
 
-#define IS_USART_BAUDRATE(BAUDRATE) (((BAUDRATE) > 0) && ((BAUDRATE) < 7500001))
+#define IS_USART_BAUDRATE(BAUDRATE) (((BAUDRATE) > 0) && ((BAUDRATE) < 10500001))
 #define IS_USART_ADDRESS(ADDRESS) ((ADDRESS) <= 0xF)
 #define IS_USART_DATA(DATA) ((DATA) <= 0x1FF)
 
@@ -420,4 +423,3 @@ void USART_ClearITPendingBit(USART_TypeDef* USARTx, uint16_t USART_IT);
   * @}
   */ 
 
-/******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/

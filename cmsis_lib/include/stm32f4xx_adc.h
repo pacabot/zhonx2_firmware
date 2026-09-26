@@ -2,21 +2,20 @@
   ******************************************************************************
   * @file    stm32f4xx_adc.h
   * @author  MCD Application Team
-  * @version V1.0.0
-  * @date    30-September-2011
+  * @version V1.8.1
+  * @date    27-January-2022
   * @brief   This file contains all the functions prototypes for the ADC firmware 
   *          library.
   ******************************************************************************
   * @attention
   *
-  * THE PRESENT FIRMWARE WHICH IS FOR GUIDANCE ONLY AIMS AT PROVIDING CUSTOMERS
-  * WITH CODING INFORMATION REGARDING THEIR PRODUCTS IN ORDER FOR THEM TO SAVE
-  * TIME. AS A RESULT, STMICROELECTRONICS SHALL NOT BE HELD LIABLE FOR ANY
-  * DIRECT, INDIRECT OR CONSEQUENTIAL DAMAGES WITH RESPECT TO ANY CLAIMS ARISING
-  * FROM THE CONTENT OF SUCH FIRMWARE AND/OR THE USE MADE BY CUSTOMERS OF THE
-  * CODING INFORMATION CONTAINED HEREIN IN CONNECTION WITH THEIR PRODUCTS.
+  * Copyright (c) 2016 STMicroelectronics.
+  * All rights reserved.
   *
-  * <h2><center>&copy; COPYRIGHT 2011 STMicroelectronics</center></h2>
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
   ******************************************************************************
   */
 
@@ -319,7 +318,14 @@ typedef struct
 #define ADC_Channel_17                              ((uint8_t)0x11)
 #define ADC_Channel_18                              ((uint8_t)0x12)
 
+#if defined (STM32F40_41xxx) || defined(STM32F412xG) || defined(STM32F413_423xx)
 #define ADC_Channel_TempSensor                      ((uint8_t)ADC_Channel_16)
+#endif /* STM32F40_41xxx || STM32F412xG || STM32F413_423xx */
+
+#if defined (STM32F427_437xx) || defined (STM32F429_439xx) || defined (STM32F401xx) || defined (STM32F410xx) || defined (STM32F411xE)
+#define ADC_Channel_TempSensor                      ((uint8_t)ADC_Channel_18)
+#endif /* STM32F427_437xx || STM32F429_439xx || STM32F401xx || STM32F410xx || STM32F411xE */
+
 #define ADC_Channel_Vrefint                         ((uint8_t)ADC_Channel_17)
 #define ADC_Channel_Vbat                            ((uint8_t)ADC_Channel_18)
 
@@ -640,4 +646,3 @@ void ADC_ClearITPendingBit(ADC_TypeDef* ADCx, uint16_t ADC_IT);
   * @}
   */ 
 
-/******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/

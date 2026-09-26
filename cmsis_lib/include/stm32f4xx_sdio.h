@@ -2,21 +2,20 @@
   ******************************************************************************
   * @file    stm32f4xx_sdio.h
   * @author  MCD Application Team
-  * @version V1.0.0
-  * @date    30-September-2011
+  * @version V1.8.1
+  * @date    27-January-2022
   * @brief   This file contains all the functions prototypes for the SDIO firmware
   *          library.
   ******************************************************************************
   * @attention
   *
-  * THE PRESENT FIRMWARE WHICH IS FOR GUIDANCE ONLY AIMS AT PROVIDING CUSTOMERS
-  * WITH CODING INFORMATION REGARDING THEIR PRODUCTS IN ORDER FOR THEM TO SAVE
-  * TIME. AS A RESULT, STMICROELECTRONICS SHALL NOT BE HELD LIABLE FOR ANY
-  * DIRECT, INDIRECT OR CONSEQUENTIAL DAMAGES WITH RESPECT TO ANY CLAIMS ARISING
-  * FROM THE CONTENT OF SUCH FIRMWARE AND/OR THE USE MADE BY CUSTOMERS OF THE
-  * CODING INFORMATION CONTAINED HEREIN IN CONNECTION WITH THEIR PRODUCTS.
+  * Copyright (c) 2016 STMicroelectronics.
+  * All rights reserved.
   *
-  * <h2><center>&copy; COPYRIGHT 2011 STMicroelectronics</center></h2>
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
   ******************************************************************************
   */
 
@@ -77,7 +76,7 @@ typedef struct
   uint32_t SDIO_Response;  /*!< Specifies the SDIO response type.
                                 This parameter can be a value of @ref SDIO_Response_Type */
 
-  uint32_t SDIO_Wait;      /*!< Specifies whether SDIO wait-for-interrupt request is enabled or disabled.
+  uint32_t SDIO_Wait;      /*!< Specifies whether SDIO wait for interrupt request is enabled or disabled.
                                 This parameter can be a value of @ref SDIO_Wait_Interrupt_State */
 
   uint32_t SDIO_CPSM;      /*!< Specifies whether SDIO Command path state machine (CPSM)
@@ -453,8 +452,8 @@ typedef struct
   * @{
   */
 
-#define SDIO_ReadWaitMode_CLK               ((uint32_t)0x00000000)
-#define SDIO_ReadWaitMode_DATA2             ((uint32_t)0x00000001)
+#define SDIO_ReadWaitMode_DATA2             ((uint32_t)0x00000000)
+#define SDIO_ReadWaitMode_CLK               ((uint32_t)0x00000001)
 #define IS_SDIO_READWAIT_MODE(MODE) (((MODE) == SDIO_ReadWaitMode_CLK) || \
                                      ((MODE) == SDIO_ReadWaitMode_DATA2))
 /**
@@ -527,4 +526,3 @@ void SDIO_ClearITPendingBit(uint32_t SDIO_IT);
   * @}
   */
 
-/******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/
