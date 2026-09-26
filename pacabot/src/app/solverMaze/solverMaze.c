@@ -12,90 +12,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#define ZHONX2
 
-#ifdef ZHONX3
-
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx.h"
-#include "config/basetypes.h"
-
-/* Middleware declarations */
-#include "middleware/controls/lineFollowerControl/lineFollowControl.h"
-#include "middleware/controls/mainControl/mainControl.h"
-#include "middleware/controls/mainControl/positionControl.h"
-#include "middleware/controls/mainControl/speedControl.h"
-#include "middleware/controls/mainControl/transfertFunction.h"
-#include "middleware/settings/settings.h"
-#include "middleware/wall_sensors/wall_sensors.h"
-#include "middleware/controls/pidController/pidController.h"
-#include "middleware/display/pictures.h"
-
-/* peripherale inlcudes*/
-#include "peripherals/times_base/times_base.h"
-#include "peripherals/display/ssd1306.h"
-#include "peripherals/expander/pcf8574.h"
-#include "peripherals/motors/motors.h"
-#include "peripherals/lineSensors/lineSensors.h"
-#include "peripherals/telemeters/telemeters.h"
-#include "peripherals/bluetooth/bluetooth.h"
-#include "peripherals/tone/tone.h"
-
-/* application include */
-#include "application/solverMaze/solverMaze.h"
-#include "application/solverMaze/robotInterface.h"
-#include "application/solverMaze/run.h"
-
-#endif
-#ifdef ZHONX2
-
-#include "stm32f4xx_gpio.h"
-
-#define JOYSTICK_LEFT       GPIOC, GPIO_Pin_8
-#define JOYSTICK_UP         GPIOC, GPIO_Pin_9
-#define JOYSTICK_DOWN       GPIOC, GPIO_Pin_10
-#define JOYSTICK_RIGHT      GPIOC, GPIO_Pin_11
-#define JOYSTICK_PUSH       GPIOC, GPIO_Pin_12
-#define RETURN_BUTTON       GPIOC, GPIO_Pin_13
-
-#include "stm32f4xx.h"
-#include "config/basetypes.h"
-#include "config/config.h"
-#include "oled/ssd1306.h"
-
-#include "stm32f4xx.h"
+//#include "stm32f4xx.h"
 #include "config/basetypes.h"
 #include "config/config.h"
 #include "oled/ssd1306.h"
 
 /* peripherale inlcudes*/
 
-/* meddleware include */
-#include "hal/hal_sensor.h"
+/* midleware include */
 #include "hal/hal_os.h"
-#include "hal/hal_step_motor.h"
 #include "app/app_def.h"
 
 /*application include */
 #include "app/solverMaze/solverMaze.h"
 #include "app/solverMaze/robotInterface.h"
 #include "app/solverMaze/run.h"
-#elif defined SIMULATOR
-#include "settings.h"
-#include "solverMaze.h"
-#include <stdlib.h>
-#ifdef __cplusplus
-    #include <cstdlib>
-#else
-    #include <stdlib.h>
-#endif
-#include <SDL/SDL.h>
-#include "run.h"
-#include "robotInterface.h"
-#include "smallfonts.h"
-#include "ssd1306.h"
-#include "pcf8574.h"
-#endif // simulator
+#include "app/solverMaze/user_interface.h"
 
 /*
  *  ********************** int maze (void) **********************
@@ -108,15 +41,6 @@ int maze_solver_new_maze(void)
     positionRobot zhonx_position, start_position;
     labyrinthe maze;
     mazeInit(&maze);
-#ifdef ZHONX3
-    mainControlSetFollowType(WALL_FOLLOW);
-    positionControlSetPositionType(GYRO);
-    motorsDriverSleep(ON);
-#endif
-#ifdef SIMULATOR
-    pt_zhonx_position = &zhonx_position;
-#endif // simulator
-
     /*init zhonx start position for nime micromouse competition*/
 
     zhonx_position.coordinate_robot.x = 8;
@@ -127,85 +51,49 @@ int maze_solver_new_maze(void)
     memcpy(&start_position, &zhonx_position, sizeof(positionRobot));
     start_position.orientation += 2;
     start_position.orientation = start_position.orientation % 4;
-    #if defined ZHONX3 || defined SIMULATOR
-        start_position.midOfCell = false;
-    #elif defined ZHONX2
-        start_position.midOfCell = true;
-    #endif
+    start_position.midOfCell = true;
     //newCell(ask_cell_state(), &maze, start_position);
-    newCell((walls){WALL_PRESENCE,WALL_PRESENCE,WALL_PRESENCE,WALL_PRESENCE}, &maze, start_position);
+//    newCell((walls){WALL_PRESENCE,WALL_PRESENCE,WALL_PRESENCE,WALL_PRESENCE}, &maze, start_position);
     memcpy(&start_position, &zhonx_position, sizeof(positionRobot));
 
     printLength(maze,8,8);
     printMaze(maze, zhonx_position.coordinate_robot);
-    #if defined ZHONX3
-        telemetersStart();
-    #endif
-    waitStart();
-#ifdef ZHONX3
-    ssd1306ClearScreen(MAIN_AREA);
-    ssd1306PrintfAtLine(40, 2, &Font_5x8, "SCAN...");
-    ssd1306Refresh();
-    motorsDriverSleep(OFF);
-#endif
-#ifdef ZHONX2
-    if (zhonxSettings.calibration_enabled==true)
-    {
-        HAL_Delay(1000);
-        calibrateSimple();
-    }
-    hal_step_motor_disable();
-    HAL_Delay(5000);
-#endif
+	if (zhonxSettings.calibration_enabled==true)
+	{
+		start_navigation();
+		HAL_Delay(1000);
+		calibrateSimple();
+		end_navigation();
+	}
 
+    waitStart();
+    start_navigation();
+    hal_beeper_beep(app_context.beeper, 4000, 10);
     exploration(&maze, &zhonx_position, &start_position, &end_coordinate); //make exploration for go from the robot position and the end of the maze
-#ifdef ZHONX3
-    while(hasMoveEnded() == true);
-    HAL_Delay(100);
-    motorsDriverSleep(ON);
-    // Save maze into flash memory
-    bluetoothWaitReady();
-    bluetoothPrintf("save maze");
-    rv=saveMaze(&maze, &start_position, &end_coordinate);
-    if (rv != FLASH_DRIVER_E_SUCCESS)
-    {
-    }
-#endif
     ssd1306Printf(10,10,&Font_7x8,"go to start position");
     ssd1306Refresh();
-#ifdef ZHONX2
     if (zhonxSettings.calibration_enabled==true)
     {
         HAL_Delay(1000);
         calibrateSimple();
     }
-#endif
+    HAL_Delay(1000);
     goToPosition(&maze, &zhonx_position, start_position.coordinate_robot);	//goto start position
 
     doUTurn(&zhonx_position);
-#ifdef ZHONX3
-    bluetoothPrintf("uturn do\ngo back");
-    mainControlSetFollowType(NO_FOLLOW);
-    move (0, -CELL_LENGTH/2, 20, 0);
-    motorsDriverSleep(ON);
-#endif
-#ifdef ZHONX2
-    if (zhonx_settings.calibration_enabled==true)
+    if (zhonxSettings.calibration_enabled==true)
     {
         HAL_Delay(1000);
         calibrateSimple();
     }
-    hal_step_motor_disable();
-#endif
+    end_navigation();
 
-
-#ifdef ZHONX3
-    HAL_Delay(1000);
-    motorsDriverSleep(ON);
-#endif
-#ifdef ZHONX2
-    hal_step_motor_disable();
-#endif
+    run1(&maze, &zhonx_position,
+                     start_position.coordinate_robot,
+                     end_coordinate);
+    run2(&maze, &zhonx_position,
+            start_position.coordinate_robot,
+            end_coordinate);
     return MAZE_SOLVER_E_SUCCESS;
 }
 
@@ -236,7 +124,7 @@ int maze_solver_run ()
         motorsDriverSleep(ON);
     #endif
     #ifdef ZHONX2
-        hal_step_motor_disable();
+        end_navigation();
     #endif
         return MAZE_SOLVER_E_SUCCESS;
 }
@@ -263,7 +151,6 @@ int exploration(labyrinthe *maze, positionRobot* positionZhonx,
             motorsDriverSleep(ON);
             bluetoothWaitReady();
 #endif
-            bluetoothPrintf("no solution");
 #ifdef PRINT_MAZE
             printMaze(*maze, positionZhonx->coordinate_robot);
 #endif
@@ -277,7 +164,6 @@ int exploration(labyrinthe *maze, positionRobot* positionZhonx,
             ssd1306ClearScreen(MAIN_AREA);
             ssd1306DrawBmp(warning_Img, 1, 15, 48, 43);
 #endif
-            ssd1306PrintfAtLine(55, 1, &Font_5x8, "NO SOLUTION");
             ssd1306Refresh();
             printLength(*maze, -1, -1);
             return MAZE_SOLVER_E_ERROR;
@@ -290,7 +176,7 @@ int exploration(labyrinthe *maze, positionRobot* positionZhonx,
             motorsDriverSleep(ON);
             bluetoothWaitReady();
 #elif defined ZHONX2
-            hal_step_motor_disable();
+            end_navigation();
 #elif defined SIMULATOR
             bluetoothPrintf("Error way : position zhonx x= %d y=%d \t way x= %d y=%d \n",
                             positionZhonx->coordinate_robot.x,positionZhonx->coordinate_robot.y, way[0].x, way[0].y);
@@ -315,11 +201,13 @@ int exploration(labyrinthe *maze, positionRobot* positionZhonx,
                 positionZhonx->coordinate_robot.y);
     }
 #ifdef ZHONX2
+    end_navigation();
+    HAL_Delay(1000);
     if (zhonxSettings.calibration_enabled==true)
     {
-        HAL_Delay(1000);
         calibrateSimple();
     }
+    start_navigation();
 #endif
     last_coordinate = findEndCoordinate(way);
 
@@ -644,145 +532,6 @@ void mazeInit(labyrinthe *maze)
 
 }
 
-void printMaze(labyrinthe maze, coordinate robot_coordinate)
-{
-    ssd1306ClearRect(0, 0, 64, 64);
-    int size_cell_on_oled = ((63) / MAZE_SIZE);
-    int x, y;
-    for (y = 0; y < MAZE_SIZE; y++)
-    {
-        for (x = 0; x < MAZE_SIZE; x++)
-        {
-            if (maze.cell[x][y].wall_north == WALL_PRESENCE)
-            {
-                ssd1306DrawLine(x * size_cell_on_oled,
-                        y * size_cell_on_oled + HEAD_MARGIN,
-                        x * size_cell_on_oled + size_cell_on_oled + 1,
-                        y * size_cell_on_oled + HEAD_MARGIN);
-            }
-            else if (maze.cell[x][y].wall_north == NO_KNOWN)
-            {
-                ssd1306DrawDashedLine(x * size_cell_on_oled,
-                        y * size_cell_on_oled + HEAD_MARGIN,
-                        x * size_cell_on_oled + size_cell_on_oled + 1,
-                        y * size_cell_on_oled + HEAD_MARGIN);
-            }
-            if (maze.cell[x][y].wall_west == WALL_PRESENCE)
-            {
-                ssd1306DrawLine(x * size_cell_on_oled,
-                        y * size_cell_on_oled + HEAD_MARGIN,
-                        x * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled
-                        + HEAD_MARGIN + 1);
-            }
-            else if (maze.cell[x][y].wall_west == NO_KNOWN)
-            {
-                ssd1306DrawDashedLine(x * size_cell_on_oled,
-                        y * size_cell_on_oled+ HEAD_MARGIN,
-                        x * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled
-                        + HEAD_MARGIN + 1);
-            }
-            if (maze.cell[x][y].wall_south == WALL_PRESENCE)
-            {
-                ssd1306DrawLine(x * size_cell_on_oled,
-                        (y+ 1) * size_cell_on_oled+ HEAD_MARGIN,
-                        size_cell_on_oled + x * size_cell_on_oled,
-                        (y+ 1) * size_cell_on_oled + HEAD_MARGIN);
-            }
-            else if (maze.cell[x][y].wall_south == NO_KNOWN)
-            {
-                ssd1306DrawDashedLine(x * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled + HEAD_MARGIN,
-                        size_cell_on_oled + x * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled + HEAD_MARGIN);
-            }
-            if (maze.cell[x][y].wall_east == WALL_PRESENCE)
-            {
-                ssd1306DrawLine((x + 1) * size_cell_on_oled,
-                        y * size_cell_on_oled + HEAD_MARGIN,
-                        (x + 1) * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled
-                        + HEAD_MARGIN + 1);
-            }
-            else if (maze.cell[x][y].wall_east == NO_KNOWN)
-            {
-                ssd1306DrawDashedLine((x + 1) * size_cell_on_oled,
-                        y * size_cell_on_oled + HEAD_MARGIN,
-                        (x + 1) * size_cell_on_oled,
-                        (y + 1) * size_cell_on_oled
-                        + HEAD_MARGIN + 1);
-            }
-        }
-    }
-    printLength(maze, robot_coordinate.x, robot_coordinate.y);
-    ssd1306DrawRect((robot_coordinate.x * size_cell_on_oled) + 1,
-            (robot_coordinate.y * size_cell_on_oled + HEAD_MARGIN) + 1, 2,
-            2);
-    ssd1306Refresh();
-}
-
-void printLength(const labyrinthe maze, const int x_robot, const int y_robot)
-{
-#if DEBUG > 2 && !defined ZHONX2
-    bluetoothWaitReady();
-    bluetoothPrintf("zhonx : %d; %d\n", x_robot, y_robot);
-    bluetoothPrintf("  ");
-    for (int i = 0; i < MAZE_SIZE; i++)
-    {
-        bluetoothPrintf("%5d", i);
-    }
-    bluetoothPrintf("\n");
-    for (int i = 0; i < MAZE_SIZE; i++)
-    {
-        bluetoothPrintf("    ");
-        for (int j = 0; j < MAZE_SIZE; j++)
-        {
-            if (maze.cell[j][i].wall_north == NO_KNOWN)
-            {
-                bluetoothPrintf("- - +");
-            }
-            else if (maze.cell[j][i].wall_north == WALL_PRESENCE)
-            {
-                bluetoothPrintf("----+");
-            }
-            else
-            {
-                bluetoothPrintf("    +");
-            }
-        }
-        bluetoothPrintf("\n ");
-
-        bluetoothPrintf("%2d ", i);
-        for (int j = 0; j < MAZE_SIZE; j++)
-        {
-            if (maze.cell[j][i].length != CANT_GO)
-            {
-                bluetoothPrintf("%4d", maze.cell[j][i].length);
-            }
-            else
-            {
-                bluetoothPrintf("    ");
-            }
-            if (maze.cell[j][i].wall_east == NO_KNOWN)
-            {
-                bluetoothPrintf("!");
-            }
-            else if (maze.cell[j][i].wall_east == WALL_PRESENCE)
-            {
-                bluetoothPrintf("|");
-            }
-            else
-            {
-                bluetoothPrintf(" ");
-            }
-        }
-        bluetoothPrintf("\n");
-    }
-    bluetoothPrintf("\n");
-#endif
-}
-
 void clearMazelength(labyrinthe* maze)
 {
     int x, y;
@@ -931,67 +680,3 @@ int findArrival(labyrinthe maze, coordinate *end_coordinate)
     return MAZE_SOLVER_E_ERROR;
 }
 
-walls ask_cell_state()
-{
-    walls cell_state;
-    memset(&cell_state, NO_KNOWN, sizeof(walls));
-    while (GPIO_ReadInputDataBit(JOYSTICK_UP) != Bit_RESET || GPIO_ReadInputDataBit(RETURN_BUTTON) != Bit_RESET)
-    {
-        if (GPIO_ReadInputDataBit(JOYSTICK_DOWN) == Bit_RESET)
-        {
-            if (cell_state.front == WALL_PRESENCE)
-            {
-                cell_state.front = NO_WALL;
-            }
-            else
-            {
-                cell_state.front = WALL_PRESENCE;
-            }
-        }
-        if (GPIO_ReadInputDataBit(JOYSTICK_RIGHT) == Bit_RESET)
-        {
-            if (cell_state.left == WALL_PRESENCE)
-            {
-                cell_state.left = NO_WALL;
-            }
-            else
-            {
-                cell_state.left = WALL_PRESENCE;
-            }
-        }
-        if (GPIO_ReadInputDataBit(JOYSTICK_LEFT) == Bit_RESET)
-        {
-            if (cell_state.right == WALL_PRESENCE)
-            {
-                cell_state.right = NO_WALL;
-            }
-            else
-            {
-                cell_state.right = WALL_PRESENCE;
-            }
-        }
-        print_cell_state(cell_state);
-        ssd1306Refresh();
-    }
-    return cell_state;
-}
-
-void print_cell_state(walls cell_state)
-{
-    ssd1306ClearRect(64, HEAD_MARGIN, 54, 5);
-    ssd1306ClearRect(64, HEAD_MARGIN, 5, 54);
-    ssd1306ClearRect(113, HEAD_MARGIN, 5, 54);
-
-    if (cell_state.front == WALL_PRESENCE)
-    {
-        ssd1306FillRect(64, HEAD_MARGIN, 54, 5);
-    }
-    if (cell_state.left == WALL_PRESENCE)
-    {
-        ssd1306FillRect(64, HEAD_MARGIN, 5, 54);
-    }
-    if (cell_state.right == WALL_PRESENCE)
-    {
-        ssd1306FillRect(113, HEAD_MARGIN, 5, 54);
-    }
-}

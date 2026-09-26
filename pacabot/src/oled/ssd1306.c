@@ -494,6 +494,19 @@ void ssd1306Printf(int x, int y, const FONT_DEF *font, const char *format, ...)
 	ssd1306DrawString(x,y,(char *)temp_buffer, font);
 }
 
+void ssd1306PrintfAtLine(int x, int line, const FONT_DEF *font, const char *format, ...)
+{
+    int y = line * LINE_SPACING + HEAD_MARGIN;
+    char temp_buffer[43];
+    va_list va_args;
+
+    va_start(va_args, format);
+    vsnprintf(temp_buffer, 43, format, va_args);
+    va_end(va_args);
+
+    ssd1306DrawString(x, y, (char *) temp_buffer, font);
+}
+
 /**************************************************************************/
 /*!
     @brief  Shifts the contents of the frame buffer up the specified

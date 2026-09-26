@@ -8,7 +8,7 @@
 #ifndef RESOLUTION_MAZE_H_
 #define RESOLUTION_MAZE_H_
 
-#define MAIN_AREA
+#define ZHONX2
 
 #define NAND(a,b) (!a && !b)
 
@@ -99,17 +99,12 @@ int moveVirtualZhonx(labyrinthe maze, positionRobot positionZhonxVirtuel,
 		coordinate way[], coordinate end_coordinate);
 void poids(labyrinthe *maze, coordinate end_coordinate, char wallNoKnow, char contournKnownCell);
 void mazeInit (labyrinthe *maze);
-void* calloc_s (size_t nombre, size_t taille);
-void printMaze(labyrinthe maze, coordinate robot_coordinate);
-void printLength(const labyrinthe maze,const int x_robot, const int y_robot);
 void clearMazelength(labyrinthe* maze);
 char miniwayFind(labyrinthe *maze, coordinate start_coordinate, coordinate end_coordinate);
-void moveRealZhonxArc(labyrinthe *maze, positionRobot *positionZhonx, coordinate way[]);
+int moveRealZhonxArc(labyrinthe *maze, positionRobot *positionZhonx,
+                     coordinate way[]);
 void waitStart(void);
 char diffway(coordinate way1[], coordinate way2[]);
 coordinate findEndCoordinate (coordinate coordinate_tab[]);
 int findArrival (labyrinthe maze, coordinate *end_coordinate);
-walls ask_cell_state ();
-void print_cell_state (walls cell_state);
-walls ask_cell_state();
 #endif /* RESOLUTION_MAZE_H_ */

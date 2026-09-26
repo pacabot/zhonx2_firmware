@@ -19,6 +19,7 @@
 #include "app/solverMaze/solverMaze.h"
 #include "app/solverMaze/robotInterface.h"
 #include "app/solverMaze/run.h"
+#include "app/solverMaze/user_interface.h"
 void run1(labyrinthe *maze, positionRobot *positionZhonx, coordinate start_oordinate, coordinate end_coordinate)
 {
 	coordinate way[MAZE_SIZE*MAZE_SIZE];
@@ -28,13 +29,14 @@ void run1(labyrinthe *maze, positionRobot *positionZhonx, coordinate start_oordi
 		choice = -1;
 		clearMazelength(maze);
 		poids(maze, end_coordinate, false, false);
-		hal_step_motor_enable();
 		moveVirtualZhonx(*maze, *positionZhonx, way, end_coordinate);
 		waitStart ();
+		start_navigation();
 		moveRealZhonxArc(maze, positionZhonx, way);
+		HAL_Delay(1000);
 		goToPosition(maze,positionZhonx,start_oordinate);
 		doUTurn (positionZhonx);
-		hal_step_motor_enable();
+		end_navigation();
 
 		ssd1306ClearScreen ();
 		ssd1306DrawString (10, 10, "presse \"RIGHT\" to ", &Font_5x8);
@@ -64,8 +66,9 @@ void run2(labyrinthe *maze, positionRobot *positionZhonx, coordinate start_oordi
 		clearMazelength(maze);
 		poids(maze, end_coordinate, false, false);
 		printMaze(*maze,positionZhonx->coordinate_robot);
-		waitStart ();
 		moveVirtualZhonx (*maze, *positionZhonx, way, end_coordinate);
+		waitStart ();
+		start_navigation();
 		moveRealZhonxArc (maze, positionZhonx, way);
 		if (zhonxSettings.calibration_enabled == true)
 			calibrateSimple ();

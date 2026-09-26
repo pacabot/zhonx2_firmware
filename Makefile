@@ -8,7 +8,9 @@ TARGET := $(BUILD)/ZHONX_II_M4
 # Source set from the original ZHONX_II_M4 Xcode project.
 SOURCES := $(shell python3 tools/project_sources.py)
 SOURCES += pacabot/src/app/menu_colin.c pacabot/src/app/bezier_curves.c \
- pacabot/src/app/solverMaze/robotInterface.c
+ pacabot/src/app/solverMaze/robotInterface.c \
+ pacabot/src/app/solverMaze/solverMaze.c pacabot/src/app/solverMaze/run.c \
+ pacabot/src/app/solverMaze/user_interface.c
 OBJECTS := $(addprefix $(BUILD)/,$(SOURCES:.c=.o))
 DEPS := $(OBJECTS:.o=.d)
 

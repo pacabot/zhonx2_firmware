@@ -57,8 +57,7 @@ extern int test_oled3(void);
 extern int test_step_motor_driver(void);
 extern int test_motor_rotate(void);
 extern int distance_cal(void);
-extern int mazeBertrand(int i, int str);
-static int start_maze(void) { return mazeBertrand(0, 0); }
+extern int maze_solver_new_maze(void);
 extern void calibrateSimple(void);
 extern void test1Bezier(void);
 static int test_bezier_menu(void) { test1Bezier(); return 0; }
@@ -72,7 +71,7 @@ menuItem maze_menu =
 {
 		"maze menu",
 		{
-				{"New maze",'f',			start_maze},
+				{"New maze",'f',			maze_solver_new_maze},
                 {"wall know cost",'i',      (void*)&zhonxSettings.wall_know_cost},
                 {"move cost",'i',           (void*)&zhonxSettings.cell_cost},
                 {"direction",'i',           (void*)&zhonxSettings.start_orientation},

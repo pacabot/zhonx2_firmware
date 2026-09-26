@@ -8,6 +8,7 @@
 #include "hal/hal_step_motor.h"
 #include "app/app_def.h"
 #include "hal/hal_os.h"
+#include "oled/ssd1306.h"
 
 /*application include */
 #include "app/solverMaze/solverMaze.h"
@@ -17,8 +18,8 @@
 
 void goOrientation(char *orientationZhonx, char directionToGo)
 {
-	int turn=(4+directionToGo-*orientationZhonx)%4;
-	*orientationZhonx=directionToGo;
+	int turn = (4 + directionToGo - *orientationZhonx) % 4;
+	*orientationZhonx = directionToGo;
 	switch (turn)
 	{
 		case FORWARD :
@@ -38,7 +39,7 @@ void goOrientation(char *orientationZhonx, char directionToGo)
 
 void move_zhonx (int direction_to_go, positionRobot *positionZhonx, int numberOfCase)
 {
-	int turn=(4 + direction_to_go- positionZhonx->orientation) % 4;
+	int turn = (4 + direction_to_go- positionZhonx->orientation) % 4;
 	positionZhonx->orientation = direction_to_go;
 	switch (turn)
 	{
@@ -81,8 +82,6 @@ void move_zhonx_arc (int direction_to_go, positionRobot *positionZhonx, int numb
 					step_motors_rotate(90, CELL_LENGTH/2, chain);
 					distanceToMove-=CELL_LENGTH;
 				}
-	//			step_motors_rotate(-90, 90, 0);
-//				step_motors_rotate_in_place(-90);
 				break;
 		case UTURN :
 				step_motors_rotate_in_place(180);
@@ -95,32 +94,31 @@ void move_zhonx_arc (int direction_to_go, positionRobot *positionZhonx, int numb
 					step_motors_rotate(-90, CELL_LENGTH/2, chain);
 					distanceToMove-=CELL_LENGTH;
 				}
-//				step_motors_rotate_in_place(90);
 
 			break;
 	}
-	if (positionZhonx->midOfCell==endMidOfCase)
+	if (positionZhonx->midOfCell == endMidOfCase)
 	{
 		/*
 		 * distanceToMove-=CELL_LENGTH/2;
 		 * distanceToMove+=CELL_LENGTH/2;
 		 */
 	}
-	else if(positionZhonx->midOfCell==true) // so endMidOfCase=false
+	else if(positionZhonx->midOfCell == true) // so endMidOfCase=false
 	{
-		distanceToMove-=CELL_LENGTH/2;
+		distanceToMove -= CELL_LENGTH/2;
 	}
-	else
+	else // so positionZhonx->midOfCel = false && endMidOfCase = true
 	{
-		distanceToMove+=CELL_LENGTH/2;
+		distanceToMove += CELL_LENGTH/2;
 	}
 	chain=0;
 
-	if (positionZhonx->midOfCell==false)
+	if (positionZhonx->midOfCell == false)
 	{
 		chain=chain | CHAIN_BEFORE;
 	}
-	if (endMidOfCase==false)
+	if (endMidOfCase == false)
 	{
 
 		chain=chain | CHAIN_AFTER;
@@ -134,16 +132,6 @@ void doUTurn(positionRobot *positionZhonx)
 	hal_step_motor_enable();
 	goOrientation(&positionZhonx->orientation, (positionZhonx->orientation+2)%4);
 	hal_step_motor_disable();
-}
-
-void waitStart()
-{
-	unsigned char sensors_state = hal_sensor_get_state(app_context.sensors);
-	while(check_bit(sensors_state, SENSOR_F10_POS)==true)
-		sensors_state = hal_sensor_get_state(app_context.sensors);
-	HAL_Delay(200);
-	while(check_bit(sensors_state, SENSOR_F10_POS)==false)
-		sensors_state = hal_sensor_get_state(app_context.sensors);
 }
 
 void newCell(walls new_walls, labyrinthe *maze, positionRobot positionZhonx)
@@ -268,7 +256,7 @@ void calibrateSimple()
 	unsigned char sensors_state = 0;
 	for(int i=0; i<2;i++)
 	{
-		sensors_state =hal_sensor_get_state(app_context.sensors);
+		sensors_state = hal_sensor_get_state(app_context.sensors);
 		if (check_bit(sensors_state, SENSOR_L10_POS) == false)
 		{
 			goOrientation(&orientation,orientation-1);
@@ -283,5 +271,26 @@ void calibrateSimple()
 	}
 	goOrientation(&orientation,0);
 	HAL_Delay(100);
+	hal_step_motor_disable();
+}
+
+void waitStart()
+{
+	unsigned char sensors_state = hal_sensor_get_state(app_context.sensors);
+	while(check_bit(sensors_state, SENSOR_F10_POS)==true)
+		sensors_state = hal_sensor_get_state(app_context.sensors);
+	HAL_Delay(200);
+	while(check_bit(sensors_state, SENSOR_F10_POS)==false)
+		sensors_state = hal_sensor_get_state(app_context.sensors);
+}
+
+void start_navigation()
+{
+	hal_step_motor_enable();
+}
+
+void end_navigation()
+{
+	HAL_Delay(300);
 	hal_step_motor_disable();
 }

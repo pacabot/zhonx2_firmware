@@ -55,7 +55,7 @@
 #define WHEELS_DISTANCE_STEPS       ((WHEELS_DISTANCE) * (STEPS_PER_REVOLUTION))
 
 /* Maze Properties */
-#define CELL_LENGTH_STEP            (178 * STEPS_PER_MM)
+#define CELL_LENGTH_STEP            (CELL_LENGTH * STEPS_PER_MM)
 #define CELL_LENGTH                 (178)
 
 
@@ -63,15 +63,15 @@
 #define ANGLE_CORRECTION            (1)//(1.0465)
 
 /* Initial speed */
-#define INITIAL_SPEED               (6000)//1500
+#define INITIAL_SPEED               (5000) //(6000)//1500
 /* Absolute Maximum speed */
 #define MAX_SPEED                   (100000)//(100000)
 /* Minimum distance to reach the maximum speed */
 #define MAX_SPEED_DISTANCE          (155 * STEPS_PER_MM) // MAX 400
 /* Added frequency at each step for acceleration and deceleration */
-#define DEFAULT_ACCEL               (5)//4
+#define DEFAULT_ACCEL               (4)//5
 /* Acceleration value for angular movement */
-#define ROTATE_ACCEL                (5)//4
+#define ROTATE_ACCEL                (4)//5
 /* Deceleration value for emergency stop */
 #define EMERGENCY_DECEL             (50)
 /* Correction 1/P factor */
@@ -94,7 +94,7 @@
 #define BATTERY_USAGE_ZONE          (BATTERY_MAX_VALUE - BATTERY_MIN_VALUE)
 
 /* Maze settings */
-#define MAZE_MAX_SIZE               30
+#define MAZE_MAX_SIZE               16
 
 typedef struct
 {
@@ -116,8 +116,7 @@ typedef struct
     int wall_know_cost;
     int cell_cost;
     int start_orientation;
-}
-robot_settings;
+}robot_settings;
 
 typedef struct
 {

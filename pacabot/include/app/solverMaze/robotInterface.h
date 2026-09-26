@@ -20,5 +20,7 @@ extern positionRobot *pt_zhonx_position;
 int rotate90WithCal(int rotation_type, float max_speed, float end_speed);
 void calibrateSimple();
 void move_zhonx (int direction_to_go, positionRobot *positionZhonx, int numberOfCase);
+void start_navigation();
+void end_navigation();
 
 #endif /* ROBOTINTERFACE_H_ */
