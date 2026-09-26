@@ -8,7 +8,7 @@ static const fw_cal_geometry_t geometry={47000,94000,167000,179000};
 typedef struct {
     double x,y,angle;
     unsigned moves,turns,spins,frames;
-    int fixture,stuck,cancel_spin,noise;
+    int fixture,stuck,cancel_spin,noise,blind;
     uint8_t raw,filtered,confidence[6];
 } robot_t;
 static double nearest_heading(double angle)
@@ -41,6 +41,7 @@ static void sensors(robot_t *r)
         double distance=ray(r,angles[i],forward[i],lateral[i],bits[i]);
         if(distance<=on[i]) r->raw &= ~bits[i];
         if(distance>off[i]) r->raw |= bits[i];
+        if(r->blind && i<2 && distance<20000) r->raw |= bits[i];
     }
     if(r->stuck) r->raw &= ~8u;
     uint8_t sample=r->raw;
@@ -52,9 +53,9 @@ static void sensors(robot_t *r)
         if(!r->confidence[i]) r->filtered &= ~(1u<<i);
     }
 }
-static int read_robot(void *context,uint8_t *raw)
+static int read_robot(void *context,uint8_t stable_mask,uint8_t *raw)
 {
-    robot_t *r=context;
+    (void)stable_mask; robot_t *r=context;
     for(unsigned i=0;i<5;++i) sensors(r);
     *raw=r->raw; return 0;
 }
@@ -132,6 +133,9 @@ int main(void)
     assert(fw_rotation_quarter(&rotation,60,0)>rotation.point[0].quarter_um[0]);
     assert(!fw_rotation_quarter(&rotation,121,0));
     fw_rotation_data_t previous=rotation;
+    r=initial(-1); r.blind=1;
+    assert(!fw_rotation_run(&io,&geometry,&rotation) && fw_rotation_valid(&rotation));
+    puts("rotation: reference seating tolerates near-contact blind zones");
     r=initial(-1);r.stuck=1;
     assert(fw_rotation_run(&io,&geometry,&rotation)==FW_CAL_RANGE && !memcmp(&rotation,&previous,sizeof rotation));
     r=initial(-1);r.cancel_spin=4;

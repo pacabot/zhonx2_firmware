@@ -7,7 +7,7 @@ typedef struct {
     int32_t x,y;
     unsigned heading,moves,turns,frames;
     uint8_t bits;
-    int missing,stuck,cancel_at,glitch;
+    int missing,stuck,cancel_at,glitch,blind;
 } robot_t;
 static const fw_cal_geometry_t geometry={40000,90000,167000,179000};
 static uint32_t wall_distance(const robot_t *r,unsigned direction)
@@ -27,6 +27,7 @@ static uint8_t sensors(robot_t *r)
         uint32_t distance=wall_distance(r,(r->heading+offset[i])%4);
         if(distance<=on[i]) r->bits &= ~bit[i];
         if(distance>off[i]) r->bits |= bit[i];
+        if(r->blind && i<2 && distance<(i?60000u:51000u)) r->bits |= bit[i];
     }
     if(r->missing) r->bits |= 32;
     if(r->stuck==1) r->bits &= ~8u;
@@ -35,11 +36,11 @@ static uint8_t sensors(robot_t *r)
     if(r->glitch && ++r->frames%53==0) raw ^= 4;
     return raw;
 }
-static int read_robot(void *context,uint8_t *bits)
+static int read_robot(void *context,uint8_t stable_mask,uint8_t *bits)
 {
     robot_t *r=context; unsigned stable=0; uint8_t previous=0;
     for (unsigned i=0;i<100;++i) {
-        *bits=sensors(r); stable=*bits==previous?stable+1:1; previous=*bits;
+        *bits=sensors(r); stable=!((*bits^previous)&stable_mask)?stable+1:1; previous=*bits;
         if (stable==5) return 0;
     }
     return -1;
@@ -99,6 +100,12 @@ int main(void)
     assert(r.x==83500 && r.y==83500 && r.heading==0);
     r=initial(); r.glitch=1; assert(!run(&r,&d));
     assert(abs((int)d.front[0].on_um-76000)<1000);
+    r=initial(); r.blind=1;
+    assert(!run(&r,&d) && fw_cal_valid(&d));
+    assert(d.front[0].on_um==76000 && d.front[0].off_um==80100);
+    assert(d.front[1].on_um==130000 && d.front[1].off_um==136100);
+    assert(r.x==83500 && r.y==83500);
+    puts("calibration: near-contact blind zones do not abort seating or replace far thresholds");
     r=initial(); r.missing=1;
     assert(run(&r,&d)==FW_CAL_WALLS && !r.moves);
     d=previous; r=initial(); r.stuck=1;

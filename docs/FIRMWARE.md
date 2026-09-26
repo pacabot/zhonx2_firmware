@@ -347,7 +347,8 @@ encore les déplacements, le départ à la main ni l'exploration sur le terrain.
 
 Menu `Calibration` → `Wall calibration`, rapport `Wall report`.
 Réglages : `Nose x0.1mm`, `Width x0.1mm`, `Cell clear mm`, `Cell pitch mm`.
-La procédure démarre uniquement après l'action `RIGHT: START` ; Retour arrête
+Un schéma vu de dessus montre les murs, le robot au centre et une flèche vers
+le mur frontal. La procédure démarre uniquement après l'action `RIGHT:GO` ; Retour arrête
 les moteurs pendant toute la mesure. Elle n'est jamais lancée au démarrage.
 
 Les cotes fournies sont préremplies : **47 mm entre axe et avant, 94 mm de largeur**
@@ -369,11 +370,17 @@ La séquence automatique est la suivante :
    `largeur intérieure − 2 × axe-avant + 5 mm` de course moteur ; cela peut
    commander plusieurs secondes de pas après le contact. Une fois la référence
    établie, les appuis suivants ajoutent seulement 5 mm à la course attendue.
+   F10 vérifie le mur avant l'approche ; l'état F5/F10 au contact n'est pas
+   utilisé comme contacteur mécanique.
 2. Trois reculs/avances à 10 mm/s, depuis l'appui jusqu'à une distance axe-mur
    égale à la largeur intérieure. Les transitions F5 et F10 sont confirmées sur
    trois acquisitions brutes consécutives ; la position du premier échantillon
    est retenue pour limiter le biais du filtrage. Les moyennes de déclenchement,
-   relâchement, hystérésis et dispersion sont calculées séparément.
+   relâchement, hystérésis et dispersion sont calculées séparément. Si le capteur
+   ne détecte pas à très courte distance, le recul attend l'entrée dans la bande
+   détectée avant de mesurer sa sortie éloignée. Au retour, seule cette zone proche
+   observée au recul (avec 2 mm de marge) peut contenir d'autres transitions.
+   Un capteur sans bande détectée ou sans sortie reste une erreur.
 3. Recul au centre, rotation de 90°, appui sur le mur perpendiculaire et recul
    de `largeur intérieure / 2 − axe-avant`. Pour mesurer le capteur gauche, le
    robot se tourne vers le mur droit ; le mur initial se trouve alors à gauche.
@@ -533,3 +540,36 @@ validation sur la piste avec les murs et les capteurs réels.
 
 Aucun mouvement matériel ni flash exécuté pour cette extension. Les résultats
 numériques des tests sont simulés ; la précision physique n'est pas encore validée.
+
+
+## Correction des arrêts de calibration après appui
+
+Les anciennes procédures exigeaient à la fois F5/F10 détectés au contact et cinq
+scans identiques sur les six capteurs. Ces hypothèses pouvaient interrompre
+l'appui commun aux calibrations mur/rotation : état optique différent à très courte
+distance, ou clignotement d'un capteur latéral sans rapport avec l'étape courante.
+Ces scénarios sont reproduits par les tests ; ils ne constituent pas encore un
+diagnostic confirmé de l'arrêt observé sur le robot.
+
+Les lectures attendent désormais la stabilité des seuls bits utiles : trois
+10 cm pour le montage initial, frontal 10 cm avant appui, paire latérale pour sa
+mesure. Au début du balayage depuis le contact, les scans doivent être frais mais
+leur état n'est pas imposé. Les contrôles de fraîcheur, d'arrêt utilisateur,
+de course maximale et de validité des seuils restent actifs.
+
+Les écrans de lancement montrent les murs et le robot vu de dessus (avec roues et
+flèche de cap), y compris les montages d'angle en miroir et leur poteau. Les rares
+légendes indiquent l'espace libre derrière. Aucun déplacement n'est lancé avant
+`RIGHT:GO` ; `BACK:EXIT` permet d'annuler depuis le schéma.
+
+L'écran d'arrêt affiche le code `E` de calibration, le défaut moteur `M`, la cause
+(`IR NOT STABLE`, `IR DATA STALE`, `MOVE REJECTED`…), la dernière étape et les
+états F5/F10/bruts. Une photo donne donc les informations nécessaires au diagnostic.
+Les codes E2/E3/E4/E5 correspondent respectivement à un montage incorrect,
+un problème de mouvement ou d'acquisition, un seuil absent, des mesures instables.
+Aucune mesure partielle n'est sauvegardée.
+
+Validation : balayages complets avec zones proches non détectées, recalage de
+rotation avec cette même condition, lecture de montage avec R5 alternant à chaque
+scan, refus d'un F10 réellement instable, annulation depuis les trois schémas et
+rendu OLED des erreurs. Application et bootloader compilés Debug et Release.

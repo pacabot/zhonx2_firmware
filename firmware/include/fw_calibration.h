@@ -18,7 +18,8 @@ typedef struct {
     void *context;
     int (*move)(void *, int32_t um, unsigned mm_s, fw_cal_observer, void *);
     int (*turn)(void *, int degrees);
-    int (*read)(void *, uint8_t *raw); /* Fresh, settled and stable measurement. */
+    /* Fresh samples; only stable_mask bits must remain stable. Zero: settle only. */
+    int (*read)(void *, uint8_t stable_mask, uint8_t *raw);
     void (*status)(void *, const char *text, int32_t distance_um);
 } fw_cal_io_t;
 enum { FW_CAL_OK=0, FW_CAL_GEOMETRY=-1, FW_CAL_WALLS=-2,

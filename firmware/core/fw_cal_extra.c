@@ -122,7 +122,7 @@ static int collect_rotation(const fw_cal_extra_io_t *io,unsigned speed,unsigned 
                             uint32_t distance,unsigned chunks,rotation_scan_t *scan)
 {
     memset(scan,0,sizeof *scan); uint8_t raw;
-    if (io->base.read(io->base.context,&raw)) return FW_CAL_MOTION;
+    if (io->base.read(io->base.context,0,&raw)) return FW_CAL_MOTION;
     scan->sensor[0].state=!!(raw&F5); scan->sensor[1].state=!!(raw&F10);
     for (unsigned i=0;i<chunks;++i) {
         scan->offset=i*distance;
@@ -144,7 +144,7 @@ int fw_rotation_run(const fw_cal_extra_io_t *io,const fw_cal_geometry_t *g,fw_ro
     fw_rotation_data_t result={0}; result.geometry=*g;
     for (unsigned v=0;v<FW_CAL_SPEEDS;++v) for (unsigned dir=0;dir<2;++dir) {
         uint8_t raw;
-        if (io->base.read(io->base.context,&raw)) return FW_CAL_MOTION;
+        if (io->base.read(io->base.context,F10|1u|32u,&raw)) return FW_CAL_MOTION;
         if (raw&(F10|1u|32u)) return FW_CAL_WALLS;
         int r=fw_cal_reference(&io->base,g,0); if (r) return r;
         unsigned speed=rotation_speeds[v];
@@ -210,7 +210,7 @@ int fw_corner_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side
     uint32_t bit[2]={side?2u:16u,side?1u:32u},centre=g->inner_um/2,end=post+100000;
     fw_corner_data_t result={.side=side,.post_um=post,.geometry=*g};
     uint8_t raw;
-    if (io->read(io->context,&raw)) return FW_CAL_MOTION;
+    if (io->read(io->context,F10|1u|32u,&raw)) return FW_CAL_MOTION;
     if (raw&(F10|bit[1])) return FW_CAL_WALLS;
     if (!(raw&(side?32u:1u))) return FW_CAL_WALLS; /* Mirror two-wall fixtures. */
     for (unsigned facing=0;facing<2;++facing) for (unsigned v=0;v<FW_CAL_SPEEDS;++v) {
@@ -222,13 +222,13 @@ int fw_corner_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side
         for (unsigned repeat=0;repeat<REPEATS;++repeat) {
             int r=fw_cal_reference(io,g,side); if (r) return r;
             if (facing && io->turn(io->context,180)) return FW_CAL_MOTION;
-            if (io->read(io->context,&raw)) return FW_CAL_MOTION;
+            if (io->read(io->context,(uint8_t)bit[1],&raw)) return FW_CAL_MOTION;
             if (raw&bit[1]) return FW_CAL_WALLS;
             uint32_t mask=(raw&bit[0])?2u:3u;
             if (repeat && mask!=p->mask) return FW_CAL_UNSTABLE;
             p->mask=mask;
             for (unsigned direction=0;direction<2;++direction) {
-                if (io->read(io->context,&raw)) return FW_CAL_MOTION;
+                if (io->read(io->context,(uint8_t)(bit[1]|((mask&1)?bit[0]:0)),&raw)) return FW_CAL_MOTION;
                 corner_scan_t scan={.origin=direction?end:centre,.mask=mask,
                     .bit={bit[0],bit[1]},.opening=!direction,.facing_out=(int)facing};
                 for (unsigned s=0;s<2;++s) {

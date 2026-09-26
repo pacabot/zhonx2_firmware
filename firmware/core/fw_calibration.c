@@ -43,8 +43,8 @@ int fw_cal_valid(const fw_cal_data_t *d)
     return 1;
 }
 typedef struct {
-    uint32_t origin, edge[2], candidate[2];
-    uint8_t previous[2], count[2], seen[2];
+    uint32_t origin, edge[2], candidate[2], blind_limit[2];
+    uint8_t previous[2], count[2], seen[2], armed[2];
     int outward, bad;
 } sweep_t;
 static void observe(void *context,int32_t travelled,uint8_t raw,uint8_t filtered)
@@ -58,8 +58,19 @@ static void observe(void *context,int32_t travelled,uint8_t raw,uint8_t filtered
         if (!s->count[i]) s->candidate[i]=distance;
         if (++s->count[i]<3) continue;
         s->previous[i]=far; s->count[i]=0;
-        if (s->seen[i] || far!=(unsigned)s->outward) s->bad=1;
-        s->seen[i]=1; s->edge[i]=s->candidate[i];
+        if (s->outward) {
+            if (!s->armed[i] && !far) {
+                /* Near-contact optical dead zone: enter the detection band
+                 * before looking for its FAR release threshold. */
+                s->armed[i]=1; s->blind_limit[i]=s->candidate[i]+2000;
+            } else if (s->armed[i] && far && !s->seen[i]) {
+                s->seen[i]=1; s->edge[i]=s->candidate[i];
+            } else s->bad=1;
+        } else if (!s->seen[i] && !far) {
+            s->seen[i]=1; s->edge[i]=s->candidate[i];
+        } else if (!s->blind_limit[i] || s->candidate[i]>s->blind_limit[i]) {
+            s->bad=1;
+        } /* Ignore contact-zone transitions only where the reverse pass measured them. */
     }
 }
 static void status(const fw_cal_io_t *io,const char *text,uint32_t distance)
@@ -69,10 +80,17 @@ static int move(const fw_cal_io_t *io,int32_t um)
 static int seat(const fw_cal_io_t *io,const fw_cal_geometry_t *g,uint32_t distance)
 {
     uint8_t raw;
+    /* Verify the target before moving into contact. F5/F10 are optical
+     * thresholds, not bumper switches: their state at contact is not proof
+     * of seating. At repeated contacts the known coordinate may already be
+     * inside the near dead zone; the fixture was checked beforehand. */
+    if (distance>g->nose_um+OVERTRAVEL) {
+        status(io,"CHECK FRONT WALL",distance);
+        if (io->read(io->context,F10,&raw)) return FW_CAL_MOTION;
+        if (raw&F10) return FW_CAL_WALLS;
+    }
     status(io,"SLOW WALL CONTACT",distance);
-    if (move(io,(int32_t)(distance-g->nose_um+OVERTRAVEL)) || io->read(io->context,&raw))
-        return FW_CAL_MOTION;
-    return (raw&(F5|F10))?FW_CAL_WALLS:0;
+    return move(io,(int32_t)(distance-g->nose_um+OVERTRAVEL))?FW_CAL_MOTION:0;
 }
 /* Return to the original heading after every lateral measurement. */
 int fw_cal_reference(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side)
@@ -96,7 +114,7 @@ static int side_point(const fw_cal_io_t *io,const fw_cal_geometry_t *g,
     /* Seat on the perpendicular wall to remove yaw and establish the other axis. */
     result=seat(io,g,*axis_known?g->inner_um/2:g->inner_um-g->nose_um);
     if (result) return result;
-    if (move(io,-(int32_t)(g->inner_um/2-g->nose_um)) || io->read(io->context,&raw))
+    if (move(io,-(int32_t)(g->inner_um/2-g->nose_um)) || io->read(io->context,side?(R5|R10):(L5|L10),&raw))
         return FW_CAL_MOTION;
     *axis_known=1;
     if (raw&(side?R10:L10)) return FW_CAL_WALLS;
@@ -112,7 +130,8 @@ int fw_cal_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,fw_cal_data_t *o
     if (!io || !io->move || !io->turn || !io->read || !out || !fw_cal_geometry_valid(g))
         return FW_CAL_GEOMETRY;
     /* Do not publish a partial result; caller keeps the previous calibration. */
-    if (io->read(io->context,&raw)) return FW_CAL_MOTION;
+    status(io,"CHECK 3 WALLS",0);
+    if (io->read(io->context,F10|L10|R10,&raw)) return FW_CAL_MOTION;
     if (raw&(F10|L10|R10)) return FW_CAL_WALLS;
     uint32_t centre=g->inner_um/2, position=centre;
     /* First contact on each axis covers the cell's free travel. Subsequent
@@ -122,18 +141,25 @@ int fw_cal_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,fw_cal_data_t *o
     d.geometry=*g; d.repetitions=REPEATS;
     uint32_t low[2][2]={{UINT32_MAX,UINT32_MAX},{UINT32_MAX,UINT32_MAX}}, high[2][2]={{0}};
     for (unsigned repeat=0;repeat<REPEATS;++repeat) {
+        uint32_t blind_limit[2]={0};
         for (unsigned direction=0;direction<2;++direction) {
             int outward=!direction;
-            if (io->read(io->context,&raw)) return FW_CAL_MOTION;
-            if ((raw&(F5|F10))!=(outward?0:(F5|F10))) return FW_CAL_RANGE;
-            sweep_t sweep={.origin=outward?g->nose_um:g->inner_um,.outward=outward};
-            sweep.previous[0]=!!(raw&F5); sweep.previous[1]=!!(raw&F10);
+            status(io,outward?"REVERSE F5 / F10":"FORWARD F5 / F10",0);
+            if (io->read(io->context,outward?0:(F5|F10),&raw)) return FW_CAL_MOTION;
+            if (!outward && (raw&(F5|F10))!=(F5|F10)) return FW_CAL_RANGE;
+            sweep_t sweep={.origin=outward?g->nose_um:g->inner_um,.outward=outward,
+                .blind_limit={blind_limit[0],blind_limit[1]}};
+            for (unsigned i=0;i<2;++i) {
+                sweep.previous[i]=!!(raw&(i?F10:F5));
+                sweep.armed[i]=!sweep.previous[i];
+            }
             status(io,outward?"REVERSE F5 / F10":"FORWARD F5 / F10",sweep.origin);
             int32_t travel=(int32_t)(g->inner_um-g->nose_um);
             if (io->move(io->context,outward?-travel:travel,10,observe,&sweep)) return FW_CAL_MOTION;
             if (sweep.bad) return FW_CAL_UNSTABLE;
             if (!sweep.seen[0] || !sweep.seen[1]) return FW_CAL_RANGE;
             for (unsigned i=0;i<2;++i) {
+                if (outward) blind_limit[i]=sweep.blind_limit[i];
                 if (outward) d.front[i].off_um+=sweep.edge[i]; else d.front[i].on_um+=sweep.edge[i];
                 low[i][direction]=min(low[i][direction],sweep.edge[i]);
                 high[i][direction]=max(high[i][direction],sweep.edge[i]);

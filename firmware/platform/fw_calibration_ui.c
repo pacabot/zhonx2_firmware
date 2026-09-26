@@ -7,10 +7,16 @@
 #include "oled/ssd1306.h"
 #include <stdio.h>
 #include <string.h>
+static const char *io_error;
+static char last_stage[22];
+static hal_sensor_snapshot last_scan;
+static int calibration_error(int error);
 static int cancelled(void) { return !(GPIOC->IDR&GPIO_Pin_13); }
 static int fresh(hal_sensor_snapshot *s)
 {
-    return hal_sensor_snapshot_read(s) && (uint32_t)(hal_os_get_systicks()-s->timestamp)<=50;
+    int available=hal_sensor_snapshot_read(s);
+    last_scan=*s;
+    return available && (uint32_t)(hal_os_get_systicks()-s->timestamp)<=50;
 }
 static void line(unsigned y,const char *text) { ssd1306DrawString(0,y,text,&Font_5x8); }
 static int acknowledge(void)
@@ -25,20 +31,53 @@ static void message(const char *title,const char *text)
     ssd1306ClearScreen(); line(0,title); line(20,text); line(54,"RIGHT:OK BACK:EXIT");
     ssd1306Refresh(); (void)acknowledge();
 }
-static int read_settled(void *context,uint8_t *raw)
+/* Desired placement, viewed from above. fixture: 0=three walls,
+ * 1=left corner, 2=right corner. This is a guide, not a measured robot pose. */
+static int placement(const char *title,unsigned fixture)
+{
+    io_error=0; snprintf(last_stage,sizeof last_stage,"CHECK FIXTURE");
+    memset(&last_scan,0,sizeof last_scan);
+    ssd1306ClearScreen(); line(0,title);
+    ssd1306FillRect(7,10,46,3); /* Front wall. */
+    if (fixture!=2) ssd1306FillRect(7,10,3,42);
+    if (fixture!=1) ssd1306FillRect(50,10,3,42);
+    if (fixture) ssd1306FillRect(fixture==1?6:49,48,5,4); /* End post. */
+    ssd1306DrawRect(19,22,22,22); /* 94 mm square in a 167 mm clear cell. */
+    ssd1306FillRect(17,30,2,7); ssd1306FillRect(41,30,2,7); /* Wheels / axle. */
+    ssd1306DrawLine(21,33,39,33);
+    ssd1306DrawLine(30,38,30,25);
+    ssd1306DrawLine(26,29,30,25); ssd1306DrawLine(30,25,34,29);
+    ssd1306DrawDashedLine(30,45,30,52); /* Open straight behind the robot. */
+    ssd1306DrawString(64,13,"TOP VIEW",&Font_5x8);
+    ssd1306DrawString(64,25,"FRONT ^",&Font_5x8);
+    ssd1306DrawString(64,37,fixture?"2 CELLS":"10CM FREE",&Font_5x8);
+    ssd1306DrawString(64,46,"BEHIND",&Font_3x6);
+    line(55,"RIGHT:GO BACK:EXIT"); ssd1306Refresh();
+    return acknowledge();
+}
+static int healthy(hal_sensor_snapshot *scan)
+{
+    if (cancelled()) { io_error="BACK PRESSED"; return 0; }
+    if (fw_motion_fault()) { io_error="MOTION FAULT"; return 0; }
+    if (!fresh(scan)) { io_error="IR DATA STALE"; return 0; }
+    return 1;
+}
+static int read_settled(void *context,uint8_t stable_mask,uint8_t *raw)
 {
     (void)context;
     uint32_t start=hal_os_get_systicks(),seen=0; unsigned count=0; uint8_t previous=0;
     while ((uint32_t)(hal_os_get_systicks()-start)<1000) {
         hal_sensor_snapshot scan;
-        if (cancelled() || fw_motion_fault() || !fresh(&scan)) return -1;
+        if (!healthy(&scan)) return -1;
         if (scan.sequence!=seen) {
             seen=scan.sequence;
-            count=scan.raw==previous?count+1:1; previous=scan.raw;
+            /* An unrelated sensor at its threshold must not block this read. */
+            count=((scan.raw^previous)&stable_mask)?1:count+1; previous=scan.raw;
             if (count>=5) { *raw=previous; return 0; }
         }
         __WFI();
     }
+    io_error="IR NOT STABLE";
     return -1;
 }
 static int wait_move(fw_cal_observer observer,void *context)
@@ -46,8 +85,10 @@ static int wait_move(fw_cal_observer observer,void *context)
     uint32_t start=hal_os_get_systicks(),seen=0;
     do {
         hal_sensor_snapshot scan;
-        if (cancelled() || fw_motion_fault() || !fresh(&scan) ||
-            (uint32_t)(hal_os_get_systicks()-start)>55000) { fw_motion_stop(); return -1; }
+        if (!healthy(&scan)) { fw_motion_stop(); return -1; }
+        if ((uint32_t)(hal_os_get_systicks()-start)>55000) {
+            io_error="MOVE TIMEOUT"; fw_motion_stop(); return -1;
+        }
         if (observer && seen!=scan.sequence) {
             observer(context,fw_motion_travelled_um(),scan.raw,scan.filtered); seen=scan.sequence;
         }
@@ -57,7 +98,7 @@ static int wait_move(fw_cal_observer observer,void *context)
     start=hal_os_get_systicks();
     do {
         hal_sensor_snapshot scan;
-        if (cancelled() || fw_motion_fault() || !fresh(&scan)) { fw_motion_stop(); return -1; }
+        if (!healthy(&scan)) { fw_motion_stop(); return -1; }
         if (observer && seen!=scan.sequence) {
             observer(context,fw_motion_travelled_um(),scan.raw,scan.filtered); seen=scan.sequence;
         }
@@ -70,18 +111,20 @@ static int move_robot(void *context,int32_t um,unsigned speed,fw_cal_observer ob
     (void)context;
     if (cancelled()) return -1;
     int result=speed>30?fw_motion_calibration_traverse(um,speed):fw_motion_calibration_move(um,speed);
-    if (result) return -1;
+    if (result) { io_error="MOVE REJECTED"; return -1; }
     return wait_move(observer,data);
 }
 static int turn_robot(void *context,int degrees)
 {
     (void)context;
-    if (cancelled() || fw_motion_calibration_turn(degrees)) return -1;
+    if (cancelled()) return -1;
+    if (fw_motion_calibration_turn(degrees)) { io_error="TURN REJECTED"; return -1; }
     return wait_move(0,0);
 }
 static void status(void *context,const char *text,int32_t um)
 {
     char value[32];
+    snprintf(last_stage,sizeof last_stage,"%s",text);
     ssd1306ClearScreen(); line(0,context?(const char *)context:"WALL CALIBRATION"); line(16,text);
     snprintf(value,sizeof value,"AXLE-WALL %ld.%ld MM",(long)(um/1000),(long)(um%1000/100));
     if (um) line(32,value);
@@ -140,20 +183,12 @@ int fw_calibrate_menu(void)
         message("INVALID GEOMETRY","SET NOSE / WIDTH"); return -1;
     }
     fw_motion_init();
-    ssd1306ClearScreen(); line(0,"WALL CALIBRATION");
-    line(12,"CENTER IN 3-WALL CELL"); line(22,"CLEAR 10 CM BEHIND");
-    line(32,"SLOW WALL CONTACT"); line(42,"BACK: STOP"); line(54,"RIGHT: START");
-    ssd1306Refresh(); if (acknowledge()) return -1;
+    if (placement("WALL CALIBRATION",0)) return -1;
     const fw_cal_io_t io={0,move_robot,turn_robot,read_settled,status};
     fw_cal_data_t result;
     int error=fw_cal_run(&io,&geometry,&result);
     fw_motion_stop();
-    if (error) {
-        const char *text=error==FW_CAL_WALLS?"CHECK FIXTURE WALLS":
-            error==FW_CAL_RANGE?"NO EDGE IN RANGE":error==FW_CAL_UNSTABLE?"UNSTABLE MEASUREMENTS":"STOP OR SENSOR FAULT";
-        if (!cancelled()) message("CALIBRATION STOPPED",text);
-        return -1;
-    }
+    if (error) return calibration_error(error);
     if (fw_app_calibration_commit(&result)) { message("WALL CALIBRATION","FLASH SAVE FAILED"); return -1; }
     return fw_calibration_report();
 }
@@ -171,14 +206,26 @@ static int configured_geometry(fw_cal_geometry_t *g)
 static int spin_robot(void *context,int32_t um,unsigned speed,fw_cal_observer observer,void *data)
 {
     (void)context;
-    if (cancelled() || fw_motion_calibration_spin(um,speed)) return -1;
+    if (cancelled()) return -1;
+    if (fw_motion_calibration_spin(um,speed)) { io_error="SPIN REJECTED"; return -1; }
     return wait_move(observer,data);
 }
 static int calibration_error(int error)
 {
+    int motion_fault=fw_motion_fault();
     fw_motion_stop();
-    if (!cancelled()) message("CALIBRATION STOPPED",error==FW_CAL_RANGE?"NO EDGE IN RANGE":
-        error==FW_CAL_UNSTABLE?"UNSTABLE MEASUREMENTS":error==FW_CAL_WALLS?"CHECK FIXTURE WALLS":"STOP OR SENSOR FAULT");
+    if (!cancelled()) {
+        char text[32];
+        const char *reason=error==FW_CAL_RANGE?"NO EDGE IN RANGE":
+            error==FW_CAL_UNSTABLE?"UNSTABLE MEASUREMENTS":
+            error==FW_CAL_WALLS?"CHECK FIXTURE WALLS":io_error?io_error:"MOVE FAILED";
+        ssd1306ClearScreen();
+        snprintf(text,sizeof text,"CAL STOP E%d M%d",-error,motion_fault); line(0,text);
+        line(12,reason); line(24,last_stage);
+        snprintf(text,sizeof text,"F5:%u F10:%u RAW:%02X",!(last_scan.raw&SENSOR_F5_POS),
+            !(last_scan.raw&SENSOR_F10_POS),last_scan.raw); line(36,text);
+        line(54,"RIGHT:OK BACK:EXIT"); ssd1306Refresh(); (void)acknowledge();
+    }
     return -1;
 }
 int fw_rotation_report(void)
@@ -205,10 +252,8 @@ int fw_rotation_menu(void)
     fw_cal_geometry_t g;
     if (fw_motion_busy()) return -1;
     if (configured_geometry(&g)) { message("INVALID GEOMETRY","SET NOSE / WIDTH"); return -1; }
-    fw_motion_init(); ssd1306ClearScreen(); line(0,"ROTATION CALIBRATION");
-    line(12,"CENTER IN 3-WALL CELL"); line(22,"OPENING BEHIND ROBOT");
-    line(32,"CW + CCW / 3 SPEEDS"); line(42,"BACK: STOP"); line(54,"RIGHT: START");
-    ssd1306Refresh(); if (acknowledge()) return -1;
+    fw_motion_init();
+    if (placement("ROTATION CALIBRATION",0)) return -1;
     const fw_cal_extra_io_t io={{"ROTATION CALIBRATION",move_robot,turn_robot,read_settled,status},spin_robot};
     fw_rotation_data_t result;
     int error=fw_rotation_run(&io,&g,&result); fw_motion_stop();
@@ -248,16 +293,13 @@ int fw_corner_report(void)
 }
 static int corner_menu(unsigned side)
 {
-    fw_cal_geometry_t g; char value[32];
+    fw_cal_geometry_t g;
     if (fw_motion_busy()) return -1;
     if (configured_geometry(&g) || fw_cal_post_mm<0 || fw_cal_post_mm>250 ||
         fw_cal_post_mm*1000u<g.inner_um/2+50000) { message("INVALID GEOMETRY","CHECK POST POSITION"); return -1; }
     if (!fw_rotation_valid(fw_app_rotation()) || memcmp(&g,&fw_app_rotation()->geometry,sizeof g)) { message("CORNER CALIBRATION","RUN ROTATION FIRST"); return -1; }
-    fw_motion_init(); ssd1306ClearScreen(); line(0,"CORNER CALIBRATION");
-    line(12,side?"FRONT + RIGHT WALL":"FRONT + LEFT WALL");
-    snprintf(value,sizeof value,"POST CENTER %d MM",fw_cal_post_mm); line(22,value);
-    line(32,"CLEAR 2 CELLS BEHIND"); line(42,"BACK: STOP"); line(54,"RIGHT: START");
-    ssd1306Refresh(); if (acknowledge()) return -1;
+    fw_motion_init();
+    if (placement(side?"CORNER / RIGHT WALL":"CORNER / LEFT WALL",side+1)) return -1;
     const fw_cal_io_t io={"CORNER CALIBRATION",move_robot,turn_robot,read_settled,status};
     fw_corner_data_t result;
     int error=fw_corner_run(&io,&g,side,fw_cal_post_mm*1000u,&result); fw_motion_stop();
