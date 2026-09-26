@@ -19,7 +19,32 @@ Les fichiers utilisés de la STM32F4 Standard Peripheral Library et de CMSIS ont
 
 ## Sauvegarde de la carte
 
-La copie complète de la Flash et ses informations de vérification sont dans `backups/`. La version `446199d` a été écrite et vérifiée le 26 septembre 2026 ; les corrections suivantes sont documentées dans `docs/FIRMWARE.md`. La compilation seule ne prouve pas le fonctionnement sur le robot ; les paramètres persistants et le comportement des moteurs devront être contrôlés avant toute mise à jour matérielle.
+La copie complète du firmware d'origine et ses informations de vérification sont dans `backups/`. Les corrections sont documentées dans `docs/FIRMWARE.md`.
+
+## Compiler et flasher par ST-Link
+
+Robot alimenté et sonde branchée (les anciennes ST-Link/V2 sont prises en charge) :
+
+```sh
+.scripts/build/build.sh
+```
+
+Le script fonctionne depuis n'importe quel dossier. Il compile, sauvegarde les
+1 Mio de Flash, écrit le bootloader, le manifeste et l'application, puis compare
+la relecture complète à l'image attendue, y compris les secteurs conservés.
+Les réglages, la carte et la zone de téléchargement sont préservés.
+Il redémarre ensuite le robot au menu et contrôle les interruptions, les capteurs,
+l'absence de défaut processeur et la désactivation des moteurs au repos.
+
+Les sauvegardes horodatées, images, journaux et rapports restent dans
+`backups/flash-sessions/` (non versionné, conservé par `make clean`). Le dump
+historique n'est jamais remplacé. En cas d'échec, consulter le journal avant de
+débrancher le robot ; le firmware peut nécessiter une nouvelle programmation.
+
+Options : `--build-only` pour compiler sans accès matériel, `--test` pour exécuter
+aussi les tests, `--clean` pour recompiler entièrement. Prérequis supplémentaires
+pour flasher : OpenOCD. Variables facultatives : `JOBS=4`, `SWD_KHZ=1000`,
+`STLINK_SERIAL=<numéro>` pour sélectionner une sonde précise.
 
 ## Évolutions firmware
 

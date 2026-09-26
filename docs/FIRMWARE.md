@@ -328,3 +328,16 @@ puis rotation, obstacle trop précoce, trajectoire d'application complète (10
 mouvements, 6 rotations, découverte de salle et retour), rendu réel du framebuffer
 OLED sur les 81 positions, découpage et absence de rebouclage du texte à gauche.
 Les rendus de test sont `build/ui-maze.pgm` et `build/ui-prompt.pgm`.
+
+### Installation des corrections — 26 septembre 2026
+
+Firmware `812789e` installé avec `.scripts/build/build.sh --test` via la ST-Link
+V2J16S4 à 1000 kHz. Sauvegarde préalable des 1 Mio, programmation puis comparaison
+complète : images conformes, secteurs de persistance et autres zones non écrites
+inchangés. Application de 54 996 octets, SHA-256
+`67e1c4a9b0e242c1b1de4a31fdf1dd6e696aca65ced649cc2fb6b531bc7f3b07`.
+
+Session locale : `backups/flash-sessions/20260926T174234Z-6HY8FN/`.
+Après redémarrage : VTOR `0x08010000`, CFSR/HFSR nuls, moteurs désactivés,
+ticks et séquence capteurs progressant. Ces contrôles au repos ne valident pas
+encore les déplacements, le départ à la main ni l'exploration sur le terrain.
