@@ -224,7 +224,7 @@ def run(action, filename):
         obj, saved = read_archive(filename, entry['uid'])
         validate(selected(saved)['payload'])  # Reject incompatible archive before any target access.
     directory = ROOT/'backups/flash-sessions';directory.mkdir(parents=True, exist_ok=True)
-    session = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%SZ-cal-'), dir=directory))
+    session = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%SZ-cal-', time.gmtime()), dir=directory))
     write_json(session/'identity.json', entry)
     if action == 'restore':
         write_json(session/'source.json', obj)
