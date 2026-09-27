@@ -93,3 +93,24 @@ Le diagnostic `scripts/flash/dump.sh --diagnostics` lit les registres GPIO/ADC/D
 et quatre paires ADC, sans reset ni écriture en flash, après contrôle sonde/UID.
 Une conversion nominale incohérente ne bloque pas la saisie d’une référence au
 multimètre : le signal ADC valide et stable reste utilisable pour cet étalonnage.
+
+
+## Mesures du 27 septembre : isoler le pont et l'entrée PA4
+
+Le multimètre indique **7,92 V au pack et 3,20 V au pont**, cohérent avec
+10 kΩ / 6,8 kΩ (valeur calculée 3,206 V). Cependant le canal ADC4 fournit
+1475–1486 points, soit 1,17–1,19 V avec VDDA calculé par VREFINT.
+Une mesure à 3,20 V sur PA4 devrait donner environ 4010–4030 points.
+
+`scripts/flash/dump.sh --adc-test` vérifie cela par des conversions injectées
+PA4 / VREFINT, lues directement dans JDR1, indépendamment du DMA. Les mesures
+concordent avec le DMA. Le script exige les moteurs arrêtés, suspend le CPU,
+restaure le séquenceur injecté, reprend le CPU et ne touche pas à la flash.
+Référence : [ST RM0090, séquences injectées ADC](https://www.st.com.cn/resource/en/reference_manual/rm0090-stm32f405415-stm32f407417-stm32f427437-and-stm32f429439-advanced-armbased-32bit-mcus-stmicroelectronics.pdf).
+
+Journal : `backups/flash-sessions/20260927T131448Z-dump-8dhXR8/read.log`.
+Le prochain contrôle est la tension directement sur PA4, puis, robot et sonde
+hors tension, la continuité entre le pont et PA4. Pour le STM32F405RG en LQFP64,
+PA4 est la patte 20 ([ST DS8626, tableau 7](https://www.st.com/resource/en/datasheet/stm32f405rg.pdf)).
+La mesure au pont ne prouve pas à elle seule que cette tension arrive à la broche.
+Aucun facteur de gain artificiel n'a été enregistré pour masquer cet écart.
