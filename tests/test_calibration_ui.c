@@ -4,14 +4,18 @@
 #include "stm32f4xx_gpio.h"
 #include "oled/ssd1306.h"
 #include <assert.h>
-void fw_ui_header(const char *s) {ssd1306DrawString(1,0,s,&Font_5x8);ssd1306DrawLine(0,8,127,8);}
-void fw_ui_hint(const char *s) {ssd1306DrawString(1,55,s,&Font_3x6);}
+#include <string.h>
+extern unsigned char buffer[1024];
+#include "fw_display.h"
+void fw_ui_header(const char *s) {fw_display_text(0,0,s);ssd1306DrawLine(0,14,127,14);}
+void fw_ui_hint(const char *s) {fw_display_text(0,52,s);}
 #include <stdio.h>
 GPIO_TypeDef test_gpioc;
 void fw_ui_menu_refresh(void) {ssd1306Refresh();}
 int fw_cal_nose_tenth_mm,fw_cal_width_tenth_mm,fw_cal_inner_mm=167,fw_cal_pitch_mm=179,fw_cal_post_mm=173;
 static unsigned pages,toggle,now,mode,io_moves;
-static unsigned diagram_side;
+static unsigned diagram_side,nav_event;
+static unsigned char first_page[1024],second_page[1024];
 static void save_image(const char *name)
 {
     FILE *f=fopen(name,"wb");assert(f);fputs("P5\n128 64\n255\n",f);
@@ -57,43 +61,62 @@ unsigned long hal_os_get_systicks(void) { return now; }
 int HAL_Delay(unsigned long ms) { (void)ms;return 0; }
 void fw_test_idle(void)
 {
+    if(mode==4) {
+        unsigned step=nav_event/2;
+        if(!(nav_event%2)) {
+            if(step==0)memcpy(first_page,buffer,1024);
+            if(step==1)memcpy(second_page,buffer,1024);
+            if(step==2 || step==3)assert(!memcmp(first_page,buffer,1024));
+            if(step==4)assert(!memcmp(second_page,buffer,1024));
+            assert(step<=4);
+            test_gpioc.IDR &= ~(1u<<(step==4?8:(step==1 || step==2)?9:10));
+        } else test_gpioc.IDR=0xffff;
+        ++nav_event;return;
+    }
     if (mode==1) {
         char name[64];snprintf(name,sizeof name,"build/ui-placement-%u.pgm",diagram_side);
         save_image(name);
-        assert(ssd1306GetPixel(20,12)); /* Front wall. */
-        assert(!!ssd1306GetPixel(14,20)==(diagram_side!=2));
-        assert(!!ssd1306GetPixel(33,20)==(diagram_side!=1));
-        assert(ssd1306GetPixel(19,17) && ssd1306GetPixel(24,20)); /* Robot and heading. */
+        assert(ssd1306GetPixel(20,16)); /* Front wall. */
+        assert(!!ssd1306GetPixel(14,24)==(diagram_side!=2));
+        assert(!!ssd1306GetPixel(33,24)==(diagram_side!=1));
+        assert(ssd1306GetPixel(19,21) && ssd1306GetPixel(24,24)); /* Robot and heading. */
         test_gpioc.IDR &= ~(1u<<8); return;
     }
     if (mode>=2) {
         now+=10;assert(now<2000);
         if (now==10) test_gpioc.IDR &= ~GPIO_Pin_11; /* Start. */
         if (now==20) test_gpioc.IDR |= GPIO_Pin_11;
-        if (now==1500) {
+        if (now==1500 || now==1600) {
             save_image(mode==2?"build/ui-calibration-io-error.pgm":"build/ui-calibration-unstable.pgm");
             test_gpioc.IDR &= ~GPIO_Pin_11;
         }
-        if (now==1510) test_gpioc.IDR |= GPIO_Pin_11;
+        if (now==1510 || now==1610) test_gpioc.IDR |= GPIO_Pin_11;
         return;
     }
     if (!toggle) {
+        if(pages==93) {
+            unsigned char actual[1024];memcpy(actual,buffer,1024);
+            ssd1306ClearScreen();fw_display_text(0,32,"Right: MISSING");
+            for(unsigned y=32;y<44;++y)for(unsigned x=0;x<120;++x)
+                assert(ssd1306GetPixel(x,y)==!!(actual[x+y/8*128]&(1u<<(y%8))));
+            memcpy(buffer,actual,1024);
+        }
         char name[64]; snprintf(name,sizeof name,"build/ui-calibration-%u.pgm",pages++);
         save_image(name); test_gpioc.IDR &= ~GPIO_Pin_11;
     } else test_gpioc.IDR |= GPIO_Pin_11;
     toggle=!toggle;
-    assert(pages<=35);
+    assert(pages<=200);
 }
 
 int main(void)
 {
     test_gpioc.IDR=0xffff;
-    assert(!fw_calibration_report() && pages==5);
+    assert(!fw_calibration_report() && pages==8);
     rotation.valid=1; rotation.geometry=data.geometry;
     for (unsigned i=0;i<3;++i) rotation.point[i]=(fw_rotation_point_t){
         .speed=40+40*i,.quarter_um={66000,65000},.spread_um={1200,800},
         .quarter_error_mdeg={1200,0},.quarter_checks={8,0}};
-    assert(!fw_rotation_report() && pages==11);
+    assert(!fw_rotation_report() && pages==20);
     for (unsigned s=0;s<2;++s) {
         corner[s]=(fw_corner_data_t){.valid=1,.side=s,.post_um=173000,.geometry=data.geometry};
         for(unsigned f=0;f<2;++f) for(unsigned i=0;i<3;++i)
@@ -101,8 +124,13 @@ int main(void)
                 .raw_open_um={-12000,12500},.raw_close_um={-10000,11200},
                 .open_um={-13000,13000},.close_um={-10500,10000},.spread_um={1000,2000}};
     }
-    assert(!fw_corner_report() && pages==35);
-    puts("OLED calibration: 35 wall, rotation and corner report pages rendered with the real driver");
+    assert(!fw_corner_report() && pages==93);
+    corner[1].valid=0;
+    assert(!fw_corner_report() && pages==130);
+    corner[1].valid=1;
+    puts("OLED calibration: 93 readable wall, rotation and corner report pages rendered with the real driver");
+    mode=4;test_gpioc.IDR=0xffff;assert(!fw_calibration_report() && nav_event==9);
+    test_gpioc.IDR=0xffff;
     fw_cal_nose_tenth_mm=400;fw_cal_width_tenth_mm=900;
     mode=1; diagram_side=0; assert(fw_calibrate_menu()==-1);
     test_gpioc.IDR=0xffff; assert(fw_rotation_menu()==-1);

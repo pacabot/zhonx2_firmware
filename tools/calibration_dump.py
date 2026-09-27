@@ -30,6 +30,10 @@ def decode(data):
     report = dict(sha256=hashlib.sha256(data).hexdigest(), banks=banks)
     if not valid:
         report['error'] = 'No committed snapshot with valid CRC'; return report
+    # Firmware attempts the newest supported format before older migrations.
+    # Within that format, use the wrapping sequence number.
+    schema = max(b['schema'] for b in valid)
+    valid = [b for b in valid if b['schema'] == schema]
     chosen = valid[0]
     for b in valid[1:]:
         delta = (b['sequence']-chosen['sequence']) & 0xffffffff
@@ -109,7 +113,7 @@ def assess(report):
     else: note('warning', 'No saved rotation calibration')
     for side,c in enumerate(report.get('corners', [])):
         if not c['valid']:
-            note('warning', f'No saved corner fixture {side}'); continue
+            note('warning', f'No saved {"RIGHT" if side else "LEFT"} corner fixture'); continue
         for p in c['profiles']:
             for channel in range(2):
                 if not p['mask'] & (1<<channel): continue
@@ -118,6 +122,8 @@ def assess(report):
                     note('error', f'Corner {side}, {p["speed"]}: offset/spread outside firmware bounds')
                 if p['open_mm'][channel]+0.2<p['raw_open_mm'][channel] or p['close_mm'][channel]-0.2>p['raw_close_mm'][channel]:
                     note('warning', f'Corner {side}, {p["speed"]}: inspect unexpected raw/filtered transition order')
+    if 'battery_reference' in report and not report['battery_reference']['raw']:
+        note('warning', 'No saved battery voltage reference')
     note('info', 'CRC and numerical checks do not validate physical accuracy or absence of wheel slip')
     return findings
 

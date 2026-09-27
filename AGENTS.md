@@ -6,7 +6,8 @@ Its STM32 UID was read and registered as **003300373432471234373230**.
 ZHONX III uses a different probe; never choose the first available USB probe.
 
 - Use `scripts/flash/flash.sh` for programming and `scripts/flash/dump.sh` for dumps.
-  Both require an associated probe and check the STM32 UID in the same OpenOCD
+  `scripts/flash/calibration.sh` is the authorized calibration backup/restore path.
+  These tools require an associated probe and check the STM32 UID in the same OpenOCD
   session, before any erase/write. This also applies to agent-initiated flashing.
 - Associations are in `${XDG_CONFIG_HOME:-$HOME/.config}/pacabot/robots.json`.
   `scripts/flash/flash.sh --check` checks the target without flashing or resetting.

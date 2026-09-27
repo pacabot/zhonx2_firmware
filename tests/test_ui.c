@@ -66,14 +66,13 @@ int main(void)
     unsigned char before_battery[1024];memcpy(before_battery,buffer,sizeof buffer);
     charge(3000);fw_ui_menu_refresh();image("build/ui-battery-full.pgm");
     charge(2357);fw_ui_menu_refresh();image("build/ui-battery-empty.pgm");
-    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<104;++x)
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<96;++x)
         assert(ssd1306GetPixel(x,y)==!!(before_battery[x+(y/8)*128]&(1u<<(y%8))));
-    for(unsigned x=104;x<128;++x)assert(!ssd1306GetPixel(x,0)); /* Text only, no battery outline. */
     fw_battery_set_reference((fw_battery_reference_t){0});fw_ui_menu_refresh();image("build/ui-battery-unknown.pgm");
     fw_ui_card("METER VOLTAGE / 2S","Meter volts","8.40 V",FW_ICON_SETTINGS,0,1);
-    fw_ui_hint("UP/DN: EDIT  OK: SAVE");image("build/ui-battery-setup.pgm");
+    fw_ui_hint("UP/DN  OK:SAVE");image("build/ui-battery-setup.pgm");
     fw_ui_card("ZHONX II","Maze","",FW_ICON_MAZE,0,5);
-    for(unsigned y=0;y<10;++y)for(unsigned x=0;x<104;++x)assert(!ssd1306GetPixel(x,y));
+    for(unsigned y=0;y<10;++y)for(unsigned x=0;x<96;++x)assert(!ssd1306GetPixel(x,y));
     image("build/ui-menu-no-header.pgm");
     fw_ui_card("DELETE THIS MAZE?","Delete maze","Confirm",FW_ICON_REPORT,1,2);
     image("build/ui-confirm-delete.pgm");

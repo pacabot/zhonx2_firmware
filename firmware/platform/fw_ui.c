@@ -1,7 +1,10 @@
 #include "fw_ui.h"
+#include "fw_display.h"
+#include "fw_text.h"
+#include <string.h>
 #include "oled/ssd1306.h"
 #include <stdio.h>
-/* 54x54 map below a 9-pixel title. Status occupies the right half. */
+/* Full 54x54 map; readable status occupies the right half. */
 static void wall(unsigned x, unsigned y, unsigned direction, int known, int present)
 {
     unsigned x1=x,y1=y;
@@ -17,7 +20,6 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t p,const char *status,
 {
     char text[24]; uint8_t goals[NM_CELLS]; nm_goal(m,goals);
     ssd1306ClearScreen();
-    ssd1306DrawString(0,0,status,&Font_5x8);
     for (unsigned y=0;y<NM_SIDE;++y) for (unsigned x=0;x<NM_SIDE;++x) {
         const nm_cell_t *c=&m->cell[y*NM_SIDE+x];
         unsigned px=x*6,py=9+(8-y)*6;
@@ -34,14 +36,22 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t p,const char *status,
         ssd1306FillRect(x-1,y-1,3,3);
         ssd1306DrawLine(x,y,x+dx[p.heading],y+dy[p.heading]);
     }
-    snprintf(text,sizeof text,"X%u Y%u %c",p.x,p.y,"NESW"[p.heading%4]);
-    ssd1306DrawString(60,11,text,&Font_3x6);
-    snprintf(text,sizeof text,"%u MM/S",speed); ssd1306DrawString(60,20,text,&Font_3x6);
+    /* Keep the full map; readable status at right, diagnostics alternate.
+     * Start instructions and stop reasons wrap instead of shrinking. */
+    if(!strcmp(status,"EXPLORATION"))status="Explore";
+    if(!strcmp(status,"HAND IN FRONT OF F10"))status="Hand on F10";
+    if(!strcmp(status,"REMOVE YOUR HAND"))status="Remove hand";
+    char row[9];
+    const char *rest=fw_text_line(status,row,8);fw_display_text(60,0,row);
+    rest=fw_text_line(rest,row,8);fw_display_text(60,13,row);
+    if(*rest) {fw_text_line(rest,row,8);fw_display_text(60,26,row);}
+    else {
+        if((ms/2000)%2)snprintf(text,sizeof text,"%u mm/s",speed);
+        else snprintf(text,sizeof text,"X%u Y%u %c",p.x,p.y,"NESW"[p.heading%4]);
+        fw_display_text(60,26,text);
+    }
     snprintf(text,sizeof text,"%lu:%02lu",(unsigned long)(ms/60000),(unsigned long)(ms/1000%60));
-    ssd1306DrawString(60,29,text,&Font_3x6);
-    snprintf(text,sizeof text,"WALL %c%c%c",(sensors&0x20)?'-':'L',(sensors&0x08)?'-':'F',(sensors&0x01)?'-':'R');
-    ssd1306DrawString(60,38,text,&Font_3x6);
-    snprintf(text,sizeof text,"IR %02X",sensors); ssd1306DrawString(60,47,text,&Font_3x6);
-    ssd1306DrawString(60,56,"BACK:STOP",&Font_3x6);
-    ssd1306Refresh();
+    fw_display_text(60,39,text);
+    snprintf(text,sizeof text,"IR %c%c%c",(sensors&0x20)?'-':'L',(sensors&0x08)?'-':'F',(sensors&0x01)?'-':'R');
+    fw_display_text(60,52,text);ssd1306Refresh();
 }

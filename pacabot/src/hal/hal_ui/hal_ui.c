@@ -15,6 +15,8 @@
 #include "hal/hal_ui.h"
 #include "fw_buttons.h"
 #include "fw_menu.h"
+#include "fw_display.h"
+#include "fw_text.h"
 #include "hal/hal_adc.h"
 #include "hal/hal_led.h"
 #include "hal/hal_beeper.h"
@@ -160,21 +162,20 @@ int hal_ui_display_prompt(HAL_UI_HANDLE handle,
                           const char *title, const char *str)
 {
     UNUSED(handle);
-    ssd1306ClearScreen();
-
-    // Draw the title
-    ssd1306DrawRect(4, 2, 120, 60);
-    ssd1306DrawString(5, 3, touppercase((char *)title, strlen(title)), &Font_3x6);
-    ssd1306InvertArea(5, 3, 118, 8);
-    // Draw prompt string
-    ssd1306DrawTextBox(6, 18, 116, 30, str, &Font_5x8);
-    // Draw instructions string
-    ssd1306DrawString(6, 53, "OK / LEFT:BACK / ESC", &Font_3x6);
-    ssd1306Refresh();
-
-    // Wait until 'Return' Button is pressed
-    while(!fw_select_pressed() && !fw_cancel_pressed()) __WFI();
     while(fw_select_pressed() || fw_cancel_pressed()) __WFI();
+    do {
+        ssd1306ClearScreen();fw_ui_header(title);
+        char row[16];
+        for(unsigned y=18;*str && y<=48;y+=15) {
+            str=fw_text_line(str,row,15);fw_display_text(0,y,row);
+        }
+        if(*str)fw_display_scroll(0,2);
+        fw_ui_menu_refresh();
+        while(!fw_select_pressed() && !fw_cancel_pressed()) __WFI();
+        int stop=fw_cancel_pressed();
+        while(fw_select_pressed() || fw_cancel_pressed()) __WFI();
+        if(stop)break;
+    } while(*str);
     HAL_Delay(VALIDATE_WAIT_TIME);
 
     return 0;

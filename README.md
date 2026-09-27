@@ -94,6 +94,18 @@ scripts/flash/dump.sh                     # flash complète + rapport JSON
 scripts/flash/dump.sh --calibration-only  # seulement les 32 Kio persistants
 ```
 
+Pour sauvegarder les calibrations dans une archive réinjectable :
+
+```sh
+scripts/flash/calibration.sh backup backups/calibrations/robot.json
+scripts/flash/calibration.sh inspect backups/calibrations/robot.json
+scripts/flash/calibration.sh restore backups/calibrations/robot.json
+```
+
+La restauration conserve les labyrinthes et le firmware ; elle réinjecte les
+mesures et leur géométrie, avec sauvegarde préalable et vérification obligatoire.
+Voir [formats, protections et navigation des rapports](docs/CALIBRATION_BACKUP.md).
+
 Les sauvegardes horodatées, images, journaux et rapports restent dans
 `backups/flash-sessions/` (non versionné, conservé par `make clean`). Le dump
 historique n'est jamais remplacé. En cas d'échec, consulter le journal avant de
@@ -155,7 +167,9 @@ L'interface utilise une carte avec icône par écran et des caractères de 16 pi
 pour l'action choisie. Haut/bas fait défiler ; droite ou appui central valide ;
 gauche du joystick revient ; Escape peut arrêter les mouvements. Les menus de
 sélection affichent directement leur action, sans titre de catégorie en haut.
-Un ascenseur à droite indique la position dans la liste.
+Un ascenseur à droite indique la position dans la liste. Les autres écrans
+utilisent une police de 7 × 12 pixels minimum ; les rapports se parcourent avec
+haut/bas ou OK et signalent explicitement les calibrations manquantes.
 Les consignes propres à une action apparaissent dans un cartouche inversé ;
 les menus ne répètent plus les commandes de navigation.
 

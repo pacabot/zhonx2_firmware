@@ -187,7 +187,7 @@ void fw_menu_battery_setup(void)
         (void)idle_wait(&activity);
         char value[16];snprintf(value,sizeof value,"%u.%02u V",mv/1000,(mv%1000)/10);
         fw_ui_card("METER VOLTAGE / 2S","Meter volts",value,FW_ICON_SETTINGS,0,1);
-        fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
+        fw_ui_hint("UP/DN  OK:SAVE");fw_ui_menu_refresh();
         unsigned k=key();
         if(k==KEY_BACK)return;
         if(k==KEY_UP && mv<8500)mv+=10;

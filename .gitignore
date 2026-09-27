@@ -5,3 +5,5 @@ build/
 __pycache__/
 *.pyc
 backups/flash-sessions/
+
+/backups/calibrations/

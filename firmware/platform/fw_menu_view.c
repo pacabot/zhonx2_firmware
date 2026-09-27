@@ -3,56 +3,34 @@
 #include <stdio.h>
 #include <string.h>
 #include "fw_battery.h"
+#include "fw_display.h"
+#define large fw_display_large
 void fw_ui_header(const char *title)
 {
-    ssd1306ClearRect(0,0,128,10);
-    char clipped[25];snprintf(clipped,sizeof clipped,"%.24s",title);
-    ssd1306DrawString(1,0,clipped,strlen(title)>15?&Font_3x6:&Font_5x8);
-    ssd1306DrawLine(0,10,127,10);
+    char clipped[12];snprintf(clipped,sizeof clipped,"%.11s",title);
+    ssd1306ClearRect(0,0,128,15);
+    fw_display_text(0,0,clipped);
+    ssd1306DrawLine(0,14,127,14);
 }
 static void hint(unsigned x,unsigned width,const char *text)
 {
-    ssd1306ClearRect(x,54,width,10);
-    const FONT_DEF *font=strlen(text)*6+6>width?&Font_3x6:&Font_5x8;
-    unsigned text_width=strlen(text)*(font->u8Width+1u);
-    ssd1306DrawString(x+(width>text_width?(width-text_width)/2:0),55,text,font);
-    for(unsigned y=54;y<64;++y)for(unsigned xx=x;xx<x+width;++xx)ssd1306InvertPixel(xx,y);
+    char clipped[17];unsigned columns=width/8;
+    snprintf(clipped,sizeof clipped,"%.*s",(int)columns,text);
+    ssd1306ClearRect(x,52,width,12);
+    fw_display_text(x+(width-strlen(clipped)*8)/2,52,clipped);
+    for(unsigned y=52;y<64;++y)for(unsigned xx=x;xx<x+width;++xx)ssd1306InvertPixel(xx,y);
 }
 void fw_ui_hint(const char *text) {hint(0,123,text);}
-static void scroll(unsigned index,unsigned count)
-{
-    if(count<2)return;
-    unsigned height=34/count;if(height<5)height=5;
-    if(index>=count)index=count-1;
-    unsigned y=16+index*(34-height)/(count-1);
-    ssd1306DrawLine(126,16,126,49);ssd1306FillRect(125,y,3,height);
-}
+#define scroll fw_display_scroll
 void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
-    char value[8];
-    ssd1306ClearRect(104,0,24,10);
+    char value[8];ssd1306ClearRect(96,0,32,13);
     if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%",b.percent);
     else snprintf(value,sizeof value,"--%%");
-    ssd1306DrawString(128-strlen(value)*6,1,value,&Font_5x8);
+    fw_display_text(128-strlen(value)*8,0,value);
 }
 void fw_ui_menu_refresh(void) {fw_ui_battery();ssd1306Refresh();}
-/* Double-height 7x8 font: 7x16 glyphs, no hidden clipping or bitmap assets. */
-static void large(unsigned x,unsigned y,const char *s)
-{
-    for(;*s && x+7<=128 && y+16<=64;++s,x+=8) {
-        unsigned c=(unsigned char)*s;
-        if(c<32 || c>127) continue;
-        for(unsigned col=0;col<7;++col) {
-            unsigned bits=Font_7x8.au8FontTable[(c-32)*7+col];
-            for(unsigned row=0;row<8;++row) if(bits&(1u<<row)) ssd1306FillRect(x+col,y+2*row,1,2);
-        }
-    }
-}
-static void small(unsigned x,unsigned y,const char *s) {
-    if(!y) {char title[20];snprintf(title,sizeof title,"%.19s",s);ssd1306DrawString(x,y,title,&Font_5x8);}
-    else ssd1306DrawString(x,y,s,&Font_5x8);
-}
 static void icon(unsigned type)
 {
     unsigned x=2,y=21;
@@ -105,7 +83,7 @@ void fw_ui_card(const char *title,const char *first,const char *second,unsigned 
     icon(type);scroll(index,count);
     int instruction=!strncmp(second,"OK:",3) || !strncmp(second,"LEFT:",5);
     if(instruction) {large(33,24,first);fw_ui_hint(second);}
-    else {large(33,*second?15:25,first);if(*second)large(33,36,second);}
+    else {large(33,*second?16:25,first);if(*second)large(33,36,second);}
     fw_ui_menu_refresh();
 }
 void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int blink)
@@ -131,12 +109,12 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int bl
         ssd1306DrawLine(x,y,xx,yy);ssd1306DrawLine(x+1,y,xx+1,yy);c=next;
     }
     large(58,13,"MAZE");snprintf(s,sizeof s,"%lu",(unsigned long)m->id);large(58,31,s);
-    hint(58,65,"OK: LOAD");fw_ui_menu_refresh();
+    hint(58,65,"LOAD");fw_ui_menu_refresh();
 }
 void fw_ui_setting(unsigned index,int value)
 {
-    static const char *const names[]={"Axle to nose","Robot width","Cell interior","Cell pitch","Post center",
-        "Explore speed","Fast run speed","Start corner","Start heading"};
+    static const char *const names[]={"Axle-nose","Width","Cell clear","Cell pitch","Post center",
+        "Explore","Fast run","Start cell","Heading"};
     char s[24];ssd1306ClearScreen();fw_ui_header(names[index]);
     ssd1306DrawRect(5,14,40,39);ssd1306DrawRect(17,25,16,16);
     ssd1306FillRect(15,31,2,6);ssd1306FillRect(33,31,2,6);
@@ -151,6 +129,6 @@ void fw_ui_setting(unsigned index,int value)
     else if(index==7) snprintf(s,sizeof s,"%s",(const char*[]){"SW","SE","NE","NW"}[value]);
     else if(index==8) snprintf(s,sizeof s,"%s",(const char*[]){"NORTH","EAST","SOUTH","WEST"}[value]);
     else snprintf(s,sizeof s,"%d",value);
-    large(59,20,s);small(59,40,index<5?"MM":index<7?"MM/S":"START");
-    fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
+    large(59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":"START");
+    fw_ui_hint("UP/DN  OK:SAVE");fw_ui_menu_refresh();
 }
