@@ -154,38 +154,3 @@ void fw_ui_setting(unsigned index,int value)
     large(59,20,s);small(59,40,index<5?"MM":index<7?"MM/S":"START");
     fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
 }
-
-/* Original geometric lettering, drawn as strokes on the 128x64 OLED.
- * Full-screen idle view: double-height strokes, no status overlay. */
-static void stroke(unsigned x,unsigned y,unsigned a,unsigned b,unsigned c,unsigned d)
-{
-    ssd1306DrawLine(x+a,y+2*b,x+c,y+2*d);
-    ssd1306DrawLine(x+a+1,y+2*b,x+c+1,y+2*d);
-    ssd1306DrawLine(x+a,y+2*b+1,x+c,y+2*d+1);
-}
-void fw_ui_idle(unsigned phase)
-{
-    unsigned tx=phase%32,ty=phase%48;
-    if(tx>16)tx=32-tx;
-    if(ty>24)ty=48-ty;
-    unsigned origin=3+tx/2,x=origin,y=2+ty/3;
-    ssd1306ClearScreen();
-    /* Z */
-    stroke(x,y,0,0,14,0);stroke(x,y,14,0,0,22);stroke(x,y,0,22,14,22);
-    x+=19; /* H */
-    stroke(x,y,0,0,0,22);stroke(x,y,14,0,14,22);stroke(x,y,0,11,14,11);
-    x+=19; /* Chamfered O */
-    stroke(x,y,3,0,11,0);stroke(x,y,11,0,14,3);stroke(x,y,14,3,14,19);
-    stroke(x,y,14,19,11,22);stroke(x,y,11,22,3,22);stroke(x,y,3,22,0,19);
-    stroke(x,y,0,19,0,3);stroke(x,y,0,3,3,0);
-    x+=19; /* N */
-    stroke(x,y,0,22,0,0);stroke(x,y,0,0,14,22);stroke(x,y,14,22,14,0);
-    x+=19; /* X */
-    stroke(x,y,0,0,14,22);stroke(x,y,14,0,0,22);
-    x+=23; /* Roman numeral II */
-    stroke(x,y,0,0,0,22);stroke(x,y,7,0,7,22);
-    ssd1306DrawLine(origin,y+51,origin+105,y+51);
-    ssd1306DrawLine(origin+105,y+51,origin+109,y+47);
-    /* Keep acquisition alive without drawing the menu percentage. */
-    fw_battery_poll();ssd1306Refresh();
-}

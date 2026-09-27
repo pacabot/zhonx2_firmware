@@ -80,7 +80,7 @@ int main(void)
     fw_battery_set_reference((fw_battery_reference_t){3000,8400});
     if(!setjmp(finish))fw_menu_run();
     assert(fw_battery_status().soc_valid && fw_battery_status().percent==100);
-    assert(idle_frames && home_index==1); /* Wake DOWN consumed; next DOWN acts. */
+    assert(idle_frames>=180 && home_index==1); /* Wake DOWN consumed; next DOWN acts. */
     assert(explored==1 && slow==1 && loaded==1);
     puts("idle: 30 seconds at rest, no sleep during motion, wake consumed, selection retained");
     puts("menu: joystick press/left/escape, gated runs, completed learning and direct library loading");

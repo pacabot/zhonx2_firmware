@@ -87,7 +87,17 @@ int main(void)
         if(x<min_x)min_x=x;if(x>max_x)max_x=x;
     }
     assert(max_y-min_y>=50 && max_x-min_x>=105);
-    fw_ui_idle(14);image("build/ui-idle-14.pgm");assert(memcmp(off,buffer,sizeof off));
+    fw_ui_idle(1700);image("build/ui-idle-1700.pgm");assert(memcmp(off,buffer,sizeof off));
+    fw_ui_idle(9999);assert(!memcmp(off,buffer,sizeof off)); /* Seamless half-turn loop. */
+    fw_ui_idle(4000);image("build/ui-idle-assembled.pgm");memcpy(off,buffer,sizeof off);
+    fw_ui_idle(5200);assert(!memcmp(off,buffer,sizeof off)); /* Legible, motionless name hold. */
+    fw_ui_idle(10000+4000);assert(!memcmp(off,buffer,sizeof off));
+    FILE *frames=fopen("build/ui-idle-frames.raw","wb");assert(frames);
+    for(unsigned frame=0;frame<300;++frame) {
+        fw_ui_idle(frame*10000/300);
+        assert(fwrite(buffer,1,sizeof buffer,frames)==sizeof buffer);
+    }
+    fclose(frames);
     charge(2700);fw_ui_card("HOME","Maze","",FW_ICON_MAZE,0,5);image("build/ui-battery-partial.pgm");
     puts("OLED: large icon cards, nine illustrated settings, blinking stored route");
     return 0;

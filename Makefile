@@ -98,8 +98,8 @@ test:
 	$(BUILD)/test_navigation
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_ui.c \
-	 firmware/core/fw_battery.c firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c \
-	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_ui
+	 firmware/core/fw_battery.c firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/platform/fw_idle.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c \
+	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -lm -o $(BUILD)/test_ui
 	$(BUILD)/test_ui
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_calibration_ui.c \
