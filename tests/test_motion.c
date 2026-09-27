@@ -298,6 +298,29 @@ int main(void)
     counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
     trim=fw_motion_travelled_um()-counted;assert(trim< -3000 && trim> -4500);
     fw_motion_stop();
+    /* Reproduce the 2026-09-27 SRAM capture: four cells, F10 trim -6 mm,
+     * F5 at ~14.467 mm remaining. The old 13.348 mm gate stopped here.
+     * A credible edge must finish the calibrated 8.348 mm in forward motion;
+     * an earlier obstacle or a known opening must still stop immediately. */
+    for(unsigned mode=0;mode<4;++mode) {
+        setup();fw_cal_data_t captured=walls;
+        captured.front[0].on_um=91848;captured.front[0].off_um=92415;captured.front[0].spread_um=408;
+        captured.front[1].on_um=131991;captured.front[1].off_um=132353;captured.front[1].spread_um=192;
+        fw_motion_geometry(179000,91848,167000);fw_motion_wall_profile(&captured);
+        assert(!fw_motion_straight_to(4,mode==1?600:300,mode!=3));
+        while(fw_motion_travelled_um()<673509)tick(1);
+        scan.raw&=~SENSOR_F10_POS;tick(1);
+        int32_t edge_remaining=mode==1?22500:mode==2?26000:14467;
+        while(fw_motion_remaining()>edge_remaining*0.001*2*STEPS_PER_MM)tick(1);
+        scan.raw&=~SENSOR_F5_POS;tick(1);
+        if(mode>=2) {assert(fw_motion_fault()==2 && !fw_motion_busy() && disabled);continue;}
+        assert(!fw_motion_fault() && fw_motion_busy() && fw_motion_wall_arrival());
+        unsigned long edge_count=total[0]+total[1];
+        while(fw_motion_busy()) {assert(commanded[0]>0 && commanded[1]>0);tick(1);}
+        double after_edge=(total[0]+total[1]-edge_count)/(4.0*STEPS_PER_MM);
+        assert(fabs(after_edge-8.348)<0.15 && !fw_motion_fault());
+        assert(abs(fw_motion_travelled_um()-716000)<150);
+    }
     /* Position reference from the actual hysteresis edge; arbitrary initial
      * longitudinal offsets, both approach and release directions. */
     for(int offset=-12;offset<=12;offset+=6) {

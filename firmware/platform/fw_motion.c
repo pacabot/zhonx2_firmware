@@ -397,15 +397,15 @@ void fw_motion_tick(uint32_t now)
         /* A front wall at the final cell centre is an arrival, not a failed maze.
          * Never accept an obstacle in the middle of a corridor or before a known opening. */
         if (front_calibrated && allow_wall &&
-            (float)remaining/TICKS_PER_MM<=(float)front_allowance_um*0.001f+5.0f) {
-            /* Measured trigger can occur before the centre: finish the pulse
-             * budget instead of labelling that early position as a cell centre. */
+            (float)remaining/TICKS_PER_MM<=(float)front_allowance_um*0.001f+
+                (wall_profile.valid?15.0f:5.0f)) {
+            /* Match the 15 mm reference window used for F10 and posts. The old
+             * 5 mm gate faulted on a valid F5 edge after a bounded F10 correction.
+             * Use that calibrated edge to finish at the centre without reversing. */
             wall_arrival=1;
-            if(previous_raw&SENSOR_F5_POS) {
+            if(wall_profile.valid && (previous_raw&SENSOR_F5_POS)) {
                 int32_t residual=(int32_t)goal_um-(int32_t)front_allowance_um-raw_distance_um()-longitudinal_um;
                 if(residual>=-15000 && residual<=15000) {
-                    if(residual>6000)residual=6000;
-                    if(residual<-6000)residual=-6000;
                     longitudinal_um+=residual;
                 }
             }
@@ -415,6 +415,7 @@ void fw_motion_tick(uint32_t now)
         if (!active) return;
     }
     previous_raw=scan.raw;
+    remaining=fw_motion_remaining(); /* Include this scan's frontal position reference. */
     if (scan.sequence!=last_scan) {
         last_scan=scan.sequence;
         if(straight) {

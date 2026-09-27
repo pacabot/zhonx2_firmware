@@ -496,40 +496,6 @@ static int recover_front(nm_pose_t *pose,nm_pose_t segment,unsigned moving)
     if(fw_motion_fault())return -1;
     maze=corrected;*pose=back;fw_motion_init();return 0;
 }
-static int wait_position(nm_pose_t pose)
-{
-    uint32_t since=hal_os_get_systicks(),shown=since;
-    while(fw_motion_busy()) {
-        uint32_t now=hal_os_get_systicks();
-        if(fw_cancel_pressed() || now-since>5000) {fw_motion_stop();return -1;}
-        if(now-shown>=80) {fw_ui_maze(&maze,pose,"CENTERING",fw_motion_speed(),search_used(now),live_sensors());shown=now;}
-        __WFI();
-    }
-    return fw_motion_fault()?-1:0;
-}
-static int face(nm_pose_t *p,unsigned heading)
-{
-    int quarters=(heading+4-p->heading)%4;if(!quarters)return 0;
-    if(quarters==3)quarters=-1;
-    if(fw_motion_turn(quarters*90) || wait_position(*p))return -1;
-    p->heading=heading;return 0;
-}
-static int centre_pose(nm_pose_t *p)
-{
-    if(!fw_cal_valid(&measurements.wall))return 0;
-    unsigned heading=p->heading;
-    /* Centre the cross-axis first, then the travel axis. A missing wall is
-     * never used as a reference. Both thresholds include measured hysteresis. */
-    for(unsigned axis=0;axis<2;++axis)for(unsigned opposite=0;opposite<2;++opposite) {
-        unsigned d=(heading+(axis?0:1)+2*opposite)%4;
-        if(!(maze.cell[cell(*p)].walls&(1u<<d)))continue;
-        if(face(p,d))return -1;
-        int result=fw_motion_center_wall();
-        if(result<0 || (!result && wait_position(*p)))return -1;
-        if(!result && fw_motion_centered())break;
-    }
-    return face(p,heading);
-}
 static int choose_confirmation(nm_pose_t p,nm_route_t *route,nm_pose_t *target)
 {
     if(!confirmation_pass)confirmation_pass=1;
@@ -563,6 +529,10 @@ static int execute(int timed_run,int fresh)
     if(!parameters_valid()) {hal_ui_display_prompt(app_context.ui,"Maze","INVALID SETTINGS");return -1;}
     if(timed_run && !fw_app_ready()) {hal_ui_display_prompt(app_context.ui,"Maze","LEARN A MAZE FIRST");return -1;}
     unsigned speed=timed_run?(run_speed_override?run_speed_override:(unsigned)fw_run_speed):(unsigned)fw_search_speed;
+    /* Door offsets are measured only up to 220 mm/s. Preserve continuous
+     * preview and post references instead of silently disabling both at 300. */
+    if(!timed_run && speed>220 && fw_cal_valid(&measurements.wall) &&
+       fw_corner_valid(&measurements.corner[0]) && fw_corner_valid(&measurements.corner[1]))speed=220;
     fw_motion_init();confirmation_pass=0;memset(rechecked,0,sizeof rechecked);
     if(fresh) {learned=0;nm_init_size(&maze,fw_maze_size,1);fw_start_corner=fw_start_heading=0;
         search_ms=last_run_ms=0;has_map=1;search_clock_running=0;}
@@ -573,7 +543,7 @@ static int execute(int timed_run,int fresh)
     if(!timed_run) {search_base=search_ms;search_epoch=started;search_clock_running=1;}
     uint32_t stopped=started,ui_time=started,seen=0,mismatch_since=0;
     unsigned moving=0,turn_heading=0,stable=0;int in_window=0;uint8_t candidate=0;
-    int checking=0,needs_center=0,initial_center=1;nm_pose_t check_target=pose;
+    int checking=0;nm_pose_t check_target=pose;
     int state=0,turning=0,curving=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
     const char *message="STOPPED";nm_route_t route;nm_pose_t curve_end=pose;
     int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=curve_run?0:preview_distance(speed);
@@ -586,7 +556,7 @@ static int execute(int timed_run,int fresh)
                !recover_front(&pose,segment,moving)) {
                 segment=pose;displayed_pose=pose;stopped=hal_os_get_systicks();
                 state=turning=previewed=returning=certified=mismatch=in_window=0;
-                moving=stable=0;seen=0;prepared=-1;needs_center=1;checking=0;continue;
+                moving=stable=0;seen=0;prepared=-1;checking=0;continue;
             }
             fw_last_stop_code=(unsigned)fw_motion_fault();
             message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":fw_motion_fault()==4?"CENTER FAILED":"EARLY OBSTACLE";break;
@@ -631,18 +601,12 @@ static int execute(int timed_run,int fresh)
         }
         if(state) {
             if(curving) {pose=curve_end;stopped=now;stable=0;curving=0;}
-            else if(turning) {pose.heading=turn_heading;stopped=now;stable=0;
-                if(checking && cell(pose)==cell(check_target) && pose.heading==check_target.heading)needs_center=1;}
-            else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;
-                if(!timed_run && (!previewed || prepared!=(int)pose.heading))needs_center=1;}
+            else if(turning) {pose.heading=turn_heading;stopped=now;stable=0;}
+            else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;}
             displayed_pose=pose;moving=0;turning=0;state=0;
         }
-        if(needs_center) {
-            uint32_t centre_started=hal_os_get_systicks();
-            if(centre_pose(&pose)) {message=fw_cancel_pressed()?"USER STOP":"CENTER FAILED";break;}
-            if(timed_run)started+=hal_os_get_systicks()-centre_started;
-            needs_center=0;previewed=0;stable=0;seen=0;stopped=hal_os_get_systicks();continue;
-        }
+        /* Position is corrected by the motion interrupt from calibrated wall
+         * and post transitions. Never add stop/turn/probe cycles at cell centres. */
         if(checking) {
             if(cell(pose)==cell(check_target)) {
                 if(pose.heading!=check_target.heading)prepared=check_target.heading;
@@ -679,7 +643,7 @@ static int execute(int timed_run,int fresh)
                     if(choose_conflict(pose,walls,&check_target) && choose_confirmation(pose,&route,&check_target)) {
                         message="CHECK LIMIT";fw_last_stop_code=3;break;
                     }
-                    checking=1;needs_center=1;previewed=0;returning=certified=0;continue;
+                    checking=1;previewed=0;returning=certified=0;continue;
                 } else {message="MAP CONFLICT";fw_last_stop_code=3;break;}
             }
             pose=target;mismatch=0;
@@ -689,10 +653,9 @@ static int execute(int timed_run,int fresh)
         if(prepared<0) {
             if(timed_run)break;
             if(choose_confirmation(pose,&route,&check_target)) {message="CHECK LIMIT";break;}
-            checking=1;needs_center=1;returning=certified=0;stable=0;continue;
+            checking=1;returning=certified=0;stable=0;continue;
         }
         if(prepared==4) {result=0;break;}
-        if(initial_center) {initial_center=0;needs_center=1;continue;}
         turn_heading=(unsigned)prepared;
         if(turn_heading!=pose.heading) {
             int quarters=(turn_heading+4-pose.heading)%4;if(quarters==3)quarters=-1;

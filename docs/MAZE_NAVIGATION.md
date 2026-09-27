@@ -107,8 +107,9 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
 - Les transitions des poteaux 10 cm recalent la distance longitudinale avec
   les profils d'ouverture/fermeture interpolés à la vitesse courante. Une paire
   gauche/droite fournit aussi une référence de cap. Corrections bornées : résidu
-  accepté ±15 mm, correction au plus 6 mm par événement. Le front 5 cm recale
-  également une arrivée devant un mur autorisé. F10 recale déjà l'approche
+  accepté ±15 mm, correction au plus 6 mm par événement de poteau/F10. Le front
+  5 cm utilise la correction mesurée complète (±15 mm maximum) pour terminer
+  une arrivée devant un mur autorisé, sans recul. F10 recale déjà l'approche
   avant F5. Si le canal 5 cm d'une calibration d'angle est valide, il affine le
   recalage après un poteau 10 cm concordant ; une simple transition de suivi
   latéral n'est pas prise pour une porte. Aucune valeur 5 cm absente du
@@ -133,29 +134,22 @@ mécanique et l'adhérence doivent être vérifiées sur le robot avant une cour
 
 ## Recentrage et confirmation des portes
 
-Après le départ à la main, le firmware recherche une référence de position sur
-les murs connus et visibles. Il fait de même aux arrêts d'exploration, après une
-récupération et avant de confirmer un mur suspect. Le recentrage initial d'un
-run est exclu de son chronomètre. Un enchaînement droit anticipé reste continu.
+Le recalage se fait pendant les lignes droites : estimation latérale et du cap
+avec les seuils tout ou rien calibrés, références longitudinales aux poteaux et
+aux fronts F10/F5. Il n'y a plus de recherche de seuil par avance/recul ni de
+rotation vers les murs au départ, aux centres ou avant une confirmation.
+Les rotations nécessaires au trajet et à la vérification frontale restent présentes.
 
-Le robot se tourne d'abord vers un mur latéral pour recaler l'axe transversal,
-puis utilise le mur avant ou arrière pour l'axe longitudinal. Les quarts de tour
-utilisent les profils de rotation. À 40 mm/s, une recherche bornée à 25 mm maximum
-repère le déclenchement F5 ou son relâchement, confirmé sur trois scans. Le seuil
-**on/off mesuré**, la largeur libre de la cellule et la position de l'axe des
-roues donnent alors le déplacement vers le centre. La correction de pose est
-limitée à ±15 mm. Aucun talonnage n'est demandé. Sans transition détectée, le
-petit déplacement de recherche est annulé avant d'essayer une autre référence.
-
-Il faut des références sur deux axes pour recaler les deux coordonnées. En
-leur absence, les pas moteurs et les contraintes des capteurs restent utilisés ;
-un centrage parfait n'est pas observable avec une lecture tout ou rien fixe.
-Les tests du recentrage couvrent des décalages initiaux de ±12 mm et l'hystérésis,
-avec moins de 0,7 mm d'erreur dans le modèle, pas une garantie mécanique.
+Quand les deux calibrations de portes sont disponibles, la vitesse effective
+d'exploration est plafonnée à leur domaine mesuré (220 mm/s), même si Settings
+indique 300. Cela permet l'anticipation et les corrections aux poteaux ; les
+runs conservent leur vitesse configurée. Une ligne droite décidée dans la fenêtre
+d'observation est prolongée sans arrêt du contrôleur. Les changements de direction
+et les mesures encore incertaines peuvent demander un arrêt.
 
 En exploration, une contradiction persistante ou l'absence de chemin lance une
 vérification. Le robot rejoint, par les passages connus, une cellule accessible
-avec un mur restant à vérifier. Il se recentre, se place face à ce mur et exige
+avec un mur restant à vérifier. Il se place face à ce mur et exige
 cinq scans concordants au repos. Une ouverture confirmée corrige **les deux faces**
 de la carte puis relance immédiatement le calcul et l'exploration. Une lecture
 latérale isolée ne suffit pas à effacer un mur.
@@ -187,7 +181,7 @@ répétées restent bornées par les trois passes de confirmation.
 
 Le robot recule à 80 mm/s vers le dernier centre dépassé, sur le trajet qu'il
 vient de parcourir (au maximum une cellule). À la fin du recul, les deux faces
-du mur sont corrigées dans la carte, puis le robot se recentre et le trajet est recalculé. Si une contradiction
+du mur sont corrigées dans la carte, puis le trajet est recalculé. Si une contradiction
 empêche la reprise, les passes de confirmation prennent le relais. La position
 est mémorisée dès l'arrêt des moteurs ; l'attente de confirmation n'ajoute pas
 une distance fictive. Escape et le contrôle de fraîcheur des capteurs restent
@@ -208,3 +202,8 @@ Les formats 1 à 6 sont migrés en mémoire, y compris les huit cartes 9×9 et l
 calibrations. Aucun effacement n'est déclenché par la seule lecture. La prochaine
 sauvegarde transactionnelle écrit le format 7 dans l'autre banque. Les anciens
 firmwares ne savent pas charger ce format ; conserver l'archive avant mise à jour.
+
+Une carte d'exploration interrompue est sauvegardée comme apprentissage en cours
+et accessible via **Resume / Learning**. Voir la salle d'arrivée ne suffit pas à
+certifier le chemin : le planificateur vérifie encore les raccourcis possibles.
+L'ajout à la bibliothèque intervient après certification et retour au départ.

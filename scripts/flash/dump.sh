@@ -4,15 +4,18 @@ set -euo pipefail
 cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 diagnostics=0
 adc_test=0
+state=0
 case ${1:-} in
     --help|-h)
-        echo 'Usage: scripts/flash/dump.sh [--calibration-only | --diagnostics | --adc-test]'
+        echo 'Usage: scripts/flash/dump.sh [--calibration-only | --diagnostics | --adc-test | --state]'
         echo 'Sans option : dump flash complet ; --calibration-only : 32 Kio de données.'
+        echo '--state : capture flash + RAM + registres au repos, sans reset ; reprend le CPU.'
         echo '--diagnostics : lecture GPIO/ADC/DMA sans reset ni écriture.'
         echo '--adc-test : moteurs arrêtés, suspend le CPU, mesure PA4 et VREFINT'
         echo 'par conversions injectées sans DMA, restaure le séquenceur et reprend le CPU.'
         echo 'Aucune écriture en flash ; contrôle sonde/UID dans tous les modes.'
         exit 0 ;;
+    --state) state=1; address=0x08000000; size=0x100000 ;;
     --adc-test) diagnostics=1; adc_test=1; address=0; size=0 ;;
     --diagnostics) diagnostics=1; address=0; size=0 ;;
     --calibration-only) address=0x08004000; size=0x8000 ;;
@@ -25,7 +28,7 @@ export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 [[ ${STLINK_SERIAL:-} =~ ^[[:alnum:]]*$ ]] || exit 2
 mkdir -p backups/flash-sessions
 session=$(mktemp -d "backups/flash-sessions/$(date -u +%Y%m%dT%H%M%SZ)-dump-XXXXXX")
-python3 - "$session" "$address" "$size" "$adc_test" <<'PY'
+python3 - "$session" "$address" "$size" "$adc_test" "$state" <<'PY'
 import os, sys
 from pathlib import Path
 p, address, size = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -76,6 +79,26 @@ resume
 if {$failed} {error $diagnostic_error}
 '''
     config += 'shutdown\n'
+elif sys.argv[5] == '1':
+    import shutil
+    elf = Path('build/release/ZHONX_II_M4.elf')
+    if elf.exists(): shutil.copy2(elf, p/'candidate.elf')
+    config += f'''if {{([lindex [read_memory 0x40020014 32 1] 0] & 0x10c) != 0x100}} {{error "Stop motors before state capture"}}
+halt
+set failed [catch {{
+    if {{([lindex [read_memory 0x40020014 32 1] 0] & 0x10c) != 0x100}} {{error "Motors active"}}
+    echo "CPU_REGISTERS [get_reg {{r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 sp lr pc xpsr}}]"
+    echo "VTOR [read_memory 0xe000ed08 32 1]"
+    echo "CFSR_HFSR [read_memory 0xe000ed28 32 2]"
+    echo "GPIOA_ODR [read_memory 0x40020014 32 1]"
+    dump_image {p}/sram.bin 0x20000000 0x20000
+    dump_image {p}/ccm.bin 0x10000000 0x10000
+    dump_image {p}/flash.bin {address} {size}
+}} capture_error]
+resume
+if {{$failed}} {{error $capture_error}}
+shutdown
+'''
 else:
     config += f'''reset halt
 dump_image {p}/flash.bin {address} {size}
@@ -90,7 +113,10 @@ python3 tools/calibration_dump.py "$session/flash.bin" --output "$session/calibr
 python3 - "$session" <<'PY'
 import hashlib,sys
 from pathlib import Path
-p=Path(sys.argv[1]);h=hashlib.sha256((p/'flash.bin').read_bytes()).hexdigest()
-(p/'flash.bin.sha256').write_text(h+'  flash.bin\n')
+p=Path(sys.argv[1])
+for name in ('flash.bin','sram.bin','ccm.bin'):
+    if (p/name).exists():
+        h=hashlib.sha256((p/name).read_bytes()).hexdigest()
+        (p/(name+'.sha256')).write_text(h+'  '+name+'\n')
 print('Dump and calibration report: '+str(p))
 PY

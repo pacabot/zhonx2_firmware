@@ -26,7 +26,7 @@ static nm_map_t ground;
 static nm_pose_t physical,destination;
 static uint32_t now,deadline,move_started;
 static nm_pose_t segment_start;
-static unsigned moving_cells,extensions;
+static unsigned moving_cells,extensions,maximum_requested_speed;
 static int rotating,backing,recovered,confirm_missing;
 static int32_t fault_travel;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack,curves;
@@ -100,7 +100,7 @@ int fw_motion_extend(unsigned cells,int accept) {
 void fw_ui_map_progress(int p) {(void)p;}
 void fw_ui_map_view(unsigned z,int x,int y) {assert(z==0 || z==16 || z==24);(void)x;(void)y;}
 void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
-int fw_motion_center_wall(void) {return 1;}
+int fw_motion_center_wall(void) {assert(!"Navigation must correct in motion, never probe walls");return -1;}
 int fw_motion_centered(void) {return 0;}
 void fw_motion_init(void) { busy=stopped=wall_arrival=backing=0; }
 int fw_motion_obstacle_backoff(uint32_t um)
@@ -124,6 +124,7 @@ uint32_t fw_motion_remaining(void) { return 0; }
 int fw_motion_straight_to(unsigned cells,unsigned speed,int accept_wall)
 {
     assert(!busy && now>=400 && speed>=20 && cells>0); ++moves;
+    if(speed>maximum_requested_speed)maximum_requested_speed=speed;
     destination=physical; int c=physical.y*NM_SIDE+physical.x;
     for(unsigned i=0;i<cells;++i) {
         assert(!(ground.cell[c].walls & 1u<<physical.heading));
@@ -195,7 +196,7 @@ static void scenario(int obstacle)
     physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
-    fw_app_init();
+    fw_app_init();fw_search_speed=obstacle==8?300:220;maximum_requested_speed=0;
     fw_cal_data_t calibration={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
         .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
     assert(!fw_app_calibration_commit(&calibration));
@@ -210,7 +211,8 @@ static void scenario(int obstacle)
     saves=0;
     int result=fw_app_discover();
     assert(saves==1 && ack>=200);
-    if(obstacle==0 || obstacle==2 || obstacle==4 || obstacle==5 || obstacle==7) {
+    if(obstacle==8)assert(maximum_requested_speed==220 && extensions>0);
+    if(obstacle==0 || obstacle==2 || obstacle==4 || obstacle==5 || obstacle==7 || obstacle==8) {
         if(obstacle==2 || obstacle==7)assert(recovered);
         else assert(!recovered);
         assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
@@ -305,7 +307,7 @@ static void calibration_snapshot(void)
 }
 int main(void)
 {
-    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);
+    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);scenario(8);
     puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
     calibration_snapshot();
     fw_run_speed=1000;assert(!fw_app_settings_save());
