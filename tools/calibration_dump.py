@@ -35,7 +35,7 @@ def decode(data):
         delta = (b['sequence']-chosen['sequence']) & 0xffffffff
         if 0 < delta < 0x80000000: chosen = b
     report['selected_bank'] = chosen['bank']
-    if chosen['schema'] not in (3, 4, 5) or chosen['size'] < BASE_SIZE+WALL_SIZE:
+    if chosen['schema'] not in (3, 4, 5, 6) or chosen['size'] < BASE_SIZE+WALL_SIZE:
         report['error'] = 'Snapshot has no supported calibration payload'; return report
     off = chosen['offset']+32+BASE_SIZE
     def ints(n, signed=False):
@@ -72,6 +72,11 @@ def decode(data):
                     raw_close_mm=[x/1000 for x in v[2:4]], open_mm=[x/1000 for x in v[4:6]],
                     close_mm=[x/1000 for x in v[6:]], spread_mm=[x/1000 for x in spread]))
         report['corners'].append(corner)
+    if chosen['schema'] == 6:
+        if chosen['size'] != 4708:
+            raise ValueError('Unexpected battery snapshot size')
+        raw, mv = struct.unpack_from('<II', data, chosen['offset']+32+chosen['size']-8)
+        report['battery_reference'] = dict(raw=raw, pack_mv=mv)
     report['assessment'] = assess(report)
     return report
 

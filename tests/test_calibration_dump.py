@@ -34,3 +34,12 @@ class CalibrationDumpTest(unittest.TestCase):
         self.assertEqual(dump.decode(memory[0x4000:0xC000])['selected_bank'],'A')
         memory[0x4020+100]^=1
         self.assertIn('error',dump.decode(memory))
+
+    def test_battery_reference_schema6(self):
+        payload=bytearray(4708)
+        struct.pack_into('<II',payload,len(payload)-8,3000,8400)
+        memory=bytearray(b'\xff'*0x8000)
+        record=bank(6,10,payload)
+        memory[:len(record)]=record
+        report=dump.decode(memory)
+        self.assertEqual(report['battery_reference'],dict(raw=3000,pack_mv=8400))

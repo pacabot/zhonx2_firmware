@@ -2,16 +2,16 @@
 #include "fw_menu.h"
 #include "fw_motion.h"
 #include "fw_buttons.h"
+#include "fw_battery.h"
 #include "hal/hal_os.h"
 #include "app/app_def.h"
 #include "config/config.h"
 #include "oled/ssd1306.h"
 #include <stdio.h>
-extern volatile unsigned short convertedValues[];
 static void text(unsigned x,unsigned y,const char *s)
 { ssd1306DrawString(x,y,s,&Font_5x8); }
 static void frame(const char *title)
-{ ssd1306ClearScreen();text(0,0,title);text(0,55,"LEFT/ESC: BACK"); }
+{ ssd1306ClearScreen();fw_ui_header(title); }
 static int press(void)
 {
     if(!fw_select_pressed()) return 0;
@@ -38,7 +38,8 @@ static void telemeters(int filtered)
         ssd1306DrawRect(x,y,11,10);
         if(valid && !((filtered?s.filtered:s.raw)&mask[row][col]))ssd1306FillRect(x+2,y+2,7,6);
     }
-    text(0,47,valid?"FILLED=WALL OK:MODE":"SENSOR DATA STALE");
+    text(0,45,valid?"FILLED = WALL":"SENSOR DATA STALE");
+    fw_ui_hint("OK: RAW / FILTERED");
     /* Compact footer keeps the six indicators readable. */
     fw_ui_menu_refresh();
 }
@@ -51,6 +52,7 @@ void fw_hardware_test(unsigned test)
     while(!fw_cancel_pressed()) {
         if(test!=5 && press()) {
             ++mode;
+            if(test==6)fw_menu_battery_setup();
             if(test==2)hal_beeper_beep(app_context.beeper,(const long[]){800,1200,1800}[(mode-1)%3],120);
             release();last=hal_os_get_systicks()-100;
         }
@@ -59,14 +61,15 @@ void fw_hardware_test(unsigned test)
             if(test==1)telemeters(mode%2);
             else {
                 frame(test==2?"BEEPER":test==3?"LEDS":test==4?"DISPLAY":test==5?"BUTTONS":"BATTERY ADC");
-                if(test==2) {text(0,20,"OK: PLAY NEXT TONE");text(0,35,"800 / 1200 / 1800 Hz");}
+                if(test==2) {text(0,24,"800 / 1200 / 1800 Hz");fw_ui_hint("OK: PLAY NEXT TONE");}
                 if(test==3) {
                     hal_led_set_state(app_context.led,HAL_LED_COLOR_RED,mode%3==1);
                     hal_led_set_state(app_context.led,HAL_LED_COLOR_ORANGE,mode%3==2);
-                    text(0,20,(const char*[]){"OFF","RED","ORANGE"}[mode%3]);text(0,35,"OK: NEXT LED");
+                    text(0,20,(const char*[]){"OFF","RED","ORANGE"}[mode%3]);fw_ui_hint("OK: NEXT LED");
                 }
                 if(test==4) {
-                    if(mode%3==0) {ssd1306DrawRect(0,12,128,39);text(14,24,"OK: NEXT PATTERN");}
+                    fw_ui_hint("OK: NEXT PATTERN");
+                    if(mode%3==0) {ssd1306DrawRect(0,12,128,39);text(28,24,"BORDER TEST");}
                     if(mode%3==1)ssd1306FillRect(0,12,128,39);
                     if(mode%3==2)for(unsigned y=12;y<51;y+=4)for(unsigned x=0;x<128;x+=4)
                         if((x+y)%8)ssd1306FillRect(x,y,4,4);
@@ -74,12 +77,18 @@ void fw_hardware_test(unsigned test)
                 if(test==5) {
                     snprintf(s,sizeof s,"UP:%u     DOWN:%u",!(GPIOC->IDR&FW_UP_PIN),!(GPIOC->IDR&FW_DOWN_PIN));text(0,18,s);
                     snprintf(s,sizeof s,"RIGHT:%u  PRESS:%u",!(GPIOC->IDR&(1u<<11)),!(GPIOC->IDR&(1u<<12)));text(0,32,s);
-                    text(0,45,"LEFT / ESC exits");
+                    fw_ui_hint("LEFT / ESC: EXIT");
                 }
                 if(test==6) {
-                    unsigned raw=convertedValues[0];snprintf(s,sizeof s,"ADC: %u / 4095",raw);text(0,18,s);
-                    unsigned percent=raw<=BATTERY_MIN_VALUE?0:raw>=BATTERY_MAX_VALUE?100:(raw-BATTERY_MIN_VALUE)*100/BATTERY_USAGE_ZONE;
-                    snprintf(s,sizeof s,"LEVEL: %u%%",percent);text(0,32,s);text(0,45,"Estimated from ADC");
+                    fw_battery_poll();fw_battery_status_t b=fw_battery_status();
+                    snprintf(s,sizeof s,"ADC: %u / 4095",b.raw);text(0,16,s);
+                    if(b.calibrated && b.sample_valid) {
+                        snprintf(s,sizeof s,"PACK: %u.%02u V",b.pack_mv/1000,b.pack_mv%1000/10);text(0,28,s);
+                        if(b.soc_valid)snprintf(s,sizeof s,"SOC: ~%u%%",b.percent);
+                        else snprintf(s,sizeof s,"Wait at rest...");
+                        text(0,40,s);
+                    } else text(0,32,b.sample_valid?"Set meter voltage":"ADC INPUT INVALID");
+                    fw_ui_hint("OK: SET METER VOLTS");
                 }
                 fw_ui_menu_refresh();
             }

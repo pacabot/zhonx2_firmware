@@ -4,6 +4,8 @@
 #include "stm32f4xx_gpio.h"
 #include "oled/ssd1306.h"
 #include <assert.h>
+void fw_ui_header(const char *s) {ssd1306DrawString(1,0,s,&Font_5x8);ssd1306DrawLine(0,8,127,8);}
+void fw_ui_hint(const char *s) {ssd1306DrawString(1,55,s,&Font_3x6);}
 #include <stdio.h>
 GPIO_TypeDef test_gpioc;
 void fw_ui_menu_refresh(void) {ssd1306Refresh();}

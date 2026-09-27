@@ -36,6 +36,9 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned i,unsigned n,int blink)
 void fw_hardware_test(unsigned n) {(void)n;assert(0);}
 void fw_hardware_motor(unsigned n) {(void)n;assert(0);}
 void fw_ui_menu_refresh(void) {}
+void fw_ui_hint(const char *s) {(void)s;}
+void fw_battery_poll(void) {}
+int fw_app_battery_commit(unsigned raw,unsigned mv) {(void)raw;(void)mv;assert(0);return -1;}
 int HAL_Delay(unsigned long ms) {now+=ms;return 0;}
 void fw_ui_setting(unsigned i,int v) { (void)i;(void)v;assert(0); }
 int fw_app_discover(void) {assert(!ready);++explored;ready=1;return 0;}

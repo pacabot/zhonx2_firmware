@@ -20,7 +20,10 @@ static int fresh(hal_sensor_snapshot *s)
     last_scan=*s;
     return available && (uint32_t)(hal_os_get_systicks()-s->timestamp)<=50;
 }
-static void line(unsigned y,const char *text) { ssd1306DrawString(0,y,text,!y && strlen(text)>19?&Font_3x6:&Font_5x8); }
+static void line(unsigned y,const char *text) {
+    if(!y)fw_ui_header(text);else if(y>=54)fw_ui_hint(text);
+    else ssd1306DrawString(0,y,text,&Font_5x8);
+}
 static int acknowledge(void)
 {
     while (fw_select_pressed()) { if (cancelled()) return -1; __WFI(); }

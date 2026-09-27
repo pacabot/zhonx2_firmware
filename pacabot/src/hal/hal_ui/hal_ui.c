@@ -14,6 +14,7 @@
 /* Declarations for this module */
 #include "hal/hal_ui.h"
 #include "fw_buttons.h"
+#include "fw_menu.h"
 #include "hal/hal_adc.h"
 #include "hal/hal_led.h"
 #include "hal/hal_beeper.h"
@@ -140,61 +141,11 @@ int hal_ui_refresh(HAL_UI_HANDLE handle)
 
 int hal_ui_clear_scr(HAL_UI_HANDLE handle)
 {
-    int             rv;
-    unsigned short  adc_val;
-    int             battery_level;
-
     UNUSED(handle);
     ssd1306ClearScreen();
-    ssd1306DrawBmp(pic_battery_level, 120, 0, 8, 8);
-
-    // Get battery level
-    rv = hal_adc_get_value(adc, 0, &adc_val);
-    if (rv != HAL_ADC_E_SUCCESS)
-    {
-        return rv;
-    }
-
-    if (adc_val < BATTERY_MIN_VALUE)
-    {
-        adc_val = BATTERY_MIN_VALUE;
-    }
-
-    battery_level = ((((adc_val - BATTERY_MIN_VALUE) * 100) / BATTERY_USAGE_ZONE));
-    if (battery_level >= 98)
-    {
-        ssd1306ClearScreen();
-        ssd1306DrawBmp(pic_battery_charging, 120, 1, 8, 8);
-    }
-    else if (battery_level >= 90)
-    {
-        ssd1306FillRect(121, 3, 6, 4);
-    }
-    else if (battery_level >= 75)
-    {
-        ssd1306FillRect(121, 3, 5, 4);
-    }
-    else if (battery_level >= 50)
-    {
-        ssd1306FillRect(121, 3, 4, 4);
-    }
-    else if (battery_level >= 30)
-    {
-        ssd1306FillRect(121, 3, 3, 4);
-    }
-    else if (battery_level >= 15)
-    {
-        ssd1306FillRect(121, 3, 2, 4);
-    }
-    else if (battery_level >= 5)
-    {
-        ssd1306FillRect(121, 3, 1, 4);
-    }
-
-
+    fw_ui_battery();
     return HAL_UI_E_SUCCESS;
 }
-
 
 int hal_ui_display_txt(HAL_UI_HANDLE handle, int x, int y, const char *str)
 {

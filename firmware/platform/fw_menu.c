@@ -1,6 +1,8 @@
 #include "fw_menu.h"
 #include "fw_app.h"
 #include "fw_hardware.h"
+#include "fw_battery.h"
+#include <stdio.h>
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
 #include "oled/ssd1306.h"
@@ -149,6 +151,29 @@ static void settings_menu(void)
             if(k)fw_ui_setting(n,v);
             __WFI();
         }
+    }
+}
+void fw_menu_battery_setup(void)
+{
+    fw_battery_reference_t ref=fw_battery_reference();
+    unsigned mv=ref.pack_mv?ref.pack_mv:8400;
+    while(read_key())__WFI();
+    for(;;) {
+        char value[16];snprintf(value,sizeof value,"%u.%02u V",mv/1000,(mv%1000)/10);
+        fw_ui_card("METER VOLTAGE / 2S",value,"",FW_ICON_SETTINGS,0,1);
+        fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
+        unsigned k=key();
+        if(k==KEY_BACK)return;
+        if(k==KEY_UP && mv<8500)mv+=10;
+        if(k==KEY_DOWN && mv>6000)mv-=10;
+        if(k==KEY_OK) {
+            fw_battery_poll();fw_battery_status_t b=fw_battery_status();
+            if(!b.sample_valid)notice("ADC error","Check input");
+            else if(!b.rested)notice("Wait 5 sec","At rest");
+            else if(fw_app_battery_commit(b.raw,mv))notice("Save failed","Try again");
+            else {notice("Saved","Battery ref");return;}
+        }
+        HAL_Delay(100);
     }
 }
 static void hardware_menu(void)

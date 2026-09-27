@@ -15,6 +15,7 @@ const fw_saved_maze_t *fw_app_maze(unsigned index);
 int fw_app_maze_load(unsigned index);
 int fw_app_maze_delete(unsigned index);
 int fw_app_settings_save(void);
+int fw_app_battery_commit(unsigned raw,unsigned mv);
 int fw_app_save(void);
 int fw_app_show_map(void);
 extern volatile unsigned fw_last_stop_code;

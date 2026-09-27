@@ -1,4 +1,5 @@
 #include "fw_app.h"
+#include "fw_battery.h"
 #include "fw_motion.h"
 #include "fw_flash.h"
 #include "fw_ui.h"
@@ -150,12 +151,20 @@ static void calibration_snapshot(void)
       .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
     assert(fw_cal_valid(&d));
     fw_motion_init(); assert(!fw_app_calibration_commit(&d));
-    assert(saved_schema==5 && applied_pitch==179000);
+    assert(saved_schema==6 && applied_pitch==179000);
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_cal_data_t changed=d; changed.front[0].on_um=75000;
     save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
     assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    assert(!fw_app_battery_commit(3000,8400));
+    fw_app_init();assert(fw_battery_reference().raw==3000 && fw_battery_reference().pack_mv==8400);
+    assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    save_failure=1;assert(fw_app_battery_commit(3100,8300));save_failure=0;
+    assert(fw_battery_reference().raw==3000);
+    saved_schema=5;saved_size-=sizeof(fw_battery_reference_t);
+    fw_app_init();assert(!fw_battery_reference().raw);
+    assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     size_t old_size=saved_size-sizeof(fw_library_t)-24;
     saved_schema=4; saved_size=old_size;
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));

@@ -4,6 +4,8 @@
 #include "app/app_def.h"
 #include "oled/ssd1306.h"
 #include <assert.h>
+void fw_ui_header(const char *s) {ssd1306DrawString(1,0,s,&Font_5x8);ssd1306DrawLine(0,8,127,8);}
+void fw_ui_hint(const char *s) {ssd1306DrawString(1,55,s,&Font_3x6);}
 #include <stdio.h>
 #include <string.h>
 GPIO_TypeDef test_gpioc;
@@ -19,6 +21,8 @@ void fw_test_idle(void)
     if(now>=escape_at)test_gpioc.IDR&=~FW_ESCAPE_PIN;
 }
 int HAL_Delay(unsigned long ms) {while(ms--)fw_test_idle();return 0;}
+void fw_battery_poll(void) {}
+void fw_menu_battery_setup(void) {}
 void fw_motion_stop(void) {active=0;}
 void fw_motion_init(void) {assert(!active);}
 int fw_motion_test_wheels(int r,int l) {right=r;left=l;active=1;started=now;++starts;return 0;}

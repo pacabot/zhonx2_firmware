@@ -1,4 +1,6 @@
 #include "fw_app.h"
+#include "fw_battery.h"
+#include <stddef.h>
 #include "fw_start.h"
 #include "fw_ui.h"
 #include "fw_layout.h"
@@ -17,7 +19,7 @@
 #include "hal/hal_step_motor.h"
 #include <stdio.h>
 #include <string.h>
-#define SNAPSHOT_SCHEMA 5
+#define SNAPSHOT_SCHEMA 6
 /* ARM ABI-specific snapshot. Change schema for any layout or settings ABI change. */
 typedef struct {
     robot_settings settings;
@@ -37,13 +39,16 @@ typedef struct {
     fw_library_t library;
     uint32_t learned;
     int32_t nose, width, inner, pitch, post;
+    fw_battery_reference_t battery;
 } snapshot_t;
+#define SNAPSHOT_V5_SIZE offsetof(snapshot_t,battery)
 static fw_library_t library;
 static int learned;
 static snapshot_t snapshot_buffer; /* Foreground only; keep the 8 KiB stack for planning. */
 _Static_assert(sizeof(snapshot_t)<FW_STORE_SIZE-32,"persistent library capacity");
 _Static_assert(sizeof(snapshot_t)%4==0,"snapshot alignment");
 #ifdef __arm__
+_Static_assert(sizeof(snapshot_t)==4708,"battery dump ARM ABI");
 _Static_assert(sizeof(snapshot_v2_t)==412,"calibration dump ARM ABI");
 _Static_assert(sizeof(calibration_bundle_t)==832,"calibration dump layout");
 #endif
@@ -112,10 +117,14 @@ static int load(void)
 {
     snapshot_t *current=&snapshot_buffer; memset(current,0,sizeof *current); snapshot_v2_t s;
     int legacy=0, format5=0;
-    if (!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,current,sizeof *current)) {
+    int loaded6=!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,current,sizeof *current);
+    if (loaded6 || !fw_store_load(&fw_stm32_flash,5,current,SNAPSHOT_V5_SIZE)) {
+        if(!loaded6)current->battery=(fw_battery_reference_t){0};
+        if(!fw_battery_reference_valid(&current->battery))return -1;
         if (!bundle_valid(&current->measurements) || !fw_library_valid(&current->library) || current->learned>1) return -1;
         format5=1; s=current->base;
     } else {
+        memset(current,0,sizeof *current);
         snapshot_v4_t old4; snapshot_v3_t old;
         if (!fw_store_load(&fw_stm32_flash,4,&old4,sizeof old4)) {
             if (!bundle_valid(&old4.measurements)) return -1;
@@ -149,9 +158,10 @@ static int load(void)
         fw_cal_nose_tenth_mm=current->nose; fw_cal_width_tenth_mm=current->width;
         fw_cal_inner_mm=current->inner; fw_cal_pitch_mm=current->pitch; fw_cal_post_mm=current->post;
     }
+    fw_battery_set_reference(current->battery);
     return 0;
 }
-void fw_app_init(void) { has_map=learned=0; memset(&library,0,sizeof library); nm_init(&maze); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
+void fw_app_init(void) { fw_battery_set_reference((fw_battery_reference_t){0}); has_map=learned=0; memset(&library,0,sizeof library); nm_init(&maze); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
 static int save(void)
 {
     if (fw_motion_busy() || !parameters_valid() || !settings_valid(&zhonxSettings)) return -1;
@@ -163,6 +173,7 @@ static int save(void)
     s->measurements=measurements; s->library=library; s->learned=learned;
     s->nose=fw_cal_nose_tenth_mm; s->width=fw_cal_width_tenth_mm;
     s->inner=fw_cal_inner_mm; s->pitch=fw_cal_pitch_mm; s->post=fw_cal_post_mm;
+    s->battery=fw_battery_reference();
     /* Single-bank flash stalls instruction fetch. Never save while motors move. */
     fw_motion_stop();
     return fw_store_save(&fw_stm32_flash,SNAPSHOT_SCHEMA,s,sizeof *s);
@@ -215,6 +226,14 @@ int fw_app_restore(void)
     if (fw_motion_busy()) return -1;
     int result=load();
     hal_ui_display_prompt(app_context.ui,"RESTORE",result ? "NO SAVED DATA" : "SETTINGS AND MAP LOADED");
+    return result;
+}
+int fw_app_battery_commit(unsigned raw,unsigned mv)
+{
+    fw_battery_reference_t r={raw,mv},previous=fw_battery_reference();
+    if(!raw || !fw_battery_reference_valid(&r) || fw_motion_busy())return -1;
+    fw_battery_set_reference(r);
+    int result=save();if(result)fw_battery_set_reference(previous);
     return result;
 }
 int fw_app_settings_save(void) { return save(); }

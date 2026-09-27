@@ -34,8 +34,8 @@ int hal_adc_init(void)
 {
     memset((void *)convertedValues, 0, MAX_ADC_HANDLES * sizeof(unsigned short));
 
-    GPIO_Configuration();
     RCC_Configuration();
+    GPIO_Configuration();
 
     return HAL_ADC_E_SUCCESS;
 }
@@ -79,12 +79,13 @@ int hal_adc_open(HAL_ADC_HANDLE *handle, void *params)
 
     /* ADC Common Init **********************************************************/
     ADC_CommonInitStructure.ADC_Mode = ADC_Mode_Independent;
-    ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div2;
+    ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div4;
     ADC_CommonInitStructure.ADC_DMAAccessMode = ADC_DMAAccessMode_Disabled;
     ADC_CommonInitStructure.ADC_TwoSamplingDelay = ADC_TwoSamplingDelay_20Cycles;
     ADC_CommonInit(&ADC_CommonInitStructure);
 
     /* ADC1 Init ****************************************************************/
+    ADC_StructInit(&ADC_InitStructure);
     ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
     ADC_InitStructure.ADC_ScanConvMode = DISABLE;
     ADC_InitStructure.ADC_ContinuousConvMode = ENABLE;
@@ -96,7 +97,7 @@ int hal_adc_open(HAL_ADC_HANDLE *handle, void *params)
     /* Enable ADC1 DMA */
     ADC_DMACmd(ADC1, ENABLE);
 
-    /* ADC1 regular channel18 (VBAT) configuration ******************************/
+    /* Battery divider on PA4 / ADC1 channel 4 (not internal VBAT). */
     ADC_RegularChannelConfig(ADC1, ADC_Channel_4, 1, ADC_SampleTime_480Cycles);
 
     /* Enable DMA request after last transfer (Single-ADC mode) */
@@ -122,7 +123,7 @@ int hal_adc_close(HAL_ADC_HANDLE handle)
 int hal_adc_get_value(HAL_ADC_HANDLE handle,
                       unsigned char channel, unsigned short *value)
 {
-    unsigned short *h;
+    volatile unsigned short *h;
     if (handle == null)
     {
         return HAL_ADC_E_BAD_HANDLE;
@@ -133,7 +134,7 @@ int hal_adc_get_value(HAL_ADC_HANDLE handle,
         return HAL_ADC_E_ERROR;
     }
 
-    h = (unsigned short *)handle;
+    h = (volatile unsigned short *)handle;
 
     *value = (h[channel]) & 0xFFF;
 

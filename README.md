@@ -108,7 +108,10 @@ transactionnelles, le solveur Nîmes 9×9 et le pilotage asynchrone. Voir
 
 L'interface utilise une carte avec icône par écran et des caractères de 16 pixels
 pour l'action choisie. Haut/bas fait défiler ; droite ou appui central valide ;
-gauche du joystick revient ; Escape peut arrêter les mouvements.
+gauche du joystick revient ; Escape peut arrêter les mouvements. Le titre est
+séparé par une ligne et un ascenseur à droite indique la position dans la liste.
+Les consignes propres à une action apparaissent dans un cartouche inversé ;
+les menus ne répètent plus les commandes de navigation.
 
 - **Maze** : nouvelle exploration, bibliothèque, reprise ; runs proposés uniquement
   pour un apprentissage validé. Jusqu'à **8 labyrinthes**, avec aperçu du chemin
@@ -123,9 +126,14 @@ gauche du joystick revient ; Escape peut arrêter les mouvements.
   le mouvement ; les sons sont limités à 120 ms et le réglage beeper est restauré.
 - **Update** : entrée dans le bootloader.
 
-L'icône batterie reste visible dans les menus et les écrans de calibration ;
-son niveau reprend les seuils ADC historiques (estimation, pas mesure de charge).
-Les menus au repos actualisent l'indicateur toutes les secondes.
+L'icône batterie reste visible dans les menus et les écrans de calibration.
+La jauge **LiPo 2S** utilise une tension filtrée et une courbe approximative de
+charge au repos. Sans étalonnage ou si la mesure ADC est invalide, elle affiche
+**?**. Pour l'étalonner : **Hardware → Battery → OK**, robot immobile, saisir la
+tension du pack relevée au multimètre (pas la tension 3,3 V de la sonde), puis
+valider. Attendre au moins cinq secondes au repos avant d'enregistrer.
+La référence est sauvegardée avec les calibrations et conservée au flash normal.
+Voir [jauge batterie : fonctionnement et limites](docs/BATTERY.md).
 
 Les runs lent (120 mm/s) et rapide (vitesse réglable) sont disponibles. Le mode
 courbes est explicitement indiqué indisponible : son contrôleur n'est pas implémenté.

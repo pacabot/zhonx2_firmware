@@ -77,7 +77,10 @@ test:
 	 -Ifirmware/include tests/test_library.c firmware/core/fw_library.c firmware/core/nimes.c -o $(BUILD)/test_library
 	$(BUILD)/test_library
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_menu.c firmware/platform/fw_menu.c firmware/core/fw_calibration.c -o $(BUILD)/test_menu
+	 -Ifirmware/include tests/test_battery.c firmware/core/fw_battery.c -o $(BUILD)/test_battery
+	$(BUILD)/test_battery
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_menu.c firmware/core/fw_battery.c firmware/platform/fw_menu.c firmware/core/fw_calibration.c -o $(BUILD)/test_menu
 	$(BUILD)/test_menu
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Ifirmware/include tests/test_calibration.c firmware/core/fw_calibration.c -o $(BUILD)/test_calibration
@@ -91,11 +94,11 @@ test:
 	$(BUILD)/test_motion
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_navigation.c \
-	 firmware/platform/fw_app.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_start.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_navigation
+	 firmware/platform/fw_app.c firmware/core/fw_battery.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_start.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_navigation
 	$(BUILD)/test_navigation
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_ui.c \
-	 firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c \
+	 firmware/core/fw_battery.c firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c \
 	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_ui
 	$(BUILD)/test_ui
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
@@ -105,6 +108,6 @@ test:
 	$(BUILD)/test_calibration_ui
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_hardware.c \
-	 firmware/platform/fw_hardware.c firmware/core/fw_text.c pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_hardware
+	 firmware/core/fw_battery.c firmware/platform/fw_hardware.c firmware/core/fw_text.c pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_hardware
 	$(BUILD)/test_hardware
 	python3 -m unittest discover -s tests -p 'test_*.py'
