@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdio.h>
 GPIO_TypeDef test_gpioc;
+void fw_ui_menu_refresh(void) {ssd1306Refresh();}
 int fw_cal_nose_tenth_mm,fw_cal_width_tenth_mm,fw_cal_inner_mm=167,fw_cal_pitch_mm=179,fw_cal_post_mm=173;
 static unsigned pages,toggle,now,mode,io_moves;
 static unsigned diagram_side;

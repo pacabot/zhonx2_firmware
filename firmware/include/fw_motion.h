@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include "fw_cal_extra.h"
 void fw_motion_init(void);
+/* Bench only: each wheel -1, 0, +1, bounded to 20 mm at 20 mm/s. */
+int fw_motion_test_wheels(int right, int left);
 /* Nonblocking: whole calibrated cells, speeds in mm/s, clockwise turns in degrees. */
 int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
 /* Allow a front-wall arrival only in the last 30 mm of the final cell. */

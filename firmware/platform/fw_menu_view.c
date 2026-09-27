@@ -1,6 +1,20 @@
 #include "fw_menu.h"
 #include "oled/ssd1306.h"
 #include <stdio.h>
+#include <string.h>
+#include "config/config.h"
+extern volatile unsigned short convertedValues[];
+/* ADC DMA sample; same voltage thresholds as the original battery indicator. */
+void fw_ui_menu_refresh(void)
+{
+    unsigned raw=convertedValues[0];
+    unsigned bars=raw<=BATTERY_MIN_VALUE?0:raw>=BATTERY_MAX_VALUE?5:
+        (raw-BATTERY_MIN_VALUE)*5/BATTERY_USAGE_ZONE;
+    ssd1306ClearRect(116,0,12,9);
+    ssd1306DrawRect(117,1,9,7);ssd1306FillRect(126,3,2,3);
+    for(unsigned i=0;i<bars;++i)ssd1306FillRect(119+i,3,1,3);
+    ssd1306Refresh();
+}
 /* Double-height 7x8 font: 7x16 glyphs, no hidden clipping or bitmap assets. */
 static void large(unsigned x,unsigned y,const char *s)
 {
@@ -13,7 +27,10 @@ static void large(unsigned x,unsigned y,const char *s)
         }
     }
 }
-static void small(unsigned x,unsigned y,const char *s) { ssd1306DrawString(x,y,s,&Font_5x8); }
+static void small(unsigned x,unsigned y,const char *s) {
+    if(!y) {char title[20];snprintf(title,sizeof title,"%.19s",s);ssd1306DrawString(x,y,title,&Font_5x8);}
+    else ssd1306DrawString(x,y,s,&Font_5x8);
+}
 static void icon(unsigned type)
 {
     unsigned x=4,y=21;
@@ -35,6 +52,10 @@ static void icon(unsigned type)
     } else if(type==FW_ICON_UPDATE) {
         ssd1306DrawRect(x,y+17,26,9);ssd1306DrawLine(x+13,y,x+13,y+20);
         ssd1306DrawLine(x+6,y+11,x+13,y+18);ssd1306DrawLine(x+13,y+18,x+20,y+11);
+    } else if(type==FW_ICON_TEST) {
+        ssd1306DrawRect(x+3,y+3,20,20);
+        for(unsigned i=0;i<4;++i) {ssd1306DrawLine(x,y+5+i*5,x+3,y+5+i*5);ssd1306DrawLine(x+23,y+5+i*5,x+26,y+5+i*5);}
+        ssd1306DrawLine(x+8,y+13,x+12,y+17);ssd1306DrawLine(x+12,y+17,x+19,y+9);
     } else {
         ssd1306DrawRect(x+3,y,20,26);
         for(unsigned i=0;i<3;++i) ssd1306DrawLine(x+7,y+6+i*6,x+20,y+6+i*6);
@@ -42,10 +63,11 @@ static void icon(unsigned type)
 }
 void fw_ui_card(const char *title,const char *first,const char *second,unsigned type,unsigned index,unsigned count)
 {
-    char page[12];ssd1306ClearScreen();small(0,0,title);
+    char page[12];ssd1306ClearScreen();
+    ssd1306DrawString(0,0,title,strlen(title)>16?&Font_3x6:&Font_5x8);
     snprintf(page,sizeof page,"%u/%u",index+1,count);small(98,0,page);
     icon(type);large(37,16,first);large(37,34,second);
-    small(0,55,"UP/DN  OK  LEFT:BACK");ssd1306Refresh();
+    small(0,55,"UP/DN  OK  LEFT:BACK");fw_ui_menu_refresh();
 }
 void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int blink)
 {
@@ -71,7 +93,7 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int bl
     }
     large(58,13,"MAZE");snprintf(s,sizeof s,"%lu",(unsigned long)m->id);large(58,31,s);
     ssd1306DrawString(58,49,"UP/DN   OK:LOAD",&Font_3x6);
-    ssd1306DrawString(58,57,"LEFT:BACK",&Font_3x6);ssd1306Refresh();
+    ssd1306DrawString(58,57,"LEFT:BACK",&Font_3x6);fw_ui_menu_refresh();
 }
 void fw_ui_setting(unsigned index,int value)
 {
@@ -92,5 +114,5 @@ void fw_ui_setting(unsigned index,int value)
     else if(index==8) snprintf(s,sizeof s,"%s",(const char*[]){"NORTH","EAST","SOUTH","WEST"}[value]);
     else snprintf(s,sizeof s,"%d",value);
     large(59,20,s);small(59,40,index<5?"MM":index<7?"MM/S":"START");
-    small(0,55,"UP/DN OK LEFT:CANCEL");ssd1306Refresh();
+    small(0,55,"UP/DN OK LEFT:CANCEL");fw_ui_menu_refresh();
 }

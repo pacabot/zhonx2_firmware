@@ -1,5 +1,6 @@
 #include "fw_menu.h"
 #include "fw_app.h"
+#include "fw_hardware.h"
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
 #include "oled/ssd1306.h"
@@ -35,7 +36,9 @@ static int choose(const char *title,const card_t *items,unsigned count)
         }
     }
     fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
+    uint32_t refresh=hal_os_get_systicks();
     for(;;) {
+        if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
         unsigned k=key();if(k==KEY_BACK) return -1;if(k==KEY_OK) return (int)i;
         if(k==KEY_UP || k==KEY_DOWN) {
             i=(i+count+(k==KEY_UP?-1:1))%count;
@@ -48,7 +51,7 @@ static int choose(const char *title,const card_t *items,unsigned count)
 static void notice(const char *first,const char *second)
 {
     fw_ui_card("NOTICE",first,second,FW_ICON_REPORT,0,1);
-    while(!key()) __WFI();
+    while(!key()) {fw_ui_menu_refresh();HAL_Delay(100);}
 }
 static int confirm(const char *title)
 {
@@ -121,7 +124,9 @@ static void settings_menu(void)
     for(;;) {
         int n=choose("SETTINGS",items,9);if(n<0)return;
         int old=*values[n],v=old;fw_ui_setting(n,v);
+        uint32_t refresh=hal_os_get_systicks();
         for(;;) {
+            if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
             unsigned k=key();if(k==KEY_BACK)break;
             if(k==KEY_OK) {
                 if(n<5) {
@@ -146,15 +151,30 @@ static void settings_menu(void)
         }
     }
 }
+static void hardware_menu(void)
+{
+    const card_t items[]={{"Motors","Lift robot",FW_ICON_TEST},{"Telemeters","Live view",FW_ICON_TEST},
+        {"Beeper","",FW_ICON_TEST},{"LEDs","",FW_ICON_TEST},{"Display","",FW_ICON_TEST},
+        {"Buttons","Live view",FW_ICON_TEST},{"Battery","ADC",FW_ICON_TEST}};
+    const card_t motors[]={{"Left wheel","Forward",FW_ICON_TEST},{"Left wheel","Reverse",FW_ICON_TEST},
+        {"Right wheel","Forward",FW_ICON_TEST},{"Right wheel","Reverse",FW_ICON_TEST},
+        {"Both wheels","Forward",FW_ICON_TEST},{"Both wheels","Reverse",FW_ICON_TEST}};
+    for(;;) {
+        int n=choose("HARDWARE TESTS",items,7);if(n<0)return;
+        if(n) fw_hardware_test((unsigned)n);
+        else for(;;) {int m=choose("MOTORS / LIFT ROBOT",motors,6);if(m<0)break;fw_hardware_motor((unsigned)m);}
+    }
+}
 void fw_menu_run(void)
 {
     const card_t home[]={{"Maze","",FW_ICON_MAZE},{"Calibration","",FW_ICON_CALIBRATE},
-        {"Settings","",FW_ICON_SETTINGS},{"Update","Firmware",FW_ICON_UPDATE}};
+        {"Settings","",FW_ICON_SETTINGS},{"Hardware","Tests",FW_ICON_TEST},{"Update","Firmware",FW_ICON_UPDATE}};
     for(;;) {
-        int n=choose("ZHONX II",home,4);if(n<0)continue;
+        int n=choose("ZHONX II",home,5);if(n<0)continue;
         if(n==0)maze_menu();
         if(n==1)calibration_menu();
         if(n==2)settings_menu();
-        if(n==3 && confirm("ENTER BOOTLOADER?"))fw_app_bootloader();
+        if(n==3)hardware_menu();
+        if(n==4 && confirm("ENTER BOOTLOADER?"))fw_app_bootloader();
     }
 }

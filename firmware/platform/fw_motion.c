@@ -87,6 +87,12 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     __set_PRIMASK(mask);
     return 0;
 }
+int fw_motion_test_wheels(int right,int left)
+{
+    if (right < -1 || right > 1 || left < -1 || left > 1 || (!right && !left)) return -1;
+    long pulses=lroundf(20.0f*TICKS_PER_MM);
+    return start(right*pulses,left*pulses,20,0,0,1);
+}
 int fw_motion_straight(unsigned cells, unsigned speed)
 {
     return fw_motion_straight_to(cells,speed,0);

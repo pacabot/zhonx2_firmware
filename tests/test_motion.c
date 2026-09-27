@@ -147,6 +147,19 @@ int main(void)
     assert(abs(fw_motion_travelled_um()+200000)<30 && !fw_motion_fault());
     assert(fw_motion_calibration_traverse(300001,220));
     assert(fw_motion_calibration_spin(1600001,120));
+    for(int wheel=0;wheel<3;++wheel)for(int sign=-1;sign<=1;sign+=2) {
+        setup();
+        assert(!fw_motion_test_wheels(wheel==0?0:sign,wheel==1?0:sign));
+        long budget=lroundf(20.f*2.f*(float)STEPS_PER_MM);
+        assert(commanded[0]==(wheel==0?0:sign*budget));
+        assert(commanded[1]==(wheel==1?0:sign*budget));
+        while(fw_motion_busy())tick(1);
+        assert(!fw_motion_fault());fw_motion_stop();assert(disabled);
+    }
+    setup();assert(fw_motion_test_wheels(0,0));assert(fw_motion_test_wheels(2,1));
+    assert(!fw_motion_test_wheels(1,0));
+    for(int i=0;i<60;++i)tick(0);
+    assert(fw_motion_fault()==1 && disabled);
     puts("motion: measured CW/CCW budgets, spin sign, free traverse and bounds");
     puts("motion: signed calibration travel, bounded contact, stale stop, calibrated final-cell budget");
     return 0;

@@ -103,4 +103,8 @@ test:
 	 firmware/platform/fw_calibration_ui.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c firmware/core/fw_text.c \
 	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_calibration_ui
 	$(BUILD)/test_calibration_ui
+	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_hardware.c \
+	 firmware/platform/fw_hardware.c firmware/core/fw_text.c pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_hardware
+	$(BUILD)/test_hardware
 	python3 -m unittest discover -s tests -p 'test_*.py'

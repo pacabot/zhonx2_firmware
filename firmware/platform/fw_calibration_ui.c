@@ -1,4 +1,5 @@
 #include "fw_app.h"
+#include "fw_menu.h"
 #include "fw_motion.h"
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
@@ -19,7 +20,7 @@ static int fresh(hal_sensor_snapshot *s)
     last_scan=*s;
     return available && (uint32_t)(hal_os_get_systicks()-s->timestamp)<=50;
 }
-static void line(unsigned y,const char *text) { ssd1306DrawString(0,y,text,&Font_5x8); }
+static void line(unsigned y,const char *text) { ssd1306DrawString(0,y,text,!y && strlen(text)>19?&Font_3x6:&Font_5x8); }
 static int acknowledge(void)
 {
     while (fw_select_pressed()) { if (cancelled()) return -1; __WFI(); }
@@ -30,7 +31,7 @@ static int acknowledge(void)
 static void message(const char *title,const char *text)
 {
     ssd1306ClearScreen(); line(0,title); line(20,text); line(54,"OK:NEXT LEFT:BACK");
-    ssd1306Refresh(); (void)acknowledge();
+    fw_ui_menu_refresh(); (void)acknowledge();
 }
 /* Desired placement, viewed from above. fixture: 0=three walls,
  * 1=left corner, 2=right corner. This is a guide, not a measured robot pose. */
@@ -66,7 +67,7 @@ static int placement(const char *title,unsigned fixture)
     ssd1306DrawString(57,34,fixture?"FREE BEHIND":"BEHIND",&Font_5x8);
     ssd1306DrawDashedLine(57,46,73,46);
     ssd1306DrawString(77,42,"ANY WALL",&Font_3x6);
-    line(55,"OK:GO  LEFT:BACK"); ssd1306Refresh();
+    line(55,"OK:GO  LEFT:BACK"); fw_ui_menu_refresh();
     return acknowledge();
 }
 static int healthy(hal_sensor_snapshot *scan)
@@ -142,7 +143,7 @@ static void status(void *context,const char *text,int32_t um)
     ssd1306ClearScreen(); line(0,context?(const char *)context:"WALL CALIBRATION"); line(16,text);
     snprintf(value,sizeof value,"AXLE-WALL %ld.%ld MM",(long)(um/1000),(long)(um%1000/100));
     if (um) line(32,value);
-    line(54,"LEFT/ESC: STOP"); ssd1306Refresh();
+    line(54,"LEFT/ESC: STOP"); fw_ui_menu_refresh();
 }
 static void distance_line(unsigned y,const char *label,uint32_t um)
 {
@@ -178,7 +179,7 @@ int fw_calibration_report(void)
             line(42,"STATIC / 1 MM STEP");
         }
         line(54,page==4?"OK:END  LEFT:BACK":"OK:NEXT LEFT:BACK");
-        ssd1306Refresh(); if (acknowledge()) break;
+        fw_ui_menu_refresh(); if (acknowledge()) break;
     }
     return 0;
 }
@@ -238,7 +239,7 @@ static int calibration_error(int error)
         line(12,reason); line(24,last_stage);
         snprintf(text,sizeof text,"F5:%u F10:%u RAW:%02X",!(last_scan.raw&SENSOR_F5_POS),
             !(last_scan.raw&SENSOR_F10_POS),last_scan.raw); line(36,text);
-        line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); (void)acknowledge();
+        line(54,"OK:NEXT LEFT:BACK"); fw_ui_menu_refresh(); (void)acknowledge();
     }
     return -1;
 }
@@ -257,7 +258,7 @@ int fw_rotation_report(void)
             snprintf(title,sizeof title,"90 CHECK %lu.%lu DEG",(unsigned long)(p->quarter_error_mdeg[dir]/1000),
                      (unsigned long)(p->quarter_error_mdeg[dir]%1000/100)); line(42,title);
         } else line(42,"90: PERIOD / 4 ONLY");
-        line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); if (acknowledge()) return 0;
+        line(54,"OK:NEXT LEFT:BACK"); fw_ui_menu_refresh(); if (acknowledge()) return 0;
     }
     return 0;
 }
@@ -299,7 +300,7 @@ static int corner_report(int selected)
                 signed_distance_line(26,"RAW CLOSE",p->raw_close_um[sensor]);
                 signed_distance_line(34,"FILT CLOSE",p->close_um[sensor]);
                 distance_line(42,"SPREAD",p->spread_um[sensor]);
-                line(54,"OK:NEXT LEFT:BACK"); ssd1306Refresh(); ++pages;
+                line(54,"OK:NEXT LEFT:BACK"); fw_ui_menu_refresh(); ++pages;
                 if (acknowledge()) return 0;
             }
     }

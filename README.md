@@ -94,7 +94,16 @@ gauche du joystick revient ; Escape peut arrêter les mouvements.
 - **Calibration** : murs, rotation, angles gauche/droit, rapports. Les schémas
   montrent aussi la cellule derrière le poteau ; pointillés = mur facultatif.
 - **Settings** : dimensions, vitesses et départ, une valeur illustrée par écran.
+- **Hardware / Tests** : moteurs gauche/droit/ensemble, en avant ou en arrière
+  (robot soulevé, 20 mm de roue à 20 mm/s par appui), six télémètres en direct
+  (brut/filtré, carré plein = mur), beeper, LED, motifs écran, boutons et ADC batterie.
+  Gauche ou Escape quitte et coupe les moteurs. Un appui maintenu ne répète pas
+  le mouvement ; les sons sont limités à 120 ms et le réglage beeper est restauré.
 - **Update** : entrée dans le bootloader.
+
+L'icône batterie reste visible dans les menus et les écrans de calibration ;
+son niveau reprend les seuils ADC historiques (estimation, pas mesure de charge).
+Les menus au repos actualisent l'indicateur toutes les secondes.
 
 Les runs lent (120 mm/s) et rapide (vitesse réglable) sont disponibles. Le mode
 courbes est explicitement indiqué indisponible : son contrôleur n'est pas implémenté.

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 extern unsigned char buffer[1024];
+volatile unsigned short convertedValues[1]={3700};
 int HAL_Delay(unsigned long ms) { (void)ms;return 0; }
 static void image(const char *file)
 {
@@ -48,6 +49,14 @@ int main(void)
     unsigned char off[1024];memcpy(off,buffer,sizeof off);
     fw_ui_library(&saved,0,2,1);image("build/ui-library-on.pgm");
     assert(memcmp(off,buffer,sizeof off));
+    fw_ui_card("HARDWARE TESTS","Telemeters","Live view",FW_ICON_TEST,1,7);
+    image("build/ui-hardware-menu.pgm");
+    unsigned char before_battery[1024];memcpy(before_battery,buffer,sizeof buffer);
+    convertedValues[0]=4095;fw_ui_menu_refresh();image("build/ui-battery-full.pgm");
+    convertedValues[0]=2700;fw_ui_menu_refresh();image("build/ui-battery-empty.pgm");
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<116;++x)
+        assert(ssd1306GetPixel(x,y)==!!(before_battery[x+(y/8)*128]&(1u<<(y%8))));
+    assert(ssd1306GetPixel(117,1));assert(!ssd1306GetPixel(119,3));
     puts("OLED: large icon cards, nine illustrated settings, blinking stored route");
     return 0;
 }

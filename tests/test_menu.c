@@ -33,6 +33,10 @@ void fw_ui_card(const char *title,const char *a,const char *b,unsigned icon,unsi
 }
 void fw_ui_library(const fw_saved_maze_t *m,unsigned i,unsigned n,int blink)
 { (void)m;(void)i;(void)n;(void)blink;++preview; }
+void fw_hardware_test(unsigned n) {(void)n;assert(0);}
+void fw_hardware_motor(unsigned n) {(void)n;assert(0);}
+void fw_ui_menu_refresh(void) {}
+int HAL_Delay(unsigned long ms) {now+=ms;return 0;}
 void fw_ui_setting(unsigned i,int v) { (void)i;(void)v;assert(0); }
 int fw_app_discover(void) {assert(!ready);++explored;ready=1;return 0;}
 int fw_app_resume(void) {assert(0);return -1;}
