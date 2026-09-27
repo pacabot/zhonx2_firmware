@@ -209,6 +209,14 @@ int main(void)
     setup();
     fw_cal_data_t walls={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
       .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
+    setup();fw_motion_wall_profile(&walls);
+    assert(fw_motion_seat_wall()); /* Never seat toward an unconfirmed wall. */
+    scan.raw&=~SENSOR_F10_POS;assert(fw_motion_seat_wall());
+    scan.filtered=scan.raw;assert(!fw_motion_seat_wall());
+    scan.raw=scan.filtered=0x33; /* Optical near zone is allowed during contact. */
+    while(fw_motion_busy()) {assert(fw_motion_speed()<=30);tick(1);}
+    assert(!fw_motion_fault() && abs(fw_motion_travelled_um()-56500)<100);
+    setup();
     fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);scan.raw=scan.filtered=0x1c; /* Left clear, right near: steer left. */
     assert(!fw_motion_straight_to(1,220,1));
     while(fw_motion_busy())tick(1);
@@ -235,7 +243,7 @@ int main(void)
     }
     fw_motion_corner_profiles(&corners[0],&corners[1]);scan.raw=scan.filtered=0x1f;
     assert(!fw_motion_straight_to(1,120,1));
-    while(fw_motion_travelled_um()<62500)tick(1);
+    while(fw_motion_travelled_um()<60500)tick(1);
     scan.raw=scan.filtered=0x3f;
     for(unsigned i=0;i<10;++i)tick(1);
     int32_t counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
@@ -243,6 +251,27 @@ int main(void)
     assert(trim< -2500 && trim> -5000);
     while(fw_motion_busy())tick(1);
     assert(abs(fw_motion_travelled_um()-179000)<400);
+    /* A confirmed raw edge at run speed uses its original position, not the
+     * delayed filter position. A transient spike must not move the bend. */
+    for(unsigned speed=600;speed<=1000;speed+=400)for(unsigned glitch=0;glitch<2;++glitch) {
+        setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+        for(unsigned i=0;i<3;++i)profile.point[i]=(fw_rotation_point_t){.speed=40+40*i,.quarter_um={65581,65581}};
+        fw_motion_rotation_profile(&profile);fw_motion_corner_profiles(&corners[0],&corners[1]);
+        nm_map_t map;nm_init_size(&map,9,0);nm_route_t route={.direction={0,0,1},.length=3};
+        assert(!nm_edge(&map,0,0,0) && !nm_edge(&map,16,0,0) && !nm_edge(&map,32,1,0));
+        scan.raw=scan.filtered=0x1f;assert(!fw_motion_path(&map,(nm_pose_t){0,0,0},&route,speed));
+        while(fw_motion_travelled_um()<242500)tick(1);
+        scan.raw=0x3f;do {tick(1);}while(now%10); /* First raw observation. */
+        int32_t pulse=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
+        assert(abs(fw_motion_travelled_um()-pulse)<20);
+        if(glitch)scan.raw=0x1f;
+        for(unsigned i=0;i<10;++i)tick(1);
+        pulse=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
+        assert(abs(fw_motion_travelled_um()-pulse-(glitch?0:-6000))<30);
+        if(!glitch)scan.filtered=0x3f;
+        while(fw_motion_busy() && now<10000)tick(1);
+        assert(!fw_motion_fault());
+    }
     /* Full differential-drive integration, both arc directions and speeds. */
     for(int dir=-1;dir<=1;dir+=2)for(unsigned speed=120;speed<=1000;speed+=440) {
         setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
@@ -317,8 +346,8 @@ int main(void)
     setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
     assert(!fw_motion_curve(-90,220,0));for(unsigned i=0;i<60;++i)tick(0);
     assert(fw_motion_fault()==1 && disabled);
-    /* Both engines slow for a sustained lateral detection, then stop with
-     * a distinct fault if the reference never releases. */
+    /* Persistent side detection must steer without adding a speed cap or
+     * causing the previous artificial SIDE ALIGN FAILED stop. */
     for(unsigned engine=0;engine<2;++engine)for(unsigned side=0;side<2;++side) {
         setup();fw_motion_geometry(179000,92000,167000);
         fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
@@ -328,12 +357,11 @@ int main(void)
             for(unsigned i=0;i<6;++i)assert(!nm_edge(&map,i*NM_SIDE,NM_NORTH,0));
             assert(!fw_motion_path(&map,(nm_pose_t){0,0,0},&route,600));
         } else assert(!fw_motion_straight(6,300));
-        unsigned peak=0,slowed=0;
+        unsigned peak=0;
         while(fw_motion_busy() && now<10000) {
             tick(1);unsigned v=fw_motion_speed();if(v>peak)peak=v;
-            if(fw_motion_busy() && peak>150 && v<=81)slowed=1;
         }
-        assert(fw_motion_fault()==5 && disabled && slowed);
+        assert(!fw_motion_fault() && !fw_motion_busy() && peak>=(engine?590u:290u));
     }
     setup();assert(!fw_motion_straight(8,FW_RUN_MAX_SPEED));
     unsigned peak=0;
@@ -351,7 +379,7 @@ int main(void)
     assert(!fw_motion_straight_to(1,120,1));
     while(fw_motion_travelled_um()<59500)tick(1);
     scan.raw=scan.filtered=0x2f;for(unsigned i=0;i<10;++i)tick(1);
-    while((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM)<78000)tick(1);
+    while((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM)<76000)tick(1);
     scan.raw=scan.filtered=0x3f;for(unsigned i=0;i<10;++i)tick(1);
     counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
     trim=fw_motion_travelled_um()-counted;assert(trim< -2500 && trim> -5000);

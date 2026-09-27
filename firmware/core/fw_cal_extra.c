@@ -60,6 +60,20 @@ int fw_corner_offset(const fw_corner_data_t *d,unsigned facing,unsigned speed,un
     }
     return -1;
 }
+int fw_corner_raw_offset(const fw_corner_data_t *d,unsigned facing,unsigned speed,unsigned sensor,int opening,int32_t *out)
+{
+    if(!out || !fw_corner_valid(d) || facing>1 || sensor>1 || speed>1000)return -1;
+    if(speed<40)speed=40;
+    if(speed>220)speed=220;
+    for(unsigned i=1;i<FW_CAL_SPEEDS;++i)if(speed<=d->point[facing][i].speed) {
+        const fw_corner_point_t *a=&d->point[facing][i-1],*b=&d->point[facing][i];
+        if(!(a->mask & b->mask & (1u<<sensor)))return -1;
+        int32_t x=opening?a->raw_open_um[sensor]:a->raw_close_um[sensor];
+        int32_t y=opening?b->raw_open_um[sensor]:b->raw_close_um[sensor];
+        *out=x+(int32_t)((int64_t)(y-x)*(speed-a->speed)/(b->speed-a->speed));return 0;
+    }
+    return -1;
+}
 typedef struct {
     uint32_t position[EDGES],candidate;
     uint8_t far[EDGES],state,count,used;

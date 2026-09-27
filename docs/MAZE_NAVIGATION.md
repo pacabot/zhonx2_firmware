@@ -25,12 +25,37 @@
   reconnue joue une mélodie de victoire. Les mélodies utilisent une séquence
   à 1 kHz sans attente bloquante, et respectent l'activation du beeper.
 
+## Bibliothèque : ordre et noms
+
+Le dernier labyrinthe enregistré apparaît en premier. Un apprentissage répété
+remonte aussi en tête, sans dupliquer la carte ni changer son identifiant.
+Les anciennes sauvegardes restent lisibles, sans migration en flash.
+
+Le nom est calculé sur le chemin retenu depuis le départ : au plus cinq lettres
+distinctes, dans l’ordre des premières typologies rencontrées. Les répétitions
+sont ignorées et le numéro reste affiché pour distinguer des noms identiques.
+
+| Lettre | Typologie |
+| --- | --- |
+| I | Ligne droite parallèle à l’orientation de départ |
+| H | Ligne droite perpendiculaire à l’orientation de départ |
+| N | Virage isolé à 90° |
+| X | Jonction avec au moins trois passages connus |
+| O | Demi-tour, ou deux virages rapprochés dans le même sens |
+| Z | Deux virages rapprochés de sens opposés |
+
+Les motifs Z/O composés prennent la priorité sur leurs deux virages N ;
+« rapprochés » signifie qu’une seule cellule sépare les changements de direction.
+
 ## Exploration puis trois runs
 
 Après un apprentissage certifié et le retour au départ, le labyrinthe est
-sauvegardé, puis le robot se recentre **au départ uniquement**. Il utilise les
-seuils et l'hystérésis F5 déjà calibrés, sur les murs disponibles de chaque axe,
-et les rotations calibrées. Aucun talonnage ni réécriture des calibrations.
+sauvegardé, puis le robot se recentre **au départ uniquement**. Une temporisation
+annulable de trois secondes (`ALIGN IN 3/2/1`) précède tout mouvement. Sur chaque
+axe disposant d’un mur connu et confirmé par F10 brut et filtré, il effectue un
+talonnage à 30 mm/s, borné à la distance centre–nez plus 20 mm. Il recule ensuite
+à 80 mm/s de la distance nez–centre calibrée. Les rotations utilisent leurs
+profils mesurés. Les coefficients de calibration ne sont pas réécrits.
 Il s'oriente ensuite vers le premier passage du chemin retenu.
 
 Le menu **Runs** permet de choisir librement **Run 1**, **Run 2** ou **Run 3**.
@@ -138,30 +163,22 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   changements d'état autour du seuil réel, au lieu de considérer toute une
   demi-cellule comme parfaitement centrée. La position suivie peut différer du
   centre de quelques millimètres selon le montage des capteurs.
-- Chaque capteur latéral conserve ses références d’approche et de relâchement,
-  indépendamment du côté utilisé pour guider. Deux passages du même seuil dans
-  le même sens évitent de confondre l’hystérésis avec un angle. Attention : la
-  calibration latérale sauvegardée donne une **plage statique à 1 mm**, pas une
-  mesure séparée de l’hystérésis comme pour F5/F10 frontaux. Un demi-cycle a donc
-  une confiance réduite selon cette plage et sa dispersion ; aucune nouvelle
-  calibration ni migration des données en flash n’est requise.
-- Une détection 5 cm prolongée est intégrée en **temps réel et distance parcourue**.
-  La correction augmente progressivement sur le même mur 10 cm. Une ouverture,
-  un arrêt ou deux 5 cm actifs ne permettent pas de conclure à une dérive latérale.
-  Au-delà de 120 ms et de `60 mm + 30 × (largeur de plage + dispersion)`, une
-  détection unilatérale près du centre déclenche une recherche de référence à
-  **80 mm/s maximum**, avec freinage selon l’accélération du mouvement.
-  Le robot s’éloigne doucement du mur jusqu’au relâchement, puis redresse son cap
-  pendant au moins 15 mm. Les corrections de cap issues des simples bornes de
-  position sont suspendues pendant cette recherche ; les pas et les transitions
-  optiques continuent d’être intégrés. Aucun talonnage ni pivot systématique.
-  Limites : recherche de 300 mm, redressement de 150 mm, durée totale de 5 s.
-  Une limite dépassée ou une entrée en courbe avant la fin du recentrage arrête
-  les moteurs avec **SIDE ALIGN FAILED** (code 5). Une porte annule la recherche,
-  car son bord ne constitue pas une mesure latérale du mur.
+- La durée et la distance d’une détection 5 cm persistante augmentent doucement
+  la consigne de correction (20 à 30 mrad), selon la plage latérale calibrée et
+  sa dispersion. Une porte ou un arrêt remet ce cumul à zéro. Il n’y a plus de
+  plafond à 80 mm/s, de recherche séparée de seuil, ni d’arrêt `SIDE ALIGN FAILED`
+  à l’entrée d’un virage. La commande différentielle corrige pendant la marche ;
+  les protections frontales et de fraîcheur des capteurs restent actives.
 - Les transitions des poteaux 10 cm recalent la distance longitudinale avec
-  les profils d'ouverture/fermeture interpolés à la vitesse courante. Une paire
-  gauche/droite fournit aussi une référence de cap. Corrections bornées : résidu
+  les profils d’ouverture/fermeture. La position et la vitesse du premier front
+  brut sont mémorisées. Deux scans bruts cohérents valident le poteau 10 cm ; un
+  pic isolé ne modifie rien. Le 5 cm conserve la confirmation filtrée. Les offsets
+  bruts sont interpolés entre 40 et 220 mm/s ; au-delà, la géométrie du profil
+  220 est conservée, sans extrapoler artificiellement le retard de filtrage.
+  C’est une approximation hors de la plage de calibration, à confirmer en essai.
+  La correction du dernier scan droit est appliquée **avant** de décider l’entrée
+  en courbe, en conservant les compteurs moteurs et la vitesse. Une paire
+  gauche/droite du même type de transition fournit aussi une référence de cap. Corrections bornées : résidu
   accepté ±15 mm, correction au plus 6 mm par événement de poteau/F10. Le front
   5 cm utilise la correction mesurée complète (±15 mm maximum) pour terminer
   une arrivée devant un mur autorisé, sans recul. F10 recale déjà l'approche

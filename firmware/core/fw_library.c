@@ -36,6 +36,11 @@ int fw_library_put(fw_library_t *l,const nm_map_t *map,unsigned corner,unsigned 
         ++l->count; if(!++l->next_id) ++l->next_id;
         l->item[at].id=l->next_id;
     }
+    else if(at+1<l->count) {
+        fw_saved_maze_t recent=l->item[at];
+        memmove(&l->item[at],&l->item[at+1],(l->count-at-1)*sizeof recent);
+        at=l->count-1;l->item[at]=recent;
+    }
     l->item[at].map=*map; l->item[at].route=route;
     l->item[at].corner=corner; l->item[at].heading=heading; l->item[at].search_ms=ms;
     return (int)at;
@@ -45,4 +50,35 @@ int fw_library_remove(fw_library_t *l,unsigned index)
     if(index>=l->count) return -1;
     memmove(&l->item[index],&l->item[index+1],(l->count-index-1)*sizeof l->item[0]);
     memset(&l->item[--l->count],0,sizeof l->item[0]); return 0;
+}
+
+static void name_letter(char out[6],unsigned *length,char letter)
+{
+    if(*length>=5 || strchr(out,letter))return;
+    out[(*length)++]=letter;out[*length]=0;
+}
+void fw_maze_name(const fw_saved_maze_t *m,char out[6])
+{
+    unsigned length=0,at=0,heading=m->map.start_heading;
+    int cell=m->map.start_y*NM_SIDE+m->map.start_x;out[0]=0;
+    while(at<m->route.length && length<5) {
+        unsigned exits=0;
+        for(unsigned d=0;d<4;++d)if((m->map.cell[cell].known&(1u<<d)) && !(m->map.cell[cell].walls&(1u<<d)))++exits;
+        if(exits>=3)name_letter(out,&length,'X');
+        unsigned d=m->route.direction[at],turn=(d+4-heading)%4;
+        char letter=turn==2?'O':turn?'N':((d+4-m->map.start_heading)%2?'H':'I');
+        /* Two immediately consecutive corners: S bend or U bend. */
+        unsigned consume=1;
+        if((turn==1 || turn==3) && at+1<m->route.length) {
+            unsigned next=(m->route.direction[at+1]+4-d)%4;
+            if(next==1 || next==3) {letter=next==turn?'O':'Z';consume=2;}
+        }
+        name_letter(out,&length,letter);
+        while(consume-- && at<m->route.length) {
+            heading=m->route.direction[at++];int next=nm_next(&m->map,cell,heading);
+            if(next<0)return;
+            cell=next;
+        }
+    }
+    if(!length)strcpy(out,"ZHONX");
 }

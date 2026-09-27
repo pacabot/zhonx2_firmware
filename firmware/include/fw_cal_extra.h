@@ -34,4 +34,7 @@ int fw_corner_run(const fw_cal_io_t *,const fw_cal_geometry_t *,unsigned side,ui
 /* Returns zero unless a valid measured profile covers the requested speed. */
 uint32_t fw_rotation_quarter(const fw_rotation_data_t *,unsigned speed,unsigned direction);
 int fw_corner_offset(const fw_corner_data_t *,unsigned facing_out,unsigned speed,unsigned sensor,int opening,int32_t *offset);
+/* Geometry at the raw edge. Outside 40..220 mm/s use the nearest measured
+ * raw profile; filtering delay is handled by recording the edge position. */
+int fw_corner_raw_offset(const fw_corner_data_t *,unsigned,unsigned,unsigned,int,int32_t *);
 #endif

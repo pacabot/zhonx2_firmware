@@ -261,7 +261,7 @@ int fw_app_battery_commit(unsigned raw,unsigned mv)
 }
 int fw_app_settings_save(void) { return save(); }
 unsigned fw_app_maze_count(void) { return library.count; }
-const fw_saved_maze_t *fw_app_maze(unsigned index) { return index<library.count?&library.item[index]:0; }
+const fw_saved_maze_t *fw_app_maze(unsigned index) { return index<library.count?&library.item[library.count-1-index]:0; }
 int fw_app_ready(void)
 {
     nm_route_t route;
@@ -270,7 +270,7 @@ int fw_app_ready(void)
 int fw_app_maze_load(unsigned index)
 {
     if(fw_motion_busy() || index>=library.count) return -1;
-    const fw_saved_maze_t *m=&library.item[index];
+    const fw_saved_maze_t *m=fw_app_maze(index);
     maze=m->map;fw_maze_size=maze.side; fw_start_corner=(int)m->corner; fw_start_heading=(int)m->heading;
     search_ms=m->search_ms; search_clock_running=0; has_map=learned=1;
     displayed_pose=nm_origin(&m->map);start_prepared=0;last_result="LOADED MAP";memset(trial_ms,0,sizeof trial_ms);return 0;
@@ -278,6 +278,7 @@ int fw_app_maze_load(unsigned index)
 int fw_app_maze_delete(unsigned index)
 {
     if(fw_motion_busy() || index>=library.count) return -1;
+    index=library.count-1-index;
     fw_saved_maze_t previous=library.item[index]; unsigned count=library.count;
     if(fw_library_remove(&library,index)) return -1;
     if(!save()) return 0;
@@ -774,7 +775,16 @@ int fw_app_prepare_run(void)
     if(start_prepared)return 0;
     if(!fw_app_ready() || !fw_cal_valid(&measurements.wall) || !fw_rotation_valid(&measurements.rotation))return -1;
     nm_pose_t pose=start_pose();fw_motion_init();radio_off();
-    int result=0;
+    int result=0;uint32_t pause=hal_os_get_systicks();unsigned previous=0;
+    while(hal_os_get_systicks()-pause<3000) {
+        if(fw_cancel_pressed()) {result=-1;break;}
+        unsigned seconds=3-(hal_os_get_systicks()-pause)/1000;
+        if(seconds!=previous) {
+            char text[24];snprintf(text,sizeof text,"ALIGN IN %u",seconds);
+            fw_ui_result(text,search_ms,last_run_ms,2);previous=seconds;
+        }
+        __WFI();
+    }
     /* Only at the known start, between trials. No probes during exploration
      * or on the timed path; retain all measured calibration coefficients. */
     for(unsigned axis=0;axis<2 && !result;++axis) {
@@ -784,9 +794,12 @@ int fw_app_prepare_run(void)
             if(!(maze.cell[cell(pose)].walls&(1u<<d)))continue;
             reference=1;
             if(face_start(&pose,d)) {result=-1;break;}
-            int r=fw_motion_center_wall();
-            if(r<0 || (!r && wait_move(&pose,"START ALIGN",0))) {result=-1;break;}
-            if(!r && fw_motion_centered()) {centered=1;break;}
+            if(!(live_sensors()&SENSOR_F10_POS)) {
+                int32_t retreat=(int32_t)measurements.wall.geometry.inner_um/2-(int32_t)measurements.wall.geometry.nose_um;
+                if(fw_motion_seat_wall() || wait_move(&pose,"WALL CONTACT",0) ||
+                   fw_motion_calibration_traverse(-retreat,FW_CAL_REPOSITION_SPEED) || wait_move(&pose,"START CENTER",0)) {result=-1;break;}
+                centered=1;break;
+            }
         }
         if(reference && !centered)result=-1;
     }

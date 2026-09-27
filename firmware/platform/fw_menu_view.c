@@ -109,7 +109,8 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int bl
         unsigned x=c%NM_SIDE*scale+scale/2,y=9+(side-1-c/NM_SIDE)*scale+scale/2,xx=next%NM_SIDE*scale+scale/2,yy=9+(side-1-next/NM_SIDE)*scale+scale/2;
         ssd1306DrawLine(x,y,xx,yy);ssd1306DrawLine(x+1,y,xx+1,yy);c=next;
     }
-    large(58,13,"MAZE");snprintf(s,sizeof s,"%lu",(unsigned long)m->id);large(58,31,s);
+    char name[6];fw_maze_name(m,name);large(58,13,name);
+    snprintf(s,sizeof s,"#%lu",(unsigned long)m->id);fw_display_text(58,34,s);
     hint(58,65,"LOAD");fw_ui_menu_refresh();
 }
 void fw_ui_setting(unsigned index,int value)

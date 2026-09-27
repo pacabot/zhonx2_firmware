@@ -106,6 +106,12 @@ void fw_ui_map_view(unsigned z,int x,int y) {assert(z==0 || z==16 || z==24);(voi
 void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {strcpy(last_status,s);(void)a;(void)b;(void)p;}
 int fw_motion_center_wall(void) {assert(!busy && physical.y==0 && physical.x==(inject_obstacle==9?5:0));++alignments;return 0;}
 int fw_motion_centered(void) {return 1;}
+int fw_motion_seat_wall(void) {
+    assert(now>=3000 && !busy && physical.y==0 && physical.x==(inject_obstacle==9?5:0));
+    assert(ground.cell[physical.y*NM_SIDE+physical.x].walls&(1u<<physical.heading));
+    ++alignments;return 0;
+}
+int fw_motion_calibration_traverse(int32_t um,unsigned speed) {assert(um==-36500 && speed==80 && !busy);return 0;}
 void fw_motion_init(void) { busy=stopped=wall_arrival=backing=pathing=0; }
 int fw_motion_obstacle_backoff(uint32_t um)
 {

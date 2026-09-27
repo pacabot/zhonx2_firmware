@@ -22,6 +22,8 @@ int fw_motion_wall_arrival(void);
  * the probe and leaves fw_motion_centered() false. */
 int fw_motion_center_wall(void);
 int fw_motion_centered(void);
+/* Pre-run only: confirmed front wall, slow bounded seating from cell centre. */
+int fw_motion_seat_wall(void);
 /* Exploration recovery only, after a confirmed F5 obstacle. Reverse at 80 mm/s,
  * at most one cell and never farther than the interrupted forward travel.
  * Zero distance acknowledges an obstacle detected at the starting centre. */

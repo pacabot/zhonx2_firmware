@@ -14,4 +14,6 @@ int fw_library_valid(const fw_library_t *);
 /* Deduplicate identical learned maps; never silently evict an older maze. */
 int fw_library_put(fw_library_t *,const nm_map_t *,unsigned corner,unsigned heading,uint32_t ms);
 int fw_library_remove(fw_library_t *,unsigned index);
+/* Five first distinct route motifs; display only, no flash format change. */
+void fw_maze_name(const fw_saved_maze_t *,char name[6]);
 #endif
