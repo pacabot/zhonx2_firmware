@@ -18,6 +18,8 @@ Sans option : compile et flashe uniquement l'application en mode debug.
   --verify      Vérifie les images et les données après écriture ; avec
                 --full-backup, compare aussi toute la flash après écriture.
   --help        Affiche cette aide.
+La compilation est incrémentale, y compris avec --fast : seuls les fichiers
+à reconstruire sont compilés dans le profil demandé avant tout accès à la cible.
 Sans --verify, aucune vérification ni relecture de flash après écriture.
 Les secteurs de calibration/réglages/labyrinthes ne sont jamais effacés.
 Le contrôle de démarrage au repos est conservé dans tous les modes.
@@ -60,7 +62,12 @@ for tool in openocd python3 arm-none-eabi-nm; do
 done
 [[ ${SWD_KHZ:-1000} =~ ^[1-9][0-9]*$ ]] || { echo 'SWD_KHZ doit être positif.' >&2; exit 2; }
 [[ ${STLINK_SERIAL:-} =~ ^[[:alnum:]]*$ ]] || { echo 'Numéro ST-Link invalide.' >&2; exit 2; }
-./scripts/build/build.sh ${build_args[@]+"${build_args[@]}"}
+printf 'Mise à jour incrémentale des images : profil %s, cible %s…\n' "$profile" "$mode"
+if ! ./scripts/build/build.sh ${build_args[@]+"${build_args[@]}"}; then
+    echo 'Échec de compilation : programmation annulée, aucun accès à la cible.' >&2
+    exit 1
+fi
+printf 'Images %s à jour ; préparation du flash.\n' "$profile"
 mkdir -p backups/flash-sessions
 session=$(mktemp -d "backups/flash-sessions/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 failure='Aucune écriture en flash effectuée.'

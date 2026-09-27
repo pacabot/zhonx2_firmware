@@ -35,7 +35,10 @@ scripts/flash/flash.sh
 Le script fonctionne depuis n'importe quel dossier. Sans option, il compile puis
 flashe uniquement l'application et son manifeste en Debug. `--release` sélectionne
 la version optimisée ; `--bootloader` n'écrit que le bootloader ; `--all` écrit les
-trois images. La compilation est incrémentale.
+trois images. La compilation est incrémentale, **y compris avec `--fast`** :
+`scripts/flash/flash.sh --release --fast` remet à jour `build/release/` avant
+programmation. Si les images sont déjà à jour, Make ne les recompile pas.
+Un échec de compilation annule le flash avant tout accès à la cible.
 
 Pour mettre à jour en conservant les calibrations :
 
