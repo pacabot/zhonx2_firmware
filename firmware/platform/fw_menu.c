@@ -105,8 +105,8 @@ static void maze_menu(void)
 }
 static void calibration_menu(void)
 {
-    const card_t items[]={{"Walls","Calibrate",FW_ICON_CALIBRATE},{"Rotation","Calibrate",FW_ICON_CALIBRATE},
-        {"Left edge","Calibrate",FW_ICON_CALIBRATE},{"Right edge","Calibrate",FW_ICON_CALIBRATE},
+    const card_t items[]={{"Walls","Calibrate",FW_ICON_WALL},{"Rotation","Calibrate",FW_ICON_TURN},
+        {"Left edge","Calibrate",FW_ICON_EDGE_LEFT},{"Right edge","Calibrate",FW_ICON_EDGE_RIGHT},
         {"Wall report","",FW_ICON_REPORT},{"Turn report","",FW_ICON_REPORT},{"Edge report","",FW_ICON_REPORT}};
     int (*const action[])(void)={fw_calibrate_menu,fw_rotation_menu,fw_corner_left_menu,fw_corner_right_menu,
         fw_calibration_report,fw_rotation_report,fw_corner_report};

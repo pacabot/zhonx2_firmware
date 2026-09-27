@@ -36,8 +36,8 @@ void fw_motion_stop(void) { assert(mode); }
 int fw_motion_calibration_move(int32_t um,unsigned speed)
 {
     assert(mode==2); ++io_moves;
-    if(io_moves==1) { assert(um>0 && speed==20);return 0; }
-    assert(io_moves==2 && um<0 && speed==10); return -1; /* Stop after successful seating. */
+    if(io_moves==1) { assert(um>0 && speed==FW_CAL_CONTACT_SPEED);return 0; }
+    assert(io_moves==2 && um<0 && speed==FW_CAL_FRONT_SPEED); return -1; /* Stop after successful seating. */
 }
 int fw_motion_calibration_turn(int degrees) { (void)degrees;assert(0);return -1; }
 int32_t fw_motion_travelled_um(void) { assert(0);return 0; }

@@ -41,6 +41,12 @@ int main(void)
     fw_ui_card("ZHONX II","Calibration","",FW_ICON_CALIBRATE,1,4);image("build/ui-menu-home.pgm");
     fw_ui_card("MAZE","Load maze","Library",FW_ICON_MAZE,1,4);image("build/ui-menu-maze.pgm");
     fw_ui_card("RUNS","Slow run","120 mm/s",FW_ICON_RUN,0,4);image("build/ui-menu-run.pgm");
+    const char *cal_names[]={"Walls","Rotation","Left edge","Right edge"};
+    const unsigned cal_icons[]={FW_ICON_WALL,FW_ICON_TURN,FW_ICON_EDGE_LEFT,FW_ICON_EDGE_RIGHT};
+    for(unsigned i=0;i<4;++i) {
+        char file[60];fw_ui_card("CALIBRATION",cal_names[i],"Calibrate",cal_icons[i],i,7);
+        snprintf(file,sizeof file,"build/ui-calibration-icon-%u.pgm",i);image(file);
+    }
     const int values[]={470,940,167,179,173,220,260,0,0};
     for(unsigned i=0;i<9;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
         fw_ui_setting(i,values[i]);image(file);}

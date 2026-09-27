@@ -1,6 +1,12 @@
 #ifndef FW_CALIBRATION_H
 #define FW_CALIBRATION_H
 #include <stdint.h>
+/* Calibration motion policy, mm/s. Contact stays bounded; optical passes keep
+ * enough samples for the three-frame edge debounce (10 ms sensor cadence). */
+#define FW_CAL_REPOSITION_SPEED 80u
+#define FW_CAL_CONTACT_SPEED 30u
+#define FW_CAL_FRONT_SPEED 20u
+#define FW_CAL_TURN_SPEED 80u
 /* All distances are from the wheel axle to the wall face, in micrometres. */
 typedef struct {
     uint32_t nose_um, width_um, inner_um, pitch_um;

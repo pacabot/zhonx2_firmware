@@ -366,13 +366,16 @@ capteurs binaires seuls ne peuvent pas certifier une position précise au dépar
 
 La séquence automatique est la suivante :
 
-1. Appui frontal à 20 mm/s. Le premier appui de chaque axe couvre au maximum
+1. Appui frontal à 30 mm/s. Le premier appui de chaque axe couvre au maximum
    `largeur intérieure − 2 × axe-avant + 5 mm` de course moteur ; cela peut
    commander plusieurs secondes de pas après le contact. Une fois la référence
    établie, les appuis suivants ajoutent seulement 5 mm à la course attendue.
+   Si la position est connue, l'approche se fait à 80 mm/s jusqu'à 8 mm du
+   contact prévu, puis à 30 mm/s pour l'appui et les 5 mm supplémentaires.
+   Une première prise de référence, de position incertaine, reste à 30 mm/s.
    F10 vérifie le mur avant l'approche ; l'état F5/F10 au contact n'est pas
    utilisé comme contacteur mécanique.
-2. Trois reculs/avances à 10 mm/s, depuis l'appui jusqu'à une distance axe-mur
+2. Trois reculs/avances à 20 mm/s, depuis l'appui jusqu'à une distance axe-mur
    égale à la largeur intérieure. Les transitions F5 et F10 sont confirmées sur
    trois acquisitions brutes consécutives ; la position du premier échantillon
    est retenue pour limiter le biais du filtrage. Les moyennes de déclenchement,
@@ -388,7 +391,10 @@ La séquence automatique est la suivante :
 4. À partir du centre, si le capteur latéral 5 cm détecte, le point suivant est
    éloigné du mur de 1 mm ; sinon il est rapproché de 1 mm. Chaque point répète
    les appuis et le recentrage. Trois recherches par côté donnent un intervalle
-   détecté/libre, élargi de la dispersion observée. La recherche s'arrête à
+   détecté/libre, élargi de la dispersion observée. Les répétitions 2 et 3
+   commencent près du seuil précédent, avec de nouveaux appuis à chaque point,
+   pour éviter de reparcourir tous les millimètres depuis le centre.
+   La recherche s'arrête à
    ±15 mm au plus, réduits si le rayon de rotation l'impose.
 5. Appui final et retour au centre dans l'orientation initiale. Sauvegarde
    automatique de la calibration avec les réglages et la carte, puis rapport
@@ -406,7 +412,7 @@ Un mur absent, une acquisition périmée, un seuil hors plage, des transitions
 instables ou une dispersion supérieure à 2 mm interrompent la procédure. Aucun
 résultat partiel ne remplace la calibration sauvegardée. Les mouvements de contact
 sont réservés à cette procédure : distance bornée à 180 mm, vitesse au plus 30 mm/s,
-rotations à 40 mm/s par roue, bouton Retour et surveillance des acquisitions actifs.
+repositionnements à 80 mm/s et rotations à 80 mm/s par roue, bouton Retour et surveillance des acquisitions actifs.
 
 Le snapshot utilise le schéma 4 et importe les anciens schémas 1/2/3 sans perdre
 réglages ou carte. Le choix du secteur à effacer prend désormais en compte le
@@ -459,7 +465,7 @@ Pour chacune des vitesses **40, 80 et 120 mm/s par roue**, dans les deux sens :
    entraxe effectif, course pour 90°, dispersion des périodes et contrôle à 90°.
 
 La correction est appliquée aux virages normaux (120 mm/s par roue) et aux
-rotations de référence (40 mm/s), séparément CW/CCW. L'API interpole entre profils
+rotations de référence (80 mm/s), séparément CW/CCW. L'API interpole entre profils
 mesurés, sans extrapolation. Un demi-tour utilise deux fois le budget du quart de
 tour ; son effet de glissement propre n'est pas calibré indépendamment.
 
@@ -678,3 +684,19 @@ cible ~0,03 V, connexion impossible. L'archive antérieure au dernier essai ne c
 que le schéma 2, sans calibrations. **Aucune conclusion sur les calibrations actuelles
 ne peut donc être tirée de cette archive.** Aucun flash ni mouvement automatique
 n'a été exécuté pour cette révision ; le dump actuel nécessite une cible alimentée.
+
+### Accélération des calibrations et icônes
+
+Les vitesses de mise en position sont définies dans `fw_calibration.h` :
+repositionnement 80 mm/s, contact 30 mm/s, mesure frontale 20 mm/s, rotation
+de référence 80 mm/s par roue. Les profils mesurés restent 40/80/120 mm/s
+pour la rotation et 40/120/220 mm/s pour les angles : ils décrivent les vitesses
+réelles utilisées par les déplacements. Les trois répétitions, les contrôles
+de dispersion, la surveillance capteurs et l'arrêt utilisateur sont conservés.
+Les sauvegardes de calibration existantes restent compatibles.
+
+Le cas de test des seuils latéraux décalés passe de 78 à 42 rotations de mise
+en position, avec les mêmes intervalles détectés. Ce résultat est simulé ;
+le gain de durée et la répétabilité à vitesse augmentée restent à mesurer
+sur le robot. Le menu présente quatre pictogrammes distincts : trois murs
+avec flèche d'appui, rotation, poteau gauche et poteau droit.

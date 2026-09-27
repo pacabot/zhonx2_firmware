@@ -106,7 +106,7 @@ int fw_motion_straight_to(unsigned cells, unsigned speed, int accept_wall)
 static int turn(int degrees,int calibrating)
 {
     if (degrees!=90 && degrees!=-90 && degrees!=180 && degrees!=-180) return -1;
-    unsigned speed=calibrating?40:120;
+    unsigned speed=calibrating?FW_CAL_TURN_SPEED:120;
     uint32_t quarter=fw_rotation_quarter(&rotation_profile,speed,degrees<0);
     float distance=quarter?(float)quarter*0.001f*fabsf((float)degrees)/90.0f:
         fabsf((float)degrees)*((float)M_PI/180.0f)*((float)WHEELS_DISTANCE/2.0f);

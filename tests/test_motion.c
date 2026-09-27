@@ -135,7 +135,7 @@ int main(void)
     assert(commanded[0]==lroundf(130.4f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy()) tick(1);
     assert(!fw_motion_calibration_turn(-90));
-    assert(commanded[0]==lroundf(65.f*2.f*(float)STEPS_PER_MM));
+    assert(commanded[0]==lroundf(65.1f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy()) tick(1);
     for(int dir=-1;dir<=1;dir+=2) {
         assert(!fw_motion_calibration_spin(dir*67000,80));

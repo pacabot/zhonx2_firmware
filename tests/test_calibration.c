@@ -5,7 +5,7 @@
 #include <string.h>
 typedef struct {
     int32_t x,y;
-    unsigned heading,moves,turns,frames;
+    unsigned heading,moves,turns,frames,fast_contacts,fast_moves;
     uint8_t bits;
     int missing,stuck,cancel_at,glitch,blind;
 } robot_t;
@@ -48,12 +48,20 @@ static int read_robot(void *context,uint8_t stable_mask,uint8_t *bits)
 static int move_robot(void *context,int32_t um,unsigned speed,fw_cal_observer sample,void *data)
 {
     robot_t *r=context;
-    assert(speed==10 || speed==20);
+    assert(speed==FW_CAL_FRONT_SPEED || speed==FW_CAL_CONTACT_SPEED || speed==FW_CAL_REPOSITION_SPEED);
+    if(speed==FW_CAL_REPOSITION_SPEED) {
+        ++r->fast_moves;
+        if(um>0) {
+            ++r->fast_contacts;
+            assert(wall_distance(r,r->heading)-(uint32_t)um>=geometry.nose_um+8000);
+        }
+    }
     assert(um>=-180000 && um<=180000 && um);
     if((int)++r->moves==r->cancel_at) return -1;
     int sign=um<0?-1:1, distance=abs(um), moved=0;
     while(moved<distance) {
-        int step=distance-moved<100?distance-moved:100;
+        int quantum=(int)speed*10; /* One sensor frame every 10 ms. */
+        int step=distance-moved<quantum?distance-moved:quantum;
         moved+=step;
         if(r->heading==0) r->y-=sign*step;
         if(r->heading==1) r->x+=sign*step;
@@ -88,11 +96,15 @@ int main(void)
 {
     robot_t r=initial(); fw_cal_data_t d={0};
     assert(!run(&r,&d)); assert(fw_cal_valid(&d));
-    assert(d.front[0].on_um==76000 && d.front[0].off_um==80100);
-    assert(d.front[1].on_um==130000 && d.front[1].off_um==136100);
+    assert(d.front[0].on_um==76000 && d.front[0].off_um==80200);
+    assert(d.front[1].on_um==130000 && d.front[1].off_um==136200);
     assert(d.side[0].near_um==78500 && d.side[0].far_um==79500);
     assert(d.side[1].near_um==88500 && d.side[1].far_um==89500);
     assert(!d.front[0].spread_um && !d.side[0].spread_um);
+    assert(r.fast_contacts && r.fast_moves>r.fast_contacts);
+    /* The old centre restart needed 78 turns on this fixture; repeated
+     * searches must now reuse the prior bracket without changing the result. */
+    assert(r.turns<78);
     assert(r.x==83500 && r.y==83500 && r.heading==0 && r.turns>10);
     printf("calibration: %u bounded moves, %u turns, front hysteresis and both 1 mm side brackets; centred finish\n",r.moves,r.turns);
     fw_cal_data_t previous=d;
@@ -102,8 +114,8 @@ int main(void)
     assert(abs((int)d.front[0].on_um-76000)<1000);
     r=initial(); r.blind=1;
     assert(!run(&r,&d) && fw_cal_valid(&d));
-    assert(d.front[0].on_um==76000 && d.front[0].off_um==80100);
-    assert(d.front[1].on_um==130000 && d.front[1].off_um==136100);
+    assert(d.front[0].on_um==76000 && d.front[0].off_um==80200);
+    assert(d.front[1].on_um==130000 && d.front[1].off_um==136200);
     assert(r.x==83500 && r.y==83500);
     puts("calibration: near-contact blind zones do not abort seating or replace far thresholds");
     r=initial(); r.missing=1;

@@ -52,6 +52,21 @@ static void icon(unsigned type)
     } else if(type==FW_ICON_UPDATE) {
         ssd1306DrawRect(x,y+17,26,9);ssd1306DrawLine(x+13,y,x+13,y+20);
         ssd1306DrawLine(x+6,y+11,x+13,y+18);ssd1306DrawLine(x+13,y+18,x+20,y+11);
+    } else if(type==FW_ICON_WALL) {
+        ssd1306FillRect(x,y,27,2);ssd1306FillRect(x,y,2,27);ssd1306FillRect(x+25,y,2,27);
+        ssd1306DrawRect(x+8,y+15,11,10);ssd1306DrawLine(x+13,y+14,x+13,y+5);
+        ssd1306DrawLine(x+9,y+9,x+13,y+5);ssd1306DrawLine(x+13,y+5,x+17,y+9);
+    } else if(type==FW_ICON_TURN) {
+        ssd1306DrawCircle(x+13,y+13,11);ssd1306DrawRect(x+9,y+9,8,8);
+        ssd1306ClearRect(x+16,y,11,13);
+        ssd1306DrawLine(x+13,y+2,x+23,y+7);ssd1306DrawLine(x+23,y+7,x+22,y);
+        ssd1306DrawLine(x+23,y+7,x+16,y+8);
+    } else if(type==FW_ICON_EDGE_LEFT || type==FW_ICON_EDGE_RIGHT) {
+        unsigned wall=type==FW_ICON_EDGE_LEFT?x:x+24;
+        ssd1306FillRect(x,y,27,2);ssd1306FillRect(wall,y,3,14);
+        ssd1306FillRect(wall-1,y+12,5,5);ssd1306DrawDashedLine(wall+1,y+19,wall+1,y+27);
+        ssd1306DrawRect(x+9,y+10,9,10);ssd1306DrawLine(x+13,y+21,x+13,y+27);
+        ssd1306DrawLine(x+10,y+24,x+13,y+27);ssd1306DrawLine(x+13,y+27,x+16,y+24);
     } else if(type==FW_ICON_TEST) {
         ssd1306DrawRect(x+3,y+3,20,20);
         for(unsigned i=0;i<4;++i) {ssd1306DrawLine(x,y+5+i*5,x+3,y+5+i*5);ssd1306DrawLine(x+23,y+5+i*5,x+26,y+5+i*5);}
