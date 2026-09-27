@@ -18,15 +18,9 @@ python3 - "$session" "$address" "$size" <<'PY'
 import os, sys
 from pathlib import Path
 p, address, size = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-config = 'source [find interface/stlink.cfg]\ntransport select hla_swd\n'
-if os.environ.get('STLINK_SERIAL'): config += 'adapter serial '+os.environ['STLINK_SERIAL']+'\n'
-config += f'''source [find target/stm32f4x.cfg]
-adapter speed {os.environ.get('SWD_KHZ','1000')}
-gdb_port disabled
-tcl_port disabled
-telnet_port disabled
-init
-reset halt
+sys.path.insert(0, 'scripts/flash')
+from robot_guard import identity, guarded_config
+config = guarded_config('zhonx2', identity('zhonx2')) + f'''reset halt
 dump_image {p}/flash.bin {address} {size}
 reset run
 shutdown

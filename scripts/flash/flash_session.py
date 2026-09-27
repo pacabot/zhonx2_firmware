@@ -12,6 +12,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from fw_package import manifest, validate
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from robot_guard import identity, guarded_config
 
 FLASH_SIZE = 0x100000
 SECTORS = [0, 0x4000, 0x8000, 0xC000, 0x10000, 0x20000,
@@ -62,6 +64,7 @@ def prepare(session, mode, profile, fast=True, verify_images=False):
     require(all(c.isalnum() or c in '/-_' for c in str(session)), "Chemin de session invalide")
     require(mode in ('app', 'boot', 'all') and profile in ('debug', 'release'),
             'Sélection de flash invalide')
+    robot_identity = identity('zhonx2')
     build = ROOT / 'build' / profile
     selected = images_for(mode)
     if mode in ('app', 'all'):
@@ -90,21 +93,7 @@ def prepare(session, mode, profile, fast=True, verify_images=False):
             if len(fields) == 3:
                 symbols[fields[2]] = int(fields[0], 16)
         ticks, sequence = symbols['os_context'] + 4, symbols['scan'] + 4
-    header = 'source [find interface/stlink.cfg]\ntransport select hla_swd\n'
-    serial = os.environ.get('STLINK_SERIAL', '')
-    if serial:
-        header += f'adapter serial {serial}\n'
-    header += f'''source [find target/stm32f4x.cfg]
-adapter speed {os.environ.get('SWD_KHZ', '1000')}
-stm32f4x.cpu configure -event reset-start {{adapter speed {os.environ.get('SWD_KHZ', '1000')}}}
-gdb_port disabled
-tcl_port disabled
-telnet_port disabled
-init
-reset halt
-if {{([lindex [read_memory 0xe0042000 32 1] 0] & 0xfff) != 0x413}} {{ error "MCU inattendu" }}
-if {{[lindex [read_memory 0x1fff7a22 16 1] 0] != 1024}} {{ error "Flash attendue : 1 Mio" }}
-'''
+    header = guarded_config('zhonx2', robot_identity) + 'reset halt\n'
     (session / 'backup.cfg').write_text(header + f'dump_image {session}/pre-flash.bin 0x08000000 {backup_size:#x}\nshutdown\n')
     program = header
     # Application first, then its committed manifest, then bootloader. No mass erase.
@@ -155,6 +144,7 @@ shutdown
     (session / 'startup.cfg').write_text(startup)
     commit = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True)
     return {'status': 'prepared', 'mode': mode, 'profile': profile,
+            'robot': 'zhonx2', 'identity': robot_identity,
             'source_commit': commit.stdout.strip(), 'fast': fast, 'backup_size': backup_size,
             'backup_scope': 'boot sector and persistence' if fast else 'full flash',
             'verification_requested': verify_images, 'flash_verified': False,

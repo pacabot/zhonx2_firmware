@@ -143,7 +143,8 @@ class OptionalVerificationTest(unittest.TestCase):
                            ('bootloader.bin', boot), ('ZHONX_II_M4.elf', b'test ELF')]:
             (build/name).write_bytes(data)
         symbols = b'20000100 B os_context\n20000200 B scan\n20000300 B fault\n20000400 B active\n'
-        with patch.object(flash, 'ROOT', root), patch.object(flash.subprocess, 'check_output', return_value=symbols.decode()):
+        with patch.object(flash, 'identity', return_value={'serial':'51FF66064982565324552187', 'uid':'001100223344556677889900'}), \
+                patch.object(flash, 'ROOT', root), patch.object(flash.subprocess, 'check_output', return_value=symbols.decode()):
             return flash.prepare(session, mode, 'release', fast=fast, verify_images=verifying)
 
     def test_generated_commands_for_all_modes(self):
@@ -156,7 +157,14 @@ class OptionalVerificationTest(unittest.TestCase):
                         self.assertEqual(report['backup_size'], 0xC000 if fast else flash.FLASH_SIZE)
                         self.assertEqual(report['verification_requested'], verifying)
                         self.assertFalse(report['flash_verified'])
+                        self.assertEqual(report['robot'], 'zhonx2')
+                        for name in ('backup.cfg', 'program.cfg', 'startup.cfg'):
+                            guarded = (session/name).read_text()
+                            self.assertIn('adapter serial 51FF66064982565324552187', guarded)
+                            self.assertIn('0x1fff7a10 32 3', guarded)
+                            self.assertLess(guarded.index('ROBOT_IDENTITY_OK:'), guarded.index('reset halt'))
                         cfg = (session/'program.cfg').read_text()
+                        self.assertLess(cfg.index('ROBOT_IDENTITY_OK:'), cfg.index('flash write_image erase'))
                         self.assertEqual('verify_image ' in cfg, verifying and fast)
                         self.assertEqual('dump_image ' in cfg, verifying)
                         self.assertEqual(cfg.count('flash write_image erase '), len(flash.images_for(mode)))

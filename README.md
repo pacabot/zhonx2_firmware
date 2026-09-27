@@ -101,7 +101,49 @@ débrancher le robot ; le firmware peut nécessiter une nouvelle programmation.
 
 Prérequis supplémentaires pour flasher : OpenOCD. Variables facultatives :
 `JOBS=4`, `SWD_KHZ=1000`,
-`STLINK_SERIAL=<numéro>` pour sélectionner une sonde précise.
+`STLINK_SERIAL=<numéro>` est facultatif et ne peut désigner que la sonde associée.
+
+## Association sonde / robot
+
+**ZHONX II : ST-Link `51FF66064982565324552187`**, confirmée par l'utilisateur.
+UID STM32 lu sur ce robot : **`003300373432471234373230`**.
+Le script exige aussi cet UID : échanger les câbles entre robots doit faire
+échouer la vérification, même si la bonne sonde USB est sélectionnée.
+
+Après confirmation du raccordement physique, robot alimenté :
+
+```sh
+python3 scripts/flash/robot_guard.py associate zhonx2 --serial 51FF66064982565324552187
+scripts/flash/flash.sh --check
+scripts/flash/flash.sh --release --fast
+```
+
+La première commande lit l'UID sans commande de reset, halt ou écriture flash.
+L'association est enregistrée localement dans
+`${XDG_CONFIG_HOME:-$HOME/.config}/pacabot/robots.json`. `--check` vérifie la sonde
+et le MCU sans compilation, reset ni flash. Pour consulter le registre :
+
+```sh
+python3 scripts/flash/robot_guard.py show
+```
+
+Tous les modes de flash (`--fast`, `--verify`, `--bootloader`, `--all`) et le dump
+imposent le numéro de sonde et vérifient l'UID **dans chaque session OpenOCD avant
+reset/effacement/écriture**. L'identité attendue est également archivée dans le
+rapport de flash. Une association absente, un UID différent ou une surcharge
+`STLINK_SERIAL` incompatible bloque l'opération. Il n'y a pas de sélection
+implicite de la première sonde, même lorsqu'une seule est branchée.
+
+L'association n'est jamais remplacée automatiquement : déplacer/remplacer une
+sonde ou un MCU demande de vérifier le câblage puis de mettre à jour le registre
+consciemment. Sur une autre machine, refaire l'association. Les commandes OpenOCD
+ou st-flash lancées directement contournent ces scripts : les agents doivent
+utiliser les chemins protégés, conformément à [AGENTS.md](AGENTS.md).
+
+Le travail en cours dans `../ZHONX_III` a son propre contrôle sonde + UID,
+avec `scripts/flash/probes.tsv` et `scripts/flash/flash.sh --check`.
+Son association actuelle désigne la sonde `55FF68064967515341421587`.
+Ne pas remplacer son script par celui de ZHONX II.
 
 ## Évolutions firmware
 

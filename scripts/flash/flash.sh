@@ -17,6 +17,7 @@ Sans option : compile et flashe uniquement l'application en mode debug.
   --full-backup  Sauvegarde toute la flash (1 Mio) avant écriture.
   --verify      Vérifie les images et les données après écriture ; avec
                 --full-backup, compare aussi toute la flash après écriture.
+  --check       Vérifie uniquement sonde + UID, sans compilation ni flash.
   --help        Affiche cette aide.
 La compilation est incrémentale, y compris avec --fast : seuls les fichiers
 à reconstruire sont compilés dans le profil demandé avant tout accès à la cible.
@@ -24,10 +25,19 @@ Sans --verify, aucune vérification ni relecture de flash après écriture.
 Les secteurs de calibration/réglages/labyrinthes ne sont jamais effacés.
 Le contrôle de démarrage au repos est conservé dans tous les modes.
 Le mode application exige un bootloader en secteur 0 ; sinon utiliser --all.
-Variables facultatives : JOBS=4, SWD_KHZ=1000, STLINK_SERIAL=<numéro>.
+Association robot/sonde obligatoire : robot_guard.py associate zhonx2 --serial NUMERO
+Le numéro de sonde et l’UID STM32 sont contrôlés avant tout effacement.
+Variables facultatives : JOBS=4, SWD_KHZ=1000. STLINK_SERIAL ne peut pas
+sélectionner une sonde différente de celle enregistrée pour zhonx2.
 Robot alimenté et sonde ST-Link branchée ; OpenOCD requis.
 HELP
 }
+if [[ ${1:-} == --check ]]; then
+    (( $# == 1 )) || { echo '--check doit être utilisé seul.' >&2; exit 2; }
+    export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+    python3 scripts/flash/robot_guard.py verify zhonx2
+    exit 0
+fi
 mode=app
 profile=debug
 profile_given=0
