@@ -156,16 +156,19 @@ void fw_ui_setting(unsigned index,int value)
 }
 
 /* Original geometric lettering, drawn as strokes on the 128x64 OLED.
- * Slight movement keeps the wordmark from remaining on the same pixels. */
+ * Full-screen idle view: double-height strokes, no status overlay. */
 static void stroke(unsigned x,unsigned y,unsigned a,unsigned b,unsigned c,unsigned d)
 {
-    ssd1306DrawLine(x+a,y+b,x+c,y+d);
-    ssd1306DrawLine(x+a+1,y+b,x+c+1,y+d);
-    ssd1306DrawLine(x+a,y+b+1,x+c,y+d+1);
+    ssd1306DrawLine(x+a,y+2*b,x+c,y+2*d);
+    ssd1306DrawLine(x+a+1,y+2*b,x+c+1,y+2*d);
+    ssd1306DrawLine(x+a,y+2*b+1,x+c,y+2*d+1);
 }
 void fw_ui_idle(unsigned phase)
 {
-    unsigned x=6+(phase%5),y=20+((phase/5)%5);
+    unsigned tx=phase%32,ty=phase%48;
+    if(tx>16)tx=32-tx;
+    if(ty>24)ty=48-ty;
+    unsigned origin=3+tx/2,x=origin,y=2+ty/3;
     ssd1306ClearScreen();
     /* Z */
     stroke(x,y,0,0,14,0);stroke(x,y,14,0,0,22);stroke(x,y,0,22,14,22);
@@ -181,7 +184,8 @@ void fw_ui_idle(unsigned phase)
     stroke(x,y,0,0,14,22);stroke(x,y,14,0,0,22);
     x+=23; /* Roman numeral II */
     stroke(x,y,0,0,0,22);stroke(x,y,7,0,7,22);
-    ssd1306DrawLine(6+phase%5,y+29,111+phase%5,y+29);
-    ssd1306DrawLine(111+phase%5,y+29,115+phase%5,y+25);
-    fw_ui_menu_refresh();
+    ssd1306DrawLine(origin,y+51,origin+105,y+51);
+    ssd1306DrawLine(origin+105,y+51,origin+109,y+47);
+    /* Keep acquisition alive without drawing the menu percentage. */
+    fw_battery_poll();ssd1306Refresh();
 }

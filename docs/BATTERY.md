@@ -45,8 +45,9 @@ modification a été réalisée ; après changement de résistance, refaire l'é
   7,60 V → 40 %, 7,40 V → 15 %, 7,00 V → 5 %, 6,60 V → 0 %.
   Interpolation entre points et hystérésis d'affichage de deux points de pourcentage.
 - L'écran Battery indique la tension convertie et `SOC: ~…%`. Les menus,
-  diagnostics et la veille affichent uniquement le pourcentage en haut à droite,
-  sans pictogramme batterie.
+  et diagnostics affichent uniquement le pourcentage en haut à droite, sans
+  pictogramme batterie. La veille réserve tout l’écran à l’animation ; la mesure
+  continue en arrière-plan sans superposition.
 - ADC absent ou proche de la saturation : `--%`,
   jamais interprété comme une batterie vide.
 

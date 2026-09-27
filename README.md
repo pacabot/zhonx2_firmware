@@ -161,8 +161,8 @@ les menus ne répètent plus les commandes de navigation.
 
 Après **30 secondes sans interaction au repos** dans les menus de sélection,
 la bibliothèque ou l'édition des réglages, une veille affiche **ZHONX II** en
-lettrage géométrique dessiné pour l'OLED, légèrement déplacé toutes les deux
-secondes. Le premier appui réveille l'écran sans agir ; la sélection et la valeur
+lettrage géométrique sur toute la surface de l'OLED, animé à 10 images/seconde,
+sans titre, jauge ni pourcentage superposé. Le premier appui réveille l'écran sans agir ; la sélection et la valeur
 en cours d'édition sont conservées. La veille n'est pas activée dans les procédures
 de déplacement, les calibrations, les tests matériels ou l'attente du top départ.
 

@@ -77,7 +77,16 @@ int main(void)
     image("build/ui-menu-no-header.pgm");
     fw_ui_card("DELETE THIS MAZE?","Delete maze","Confirm",FW_ICON_REPORT,1,2);
     image("build/ui-confirm-delete.pgm");
+    fw_battery_set_reference((fw_battery_reference_t){0});
     fw_ui_idle(0);image("build/ui-idle-0.pgm");memcpy(off,buffer,sizeof off);
+    charge(3000);fw_ui_idle(0);
+    assert(!memcmp(off,buffer,sizeof off)); /* No percent/dashes/icon over the animation. */
+    unsigned min_y=64,max_y=0,min_x=128,max_x=0;
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<128;++x)if(ssd1306GetPixel(x,y)) {
+        if(y<min_y)min_y=y;if(y>max_y)max_y=y;
+        if(x<min_x)min_x=x;if(x>max_x)max_x=x;
+    }
+    assert(max_y-min_y>=50 && max_x-min_x>=105);
     fw_ui_idle(14);image("build/ui-idle-14.pgm");assert(memcmp(off,buffer,sizeof off));
     charge(2700);fw_ui_card("HOME","Maze","",FW_ICON_MAZE,0,5);image("build/ui-battery-partial.pgm");
     puts("OLED: large icon cards, nine illustrated settings, blinking stored route");

@@ -34,11 +34,11 @@ static int idle_wait(uint32_t *activity)
     if(read_key() || fw_motion_busy()) {*activity=now;return 0;}
     if((uint32_t)(now-*activity)<30000)return 0;
     unsigned phase=0;uint32_t drawn=now;
-    fw_ui_idle(phase++/2);
+    fw_ui_idle(phase++);
     while(!read_key() && !fw_motion_busy()) {
         now=hal_os_get_systicks();
-        /* Battery acquisition needs <=1.5 s gaps; the logo still moves every 2 s. */
-        if((uint32_t)(now-drawn)>=1000) {fw_ui_idle(phase++/2);drawn=now;}
+        /* Smooth idle animation, battery sampled without a status overlay. */
+        if((uint32_t)(now-drawn)>=100) {fw_ui_idle(phase++);drawn=now;}
         __WFI();
     }
     while(read_key())__WFI();
