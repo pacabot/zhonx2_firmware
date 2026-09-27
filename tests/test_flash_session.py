@@ -129,3 +129,75 @@ class FastFlashTest(unittest.TestCase):
             bad = bytearray(before[0x4000:0xC000]); bad[17] ^= 1
             (p/'post-calibration.bin').write_bytes(bad)
             with self.assertRaises(ValueError): flash.verify_fast(p, report)
+
+
+class OptionalVerificationTest(unittest.TestCase):
+    @staticmethod
+    def prepare_fixture(root, session, mode, fast=True, verifying=False):
+        from unittest.mock import patch
+        build = root/'build'/'release'
+        build.mkdir(parents=True, exist_ok=True)
+        app = struct.pack('<II', 0x20010000, 0x08010009) + b'\x42' * (0x11000-8)
+        boot = struct.pack('<II', 0x20020000, 0x08000009) + b'\x42' * 120
+        for name, data in [('application.ota.bin', app), ('image-manifest.bin', flash.manifest(app)),
+                           ('bootloader.bin', boot), ('ZHONX_II_M4.elf', b'test ELF')]:
+            (build/name).write_bytes(data)
+        symbols = b'20000100 B os_context\n20000200 B scan\n20000300 B fault\n20000400 B active\n'
+        with patch.object(flash, 'ROOT', root), patch.object(flash.subprocess, 'check_output', return_value=symbols.decode()):
+            return flash.prepare(session, mode, 'release', fast=fast, verify_images=verifying)
+
+    def test_generated_commands_for_all_modes(self):
+        for mode in ('app', 'boot', 'all'):
+            for fast in (False, True):
+                for verifying in (False, True):
+                    with self.subTest(mode=mode, fast=fast, verifying=verifying), tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory); session = root/'session'; session.mkdir()
+                        report = self.prepare_fixture(root, session, mode, fast, verifying)
+                        self.assertEqual(report['backup_size'], 0xC000 if fast else flash.FLASH_SIZE)
+                        self.assertEqual(report['verification_requested'], verifying)
+                        self.assertFalse(report['flash_verified'])
+                        cfg = (session/'program.cfg').read_text()
+                        self.assertEqual('verify_image ' in cfg, verifying and fast)
+                        self.assertEqual('dump_image ' in cfg, verifying)
+                        self.assertEqual(cfg.count('flash write_image erase '), len(flash.images_for(mode)))
+                        self.assertNotIn('mass_erase', cfg)
+                        for start,end in flash.erase_ranges(session, mode):
+                            self.assertFalse(start<0xC000 and end>0x4000)
+                        self.assertIn('CFSR_HFSR', (session/'startup.cfg').read_text())
+                        if verifying:
+                            self.assertIn('post-calibration.bin' if fast else 'post-flash.bin', cfg)
+
+    def test_unverified_success_needs_all_writes_and_does_not_claim_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); p=root/'session';p.mkdir()
+            report=self.prepare_fixture(root,p,'all')
+            data=b'\xa5'*report['backup_size'];(p/'pre-flash.bin').write_bytes(data)
+            report.update(status='backup_verified', pre_flash_sha256=flash.digest(data))
+            markers=['IMAGE_WRITTEN:'+name for name,_ in flash.images_for('all')]
+            (p/'program.log').write_text('\n'.join(markers)+'\n')
+            result=flash.programmed(p,report)
+            self.assertEqual(result['status'], 'flash_written')
+            self.assertFalse(result['flash_verified'])
+            self.assertFalse(result['persistence_verified'])
+            self.assertFalse((p/'post-flash.bin').exists())
+            (p/'program.log').write_text('\n'.join(markers[:-1])+'\n')
+            with self.assertRaisesRegex(ValueError, 'incomplète'): flash.programmed(p,report)
+            (p/'program.log').write_text('\n'.join(markers)+'\n')
+            (p/'bootloader.bin').write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError, 'Image modifiée'): flash.programmed(p,report)
+
+    def test_verify_checks_written_images_and_persistent_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);p=root/'session';p.mkdir()
+            report=self.prepare_fixture(root,p,'app',verifying=True)
+            data=b'\xa5'*report['backup_size'];(p/'pre-flash.bin').write_bytes(data)
+            report.update(status='backup_verified', pre_flash_sha256=flash.digest(data))
+            markers=[prefix+name for name,_ in flash.images_for('app')
+                     for prefix in ('IMAGE_WRITTEN:','IMAGE_VERIFIED:')]
+            (p/'program.log').write_text('\n'.join(markers)+'\n')
+            (p/'post-calibration.bin').write_bytes(data[0x4000:0xC000])
+            result=flash.programmed(p,report)
+            self.assertTrue(result['flash_verified'] and result['persistence_verified'])
+            corrupted=bytearray(data[0x4000:0xC000]);corrupted[0]^=1
+            (p/'post-calibration.bin').write_bytes(corrupted)
+            with self.assertRaisesRegex(ValueError, 'persistantes modifiées'): flash.programmed(p,report)

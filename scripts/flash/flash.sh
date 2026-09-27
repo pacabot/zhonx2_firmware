@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build selected image(s), preserve full flash, program and verify over ST-Link SWD.
+# Build selected images, preserve persistent data and program over ST-Link SWD.
 set -euo pipefail
 cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage : scripts/flash/flash.sh [--bootloader | --all] [--debug | --release] [--test] [--clean] [--fast]
+Usage : scripts/flash/flash.sh [--bootloader | --all] [--debug | --release] [--test] [--clean] [--fast | --full-backup] [--verify]
 Sans option : compile et flashe uniquement l'application en mode debug.
   --bootloader  Compile et flashe uniquement le bootloader.
   --all         Compile et flashe le bootloader, le manifeste et l'application.
@@ -13,9 +13,14 @@ Sans option : compile et flashe uniquement l'application en mode debug.
   --release     Optimisation -O3, sans symboles de debug.
   --test        Exécute aussi les tests logiciels avant programmation.
   --clean       Recompile entièrement le profil choisi.
-  --fast        Sauvegarde la zone basse concernée, vérifie les images et les calibrations.
+  --fast        Mode par défaut : sauvegarde 48 Kio (bootloader et données).
+  --full-backup  Sauvegarde toute la flash (1 Mio) avant écriture.
+  --verify      Vérifie les images et les données après écriture ; avec
+                --full-backup, compare aussi toute la flash après écriture.
   --help        Affiche cette aide.
-La Flash est sauvegardée avant écriture et relue après. Les réglages sont préservés.
+Sans --verify, aucune vérification ni relecture de flash après écriture.
+Les secteurs de calibration/réglages/labyrinthes ne sont jamais effacés.
+Le contrôle de démarrage au repos est conservé dans tous les modes.
 Le mode application exige un bootloader en secteur 0 ; sinon utiliser --all.
 Variables facultatives : JOBS=4, SWD_KHZ=1000, STLINK_SERIAL=<numéro>.
 Robot alimenté et sonde ST-Link branchée ; OpenOCD requis.
@@ -24,10 +29,19 @@ HELP
 mode=app
 profile=debug
 profile_given=0
-backup_mode=full
+backup_mode=fast
+backup_given=0
+verification=no-verify
 build_args=()
 for arg in "$@"; do
-    if [[ $arg == --fast ]]; then backup_mode=fast; continue; fi
+    case "$arg" in
+        --fast|--full-backup)
+            (( backup_given == 0 )) || { echo 'Choisir --fast ou --full-backup.' >&2; exit 2; }
+            backup_given=1; backup_mode=fast
+            [[ $arg != --full-backup ]] || backup_mode=full
+            continue ;;
+        --verify) verification=verify; continue ;;
+    esac
     build_args+=("$arg")
     case "$arg" in
         --bootloader) [[ $mode == app ]] || { echo 'Choisir --bootloader ou --all.' >&2; exit 2; }; mode=boot ;;
@@ -52,16 +66,20 @@ session=$(mktemp -d "backups/flash-sessions/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 failure='Aucune écriture en flash effectuée.'
 trap 'echo "Échec : consulter $session. $failure" >&2' ERR
 helper=scripts/flash/flash_session.py
-python3 "$helper" prepare "$session" "$mode" "$profile" "$backup_mode"
+python3 "$helper" prepare "$session" "$mode" "$profile" "$backup_mode" "$verification"
 echo "Sauvegarde avant programmation : $session/pre-flash.bin"
 openocd -f "$session/backup.cfg" 2>&1 | tee "$session/backup.log"
 python3 "$helper" backup "$session"
-echo 'Programmation et vérification…'
+if [[ $verification == verify ]]; then echo 'Programmation et vérification…'; else echo 'Programmation sans vérification de flash…'; fi
 failure='La programmation peut être incomplète.'
 openocd -f "$session/program.cfg" 2>&1 | tee "$session/program.log"
-python3 "$helper" verify "$session"
-failure='Images programmées et vérifiées, mais contrôle du démarrage non validé.'
+python3 "$helper" programmed "$session"
+failure='Programmation terminée, mais contrôle du démarrage non validé.'
 echo 'Redémarrage et contrôle au repos…'
 openocd -f "$session/startup.cfg" 2>&1 | tee "$session/startup.log"
 python3 "$helper" complete "$session"
-echo "Flash vérifié. Sauvegarde et rapport : $session"
+if [[ $verification == verify ]]; then
+    echo "Flash vérifié et démarrage contrôlé. Sauvegarde et rapport : $session"
+else
+    echo "Flash terminé sans vérification de flash, démarrage contrôlé. Sauvegarde et rapport : $session"
+fi

@@ -658,12 +658,24 @@ le repli. Une position continue exacte n'est pas observable avec ces capteurs.
 
 ### Flash et extraction
 
-`scripts/flash/flash.sh --release --fast` conserve une sauvegarde préalable de la
-zone basse jusque la fin du dernier secteur susceptible d'être effacé (incluant
-A/B). `verify_image` contrôle chaque image ; une relecture des 32 Kio A/B vérifie
-leur identité exacte. Le mode complet, sans `--fast`, garde les deux dumps de
-1 Mio et la vérification de tous les octets hors zones programmées. Aucun mode
-n'efface les secteurs A/B. Le débit SWD reste 1 MHz, compatible avec l'ancienne sonde.
+`scripts/flash/flash.sh --release` utilise désormais le mode rapide par défaut
+(`--fast` en est un alias) : sauvegarde des 48 Kio bootloader + données A/B, puis
+programmation sans vérification ni dump après écriture. L'ancienne application
+n'est pas incluse dans cette sauvegarde minimale. `--full-backup` sauvegarde les
+1 Mio avant programmation.
+
+`--verify` active `verify_image` pour les images et la comparaison des 32 Kio A/B
+avant/après. Avec `--full-backup --verify`, une relecture complète de 1 Mio est
+comparée à la sauvegarde et aux images attendues, secteurs préservés compris ;
+elle remplace les vérifications individuelles pour éviter leur double coût.
+Le contrôle du démarrage au repos reste actif avec ou sans `--verify`.
+
+Aucun mode n'efface les secteurs A/B. Seuls les secteurs contenant les images
+choisies sont effacés ; seule la longueur des images est programmée. Sans
+`--verify`, le rapport indique `flash_verified: false` même lorsque le démarrage
+est correct. Les erreurs OpenOCD restent bloquantes. `SWD_KHZ` est respecté aussi
+pendant le reset, au lieu de laisser le fichier cible forcer 2 MHz. Sa valeur
+par défaut reste 1000 kHz ; le temps réel dépend de la sonde et de la liaison.
 
 `scripts/flash/dump.sh [--calibration-only]` ne programme rien. Il capture flash ou
 A/B, écrit une empreinte SHA-256 et produit `calibrations.json` avec le décodeur

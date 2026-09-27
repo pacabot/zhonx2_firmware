@@ -32,35 +32,57 @@ Robot alimenté et sonde branchée (les anciennes ST-Link/V2 sont prises en char
 scripts/flash/flash.sh
 ```
 
-Le script fonctionne depuis n'importe quel dossier. Il accepte les mêmes options
-que le script de compilation, avec en plus `--fast`. Sans option, il compile puis flashe uniquement
-l'application et son manifeste. `--bootloader` n'écrit que le bootloader ; `--all`
-écrit les trois images. Il sauvegarde les 1 Mio de Flash avant toute écriture,
-puis compare la relecture complète à l'image attendue, y compris les secteurs conservés.
-Avant une mise à jour de l'application seule, il vérifie que les vecteurs du
-bootloader restent dans le secteur 0. Un ancien firmware monolithique installé
-à `0x08000000` est refusé avant écriture : utiliser alors
-`scripts/flash/flash.sh --all --release` pour installer le bootloader et l'application.
-Avec un autre outil, utiliser le fichier `initial-install.hex` pour l'installation
-complète ; ne pas programmer `application.ota.bin` à `0x08000000`.
-Les réglages, la carte et la zone de téléchargement sont préservés.
-Pour l'application, il redémarre ensuite le robot au menu et contrôle les
-interruptions, les capteurs, l'absence de défaut processeur et la désactivation
-des moteurs au repos. Pour le bootloader seul, il contrôle le redémarrage et les
-registres de défaut processeur.
+Le script fonctionne depuis n'importe quel dossier. Sans option, il compile puis
+flashe uniquement l'application et son manifeste en Debug. `--release` sélectionne
+la version optimisée ; `--bootloader` n'écrit que le bootloader ; `--all` écrit les
+trois images. La compilation est incrémentale.
 
-Pour les mises à jour courantes, le mode rapide garde les calibrations :
+Pour mettre à jour en conservant les calibrations :
 
 ```sh
-scripts/flash/flash.sh --release --fast
+scripts/flash/flash.sh --release
 ```
 
-Il sauvegarde la zone basse contenant les secteurs à modifier et les deux secteurs
-de données. Il vérifie les images sur la cible puis compare les **32 Kio de données**
-avant/après. Avec l'application Release actuelle : environ **288 Kio de dumps**
-contre **2 Mio** en mode complet. Ce ratio concerne les lectures ; le temps total
-inclut encore compilation, effacement, programmation et démarrage. Le mode complet
-reste le défaut et vérifie aussi les zones non concernées.
+**Le mode rapide est maintenant le défaut.** Il sauvegarde seulement les **48 Kio**
+du bootloader et des données persistantes, puis programme les images demandées.
+Sans `--verify`, il ne relit pas la flash après écriture et ne lance pas
+`verify_image`. `--fast` reste accepté comme alias explicite de ce mode.
+Cette sauvegarde minimale ne contient pas l'ancienne application.
+
+```sh
+scripts/flash/flash.sh --release --verify                 # contrôle images + données
+scripts/flash/flash.sh --release --full-backup            # sauvegarde 1 Mio avant
+scripts/flash/flash.sh --release --full-backup --verify   # contrôle complet avant/après
+```
+
+| Options | Sauvegarde avant | Relecture après |
+|---|---:|---:|
+| défaut / `--fast` | 48 Kio | aucune |
+| `--verify` | 48 Kio | images contrôlées sur cible + 32 Kio de données |
+| `--full-backup` | 1 Mio | aucune |
+| `--full-backup --verify` | 1 Mio | 1 Mio, comparaison complète |
+
+Les **secteurs 1 et 2 (`0x08004000` à `0x0800BFFF`)**, qui contiennent les
+calibrations, réglages et labyrinthes, ne sont ni effacés ni programmés, y compris
+avec `--all`. Le script n'écrit pas toute la flash : il écrit uniquement les
+images sélectionnées et efface seulement les secteurs qui les contiennent.
+L'effacement se fait toutefois par secteurs matériels, plus grands que les images.
+L'ancien comportement par défaut transférait **2 Mio de dumps** ; le nouveau
+transfère **48 Kio**. Ce gain concerne les lectures : l'effacement, la programmation
+et le contrôle de démarrage prennent encore du temps.
+
+Avant une mise à jour de l'application seule, le script vérifie que les vecteurs
+du bootloader restent dans le secteur 0. Un firmware monolithique à `0x08000000`
+est refusé avant écriture : utiliser alors `--all --release`, de préférence avec
+`--full-backup` pour archiver aussi l'ancien firmware. Les secteurs de données
+restent préservés ; cela ne restaure pas des calibrations déjà écrasées par un autre outil.
+Avec un autre outil, utiliser `initial-install.hex` pour l'installation complète ;
+ne pas programmer `application.ota.bin` à `0x08000000`.
+
+Le contrôle de démarrage au repos reste actif dans tous les modes : absence de
+défaut processeur, moteurs désactivés et, pour l'application, interruptions et
+acquisitions capteurs actives. Il ne remplace pas la vérification de flash demandée
+par `--verify`. Le rapport distingue explicitement programmation et vérification.
 
 Pour lire la flash et extraire les calibrations, sans programmer :
 
