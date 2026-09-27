@@ -82,7 +82,7 @@ void fw_hardware_test(unsigned test)
                 if(test==6) {
                     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
                     snprintf(s,sizeof s,"ADC %u/4095",b.raw);text(0,16,s);
-                    if(b.sample_valid) {
+                    if(b.sample_valid && b.voltage_valid) {
                         snprintf(s,sizeof s,"%s %u.%02u V",b.lower_bound?"PACK >=":"PACK:",b.pack_mv/1000,b.pack_mv%1000/10);text(0,32,s);
                         if(b.soc_valid)snprintf(s,sizeof s,"SOC: %s%u%%",b.lower_bound?">=":"~",b.percent);
                         else snprintf(s,sizeof s,"Wait 5s at rest");
@@ -91,7 +91,7 @@ void fw_hardware_test(unsigned test)
                         text(0,32,b.raw>=4090?"ADC SATURATED":b.raw<16?"ADC INPUT LOW":"OUT OF RANGE");
                         text(0,48,b.raw>=4090?"Check divider":b.raw<16?"Check PA4 input":"Check reference");
                     } else {
-                        text(0,32,"NOT CALIBRATED");text(0,48,"OK: Set volts");
+                        text(0,32,"NEEDS METER REF");text(0,48,"OK: Set volts");
                     }
                 }
                 fw_ui_menu_refresh();

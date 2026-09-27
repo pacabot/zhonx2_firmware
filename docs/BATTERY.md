@@ -27,7 +27,8 @@ Dans **Hardware → Battery**, lire le diagnostic :
 - ADC saturé (4090 à 4095) : affichage d’une borne, par exemple `85%+` ;
   la tension réelle peut être supérieure à la plage mesurable.
 - `ADC INPUT LOW` : entrée proche de zéro (moins de 16), vérifier PA4 et son alimentation.
-- `VOLTAGE OUT OF RANGE` : conversion hors plage plausible, vérifier l'étalonnage.
+- `NEEDS METER REF` : conversion nominale hors plage plausible ; vérifier la
+  tension réelle, le câblage et les résistances, puis enregistrer la référence avec OK.
 - `Wait 5s at rest` : attendre une mesure au repos après le démarrage ou un mouvement.
 
 Le schéma communiqué utilise R3 = 10 kΩ et R2 = 6,8 kΩ : à 8,4 V, PA4 reçoit
@@ -87,3 +88,8 @@ Les tests hôte couvrent la conversion, la courbe, le filtrage, l'attente au rep
 les mesures invalides, le débordement de l'horloge et la persistance/migration.
 Les rendus OLED sont générés avec le pilote graphique réel. La justesse de la
 mesure sur le robot reste à vérifier au multimètre après flash.
+
+Le diagnostic `scripts/flash/dump.sh --diagnostics` lit les registres GPIO/ADC/DMA
+et quatre paires ADC, sans reset ni écriture en flash, après contrôle sonde/UID.
+Une conversion nominale incohérente ne bloque pas la saisie d’une référence au
+multimètre : le signal ADC valide et stable reste utilisable pour cet étalonnage.

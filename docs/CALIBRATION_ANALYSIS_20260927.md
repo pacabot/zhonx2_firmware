@@ -56,3 +56,33 @@ Dispersion maximale : 2,208 mm. Le retard brut→filtré est d'environ 20 ms,
 soit 0,8 / 2,4 / 4,4 mm aux vitesses mesurées. Il faut utiliser le profil du
 capteur, du sens et de la vitesse réellement observés, et distinguer ouverture
 et fermeture. Les offsets 5 cm absents ne doivent jamais être remplacés par zéro.
+
+## Contrôle après mise à jour
+
+Le firmware démarre sans HardFault (CFSR/HFSR nuls), moteurs désactivés,
+acquisition capteurs et tick actifs. `LOADED_DATA_SCHEMA = 6` confirme le
+chargement de la sauvegarde existante. La relecture des 32 Kio persistants après
+flash est identique octet pour octet à la sauvegarde juste avant programmation.
+
+Une vérification matérielle reste nécessaire pour la batterie :
+
+- VREFINT_CAL = 1503 ; VREFINT lu ≈1519, soit VDDA ≈3,265 V.
+- PA4 lu ≈1490–1533, soit environ 1,19–1,22 V.
+- Avec R3=10 kΩ et R2=6,8 kΩ, cela correspond à seulement 2,94–3,03 V au pack.
+- GPIOA confirme PA4 analogique sans pull ; ADC1 séquence 4 puis 17, DMA circulaire
+  de deux demi-mots. Aucun conflit d'affectation trouvé dans le code.
+
+Cette valeur ne permet pas un pourcentage de LiPo 2S crédible. Vérifier au
+multimètre le pack et TEST_BAT/PA4, interrupteur sur ON. Une alimentation uniquement
+par la sonde, une coupure du chemin batterie ou un diviseur différent du schéma
+font partie des possibilités ; le dump ne permet pas de trancher. Le diagnostic
+`NEEDS METER REF` permet d'enregistrer une tension réellement mesurée même si la
+conversion nominale est hors plage. Aucune référence 8,40 V n'a été inventée.
+
+Lecture des registres, sans reset ni écriture en flash :
+
+```sh
+scripts/flash/dump.sh --diagnostics
+```
+
+Journal : `backups/flash-sessions/20260927T124848Z-dump-fjh9Cm/read.log`.

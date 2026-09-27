@@ -35,7 +35,7 @@ void fw_battery_sample(unsigned raw,uint32_t now,int moving)
     uint32_t dt=now-last;
     if(initialized && dt<100)return;
     int fresh_start=!initialized || dt>1500;
-    last=now;state.raw=raw;
+    last=now;state.raw=raw;state.voltage_valid=0;
     state.calibrated=reference.raw!=0;
     state.lower_bound=raw>=4090;
     if(raw<16 || raw>4095 || (!reference.raw && !supply_mv)) {
@@ -53,7 +53,8 @@ void fw_battery_sample(unsigned raw,uint32_t now,int moving)
     state.pack_mv=state.calibrated?
         (unsigned)(((uint64_t)filtered*reference.pack_mv+reference.raw/2)/reference.raw):
         (unsigned)(((uint64_t)filtered*supply_mv*168+4095*34)/(4095*68));
-    if(state.pack_mv<5000 || state.pack_mv>8800) {state.sample_valid=state.soc_valid=0;initialized=0;return;}
+    if(state.pack_mv<5000 || state.pack_mv>8800) {state.soc_valid=0;return;}
+    state.voltage_valid=1;
     if(!moving && (uint32_t)(now-quiet)>=5000) {
         unsigned percent=fw_battery_percent(state.pack_mv);
         if(!state.soc_valid || abs((int)percent-(int)state.percent)>=2)state.percent=percent;

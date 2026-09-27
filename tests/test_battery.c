@@ -24,8 +24,8 @@ int main(void)
     unsigned pc=fw_battery_status().percent;
     sample(2699,10,0);assert(fw_battery_status().percent==pc); /* Reject one-code flicker. */
     sample(0,1,0);assert(!fw_battery_status().soc_valid && !fw_battery_status().sample_valid);
-    sample(4095,6,0);assert(!fw_battery_status().sample_valid);
-    sample(3000,6,0);assert(fw_battery_status().percent==100);
+    sample(4095,6,0);assert(fw_battery_status().sample_valid && !fw_battery_status().voltage_valid);
+    sample(3000,30,0);assert(fw_battery_status().percent==100);
     fw_battery_set_reference((fw_battery_reference_t){3000,8400});
     now=UINT32_MAX-3000;sample(3000,6,0);assert(fw_battery_status().soc_valid); /* Tick wrap. */
     fw_battery_set_reference((fw_battery_reference_t){0});
@@ -35,5 +35,11 @@ int main(void)
     fw_battery_supply(0);sample(3850,1,0);assert(!fw_battery_status().soc_valid);
     fw_battery_supply(3200);sample(4095,6,0);
     assert(fw_battery_status().lower_bound && fw_battery_status().pack_mv>7900);
+    fw_battery_set_reference((fw_battery_reference_t){0});fw_battery_supply(3260);
+    sample(1500,6,0);
+    assert(fw_battery_status().sample_valid && fw_battery_status().rested);
+    assert(!fw_battery_status().voltage_valid && !fw_battery_status().soc_valid);
+    fw_battery_set_reference((fw_battery_reference_t){1500,8000});
+    sample(1500,6,0);assert(fw_battery_status().voltage_valid && fw_battery_status().percent==80);
     puts("battery: unknown/invalid input, nonlinear 2S estimate, filtering, resting delay, load hold and tick wrap");
 }

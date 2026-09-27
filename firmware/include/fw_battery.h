@@ -4,7 +4,7 @@
 typedef struct { uint32_t raw, pack_mv; } fw_battery_reference_t;
 typedef struct {
     unsigned raw, pack_mv, percent;
-    int sample_valid, calibrated, soc_valid, rested, lower_bound;
+    int sample_valid, calibrated, soc_valid, rested, lower_bound, voltage_valid;
 } fw_battery_status_t;
 int fw_battery_reference_valid(const fw_battery_reference_t *r);
 void fw_battery_set_reference(fw_battery_reference_t r);
