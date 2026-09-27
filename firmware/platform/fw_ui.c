@@ -7,6 +7,9 @@
 #include <string.h>
 /* All map coordinates remain signed until clipped to the viewport. */
 static int zoom=16,pan_x,pan_y,progress;
+static const nm_route_t *view_route;
+static int route_visible;
+void fw_ui_map_route(const nm_route_t *route,int visible) {view_route=route;route_visible=visible;}
 static const int dx[]={0,1,0,-1},dy[]={1,0,-1,0};
 void fw_ui_map_view(unsigned scale,int x,int y) {zoom=(int)scale;pan_x=x;pan_y=y;}
 void fw_ui_map_progress(int permille) {progress=permille;}
@@ -53,6 +56,17 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t p,const char *status,unsigned speed,
         if(cell->visited)pixel(px,py);
         if(goals[c]) {line(px-1,py-1,px+1,py+1,0);line(px-1,py+1,px+1,py-1,0);}
     }
+    if(view_route && route_visible) {
+        nm_pose_t start=nm_origin(m);int c=start.y*NM_SIDE+start.x;
+        for(unsigned i=0;i<view_route->length;++i) {
+            int n=nm_next(m,c,view_route->direction[i]);if(n<0)break;
+            int x0=c%NM_SIDE*1000,y0=c/NM_SIDE*1000,x1=n%NM_SIDE*1000,y1=n/NM_SIDE*1000;
+            rotate(&x0,&y0,m->start_heading);rotate(&x1,&y1,m->start_heading);
+            x0=64+(x0-cx)*scale/1000;y0=32-(y0-cy)*scale/1000;
+            x1=64+(x1-cx)*scale/1000;y1=32-(y1-cy)*scale/1000;
+            line(x0,y0,x1,y1,0);line(x0+1,y0,x1+1,y1,0);c=n;
+        }
+    }
     rotate(&rx,&ry,m->start_heading);
     int px=64+(rx-cx)*scale/1000,py=32-(ry-cy)*scale/1000;
     unsigned h=(p.heading+4-m->start_heading)%4;
@@ -72,9 +86,11 @@ void fw_ui_result(const char *reason,uint32_t search,uint32_t run,unsigned page)
 {
     ssd1306ClearScreen();char s[24],row[17];
     if(page==1) {
-        fw_display_text(0,0,"TIMES");
+        fw_display_text(0,0,!strncmp(reason,"RUN ",4) && strlen(reason)==5?reason:"TIMES");
         snprintf(s,sizeof s,"Explore %lu:%02lu",(unsigned long)(search/60000),(unsigned long)(search/1000%60));fw_display_text(0,15,s);
-        snprintf(s,sizeof s,"Run %lu.%03lu s",(unsigned long)(run/1000),(unsigned long)(run%1000));fw_display_text(0,30,s);
+        if(!run && !strncmp(reason,"RUN ",4) && strlen(reason)==5)snprintf(s,sizeof s,"Not run");
+        else snprintf(s,sizeof s,"Run %lu.%03lu s",(unsigned long)(run/1000),(unsigned long)(run%1000));
+        fw_display_text(0,30,s);
     } else {
         const char *rest=reason;fw_display_text(0,0,"RESULT");
         rest=fw_text_line(rest,row,16);fw_display_text(0,15,row);

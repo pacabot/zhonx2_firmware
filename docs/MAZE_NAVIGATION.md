@@ -12,41 +12,72 @@
   pleines indiquent une détection ; sans détection, un pointillé fin de 1 pixel.
   F10 est en haut à gauche, F5 en haut à droite. Sur les côtés, 10 cm en haut
   (bande longue), 5 cm plus bas (bande courte).
-- À la fin, même en cas d'erreur : vue générale initiale, Escape pour changer le
-  zoom (vue générale / 16 / 24 pixels), flèches pour déplacer la carte,
-  centre du joystick pour alterner carte / temps / résultat, **bouton Zoom/Escape
-  maintenu 0,8 seconde pour quitter**. Le centre ne quitte jamais cette vue. Pendant un mouvement, Escape reste un arrêt immédiat.
-- Après un apprentissage certifié, sauvegarde automatique puis accès aux runs.
-  La bibliothèque conserve jusqu'à huit cartes avec leur chemin optimal clignotant.
+- Sans carte active, **Maze** affiche uniquement **New maze** et **Load maze**.
+  Avec une carte, **View maze** affiche les murs, le chemin certifié clignotant,
+  les temps et le dernier résultat. Une carte incomplète propose **Resume** ;
+  les runs sont accessibles uniquement après apprentissage certifié.
+- Dans **View maze** : flèches pour déplacer la vue, Zoom court pour alterner
+  vue générale / 16 / 24 pixels par cellule, centre pour les pages de résultats
+  et les trois temps de run. Un maintien de Zoom de 0,8 seconde quitte
+  immédiatement, sans attendre le relâchement. Le menu parent est redessiné
+  pendant que le bouton est encore enfoncé, sans propager cette touche.
+- Une erreur affiche sa raison et joue une mélodie descendante. L'arrivée
+  reconnue joue une mélodie de victoire. Les mélodies utilisent une séquence
+  à 1 kHz sans attente bloquante, et respectent l'activation du beeper.
 
-## Runs et vitesse
+## Exploration puis trois runs
 
-**Settings → Fast run** permet désormais 20 à 1 000 mm/s. Le réglage enregistré
-reste inchangé lors de la mise à jour. Au-dessus de 300 mm/s, les pas du menu
-sont de 50 mm/s. L'accélération et le freinage restent limités à 800 mm/s² :
-la vitesse choisie est un plafond, atteint seulement sur une ligne assez longue.
-À 1 000 mm/s, même la roue accélérée par la correction reste sous le plafond
-matériel de 100 000 impulsions/s.
+Après un apprentissage certifié et le retour au départ, le labyrinthe est
+sauvegardé, puis le robot se recentre **au départ uniquement**. Il utilise les
+seuils et l'hystérésis F5 déjà calibrés, sur les murs disponibles de chaque axe,
+et les rotations calibrées. Aucun talonnage ni réécriture des calibrations.
+Il s'oriente ensuite vers le premier passage du chemin retenu.
 
-**Curves** exécute maintenant des arcs de 90° sur la carte apprise : approche
-d'une demi-cellule, arc de rayon égal à une demi-cellule, sortie d'une demi-cellule.
-Les trois phases s'enchaînent dans la commande moteur sans arrêt au virage.
-La vitesse de l'ensemble est limitée à 220 mm/s ; les lignes droites utilisent
-le réglage Fast run. Les deux roues avancent, avec des vitesses proportionnelles
-aux rayons intérieur/extérieur et une synchronisation de leur progression.
-La calibration de rotation fournit la différence de trajet des roues, à la
-vitesse de rotation équivalente. La géométrie mesurée vérifie le dégagement.
+L'écran **Run 1**, puis **Run 2** et **Run 3**, propose une vitesse :
+120 mm/s, 300 mm/s, puis la valeur par défaut Fast run des Settings. Haut/bas
+ajuste la vitesse entre 20 et 1 000 mm/s ; OK arme le départ par la main devant
+F10 puis son retrait. Ces modifications restent temporaires : elles ne changent
+pas les Settings et ne sont pas enregistrées en flash.
 
-L'arc nécessite des cellules visitées, un angle entièrement connu et des
-calibrations mur/rotation valides. Les demi-tours, angles sans assez de place
-pour l'approche/sortie ou sans profils valides utilisent un pivot. Des virages
-rapprochés peuvent donc encore inclure des pivots et des arrêts intermédiaires.
-Les capteurs périmés, Escape et les obstacles frontaux arrêtent aussi un arc.
-Ce premier mode courbe ne relance pas automatiquement un run interrompu.
+Après chaque arrivée, le temps est mémorisé en RAM, le robot revient par les
+passages connus à 120 mm/s, se replace au départ et prépare le run suivant.
+Le retour et le recentrage sont hors chronomètre. Après le troisième run,
+le menu Maze reprend la main. Une erreur ou une annulation interrompt la série.
+Lorsqu'une carte est chargée depuis la bibliothèque, l'écran demande de placer
+le robot dans sa cellule de départ avant OK ; le recentrage précède l'armement.
 
-Les tests intègrent les déplacements des deux roues pour vérifier les arcs
-gauche/droite, le centre d'arrivée, le cap et les murs. La tenue mécanique à
-haute vitesse et en courbe reste à valider sur le robot.
+## Trajectoires et accélération des runs
+
+Les trois runs utilisent un parcours complet préparé avant mouvement. Les
+lignes droites et virages de 90° sont raccordés par des courbes de Bézier de
+cinquième degré, à courbure nulle aux deux extrémités. Deux virages consécutifs
+peuvent donc s'enchaîner sans segment artificiel d'arrêt et sans pivot intercalé.
+Les compteurs et timers moteurs sont démarrés **une seule fois par trajet** ;
+les changements de segment conservent leur progression et la vitesse.
+Un demi-tour au départ ou à l'arrivée du trajet reste une manœuvre séparée.
+
+La vitesse de chaque segment et le freinage sont calculés à partir des segments
+suivants. L'accélération vaut `600 + 2 × vitesse_max` en mm/s² : 840 à 120 mm/s,
+1 800 à 600 mm/s et 2 600 à 1 000 mm/s. Le plafond des courbes est de 300 mm/s,
+abaissé selon leur courbure et la limite d'accélération latérale (moitié de
+l'accélération longitudinale). Une vitesse élevée proposée n'est donc atteinte
+que si la longueur et la géométrie du parcours le permettent.
+
+Les rotations calibrées fournissent l'échelle différentielle des roues, selon
+le sens et la vitesse équivalente disponible dans les profils. Le contrôleur
+suit le cap progressif dans les courbes, puis reprend les contraintes optiques
+latérales et les références de poteaux dans les lignes droites. Il conserve
+les fractions d'angle pour éviter leur accumulation par arrondi. Les références
+F10/F5 restent utilisées à l'arrivée frontale. Les limites géométriques du
+robot sont contrôlées avant lancement ; un trajet non réalisable est refusé,
+sans remplacer silencieusement une courbe par une rotation sur place.
+
+Les tests intègrent les deux roues sur des parcours en L, en zigzag et avec
+plusieurs virages rapprochés, à des consignes de 120 à 1 000 mm/s. Ils vérifient
+la position finale, le cap, l'absence de redémarrage entre segments, les roues
+toujours en marche avant et les arrêts sur obstacle/capteur périmé. Ils ne
+reproduisent pas toute la mécanique : adhérence et tenue des courbes doivent
+être confirmées par les essais du robot, en commençant par Run 1.
 
 ## Formats et départ automatique
 
@@ -137,7 +168,8 @@ mécanique et l'adhérence doivent être vérifiées sur le robot avant une cour
 Le recalage se fait pendant les lignes droites : estimation latérale et du cap
 avec les seuils tout ou rien calibrés, références longitudinales aux poteaux et
 aux fronts F10/F5. Il n'y a plus de recherche de seuil par avance/recul ni de
-rotation vers les murs au départ, aux centres ou avant une confirmation.
+rotation vers les murs aux centres ou avant une confirmation. La préparation
+au départ entre deux runs est la seule étape de recentrage dédiée.
 Les rotations nécessaires au trajet et à la vérification frontale restent présentes.
 
 Quand les deux calibrations de portes sont disponibles, la vitesse effective
@@ -223,4 +255,5 @@ firmwares ne savent pas charger ce format ; conserver l'archive avant mise à jo
 Une carte d'exploration interrompue est sauvegardée comme apprentissage en cours
 et accessible via **Resume / Learning**. Voir la salle d'arrivée ne suffit pas à
 certifier le chemin : le planificateur vérifie encore les raccourcis possibles.
-L'ajout à la bibliothèque intervient après certification et retour au départ.
+L'ajout à la bibliothèque intervient après certification et retour au départ,
+avant la préparation du premier run.

@@ -31,6 +31,7 @@ int hal_beeper_close(HAL_BEEPER_HANDLE handle);
 
 int hal_beeper_get_state(HAL_BEEPER_HANDLE handle, int *state);
 int hal_beeper_set_state(HAL_BEEPER_HANDLE handle, int state);
+int hal_beeper_tone(HAL_BEEPER_HANDLE handle, long freq);
 int hal_beeper_beep(HAL_BEEPER_HANDLE handle, long freq, long duration);
 
 #endif // __HAL_BEEPER_H__

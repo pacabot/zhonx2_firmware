@@ -14,4 +14,5 @@ void fw_menu_battery_setup(void);
 void fw_ui_card(const char *title,const char *first,const char *second,unsigned icon,unsigned index,unsigned count);
 void fw_ui_library(const fw_saved_maze_t *,unsigned index,unsigned count,int blink);
 void fw_ui_setting(unsigned index,int value);
+void fw_ui_run_setup(unsigned number,unsigned speed,unsigned accel,int aligned);
 #endif

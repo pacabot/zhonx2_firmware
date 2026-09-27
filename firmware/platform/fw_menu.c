@@ -3,6 +3,7 @@
 #include "fw_hardware.h"
 #include "fw_battery.h"
 #include "fw_motion.h"
+#include "fw_path.h"
 #include <stdio.h>
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
@@ -19,13 +20,20 @@ static unsigned read_key(void)
     if(!(GPIOC->IDR&FW_DOWN_PIN)) return KEY_DOWN;
     return fw_select_pressed()?KEY_OK:KEY_NONE;
 }
+static unsigned held_key;
+static uint32_t key_since,key_repeat;
+static int key_blocked;
+static void block_key(void) {held_key=read_key();key_blocked=held_key!=0;key_since=key_repeat=hal_os_get_systicks();}
 static unsigned key(void)
 {
-    unsigned k=read_key();if(!k) return 0;
-    uint32_t since=hal_os_get_systicks();
-    while((uint32_t)(hal_os_get_systicks()-since)<20) { if(read_key()!=k) return 0;__WFI(); }
-    while(read_key()) __WFI();
-    return k;
+    unsigned k=read_key();uint32_t now=hal_os_get_systicks();
+    if(!k) {held_key=0;key_blocked=0;return 0;}
+    if(key_blocked)return 0;
+    if(k!=held_key) {held_key=k;key_since=now;key_repeat=0;return 0;}
+    if(now-key_since<20)return 0;
+    if(!key_repeat) {key_repeat=now;return k;}
+    if((k==KEY_UP || k==KEY_DOWN) && now-key_since>=400 && now-key_repeat>=100) {key_repeat=now;return k;}
+    return 0;
 }
 /* Menu-only screensaver. The wake-up key is consumed, never an action. */
 static int idle_wait(uint32_t *activity)
@@ -41,14 +49,14 @@ static int idle_wait(uint32_t *activity)
         if((uint32_t)(now-drawn)>=33) {fw_ui_idle((uint32_t)(now-started));drawn=now;}
         __WFI();
     }
-    while(read_key())__WFI();
+    block_key();
     *activity=hal_os_get_systicks();
     return 1;
 }
 static int choose(const char *title,const card_t *items,unsigned count)
 {
     /* Consume the action that closed a child screen; one press means one Back. */
-    while(read_key()) __WFI();
+    block_key();
     static struct { const char *title; unsigned selected; } history[10];
     unsigned slot=10,i=0;
     if(count>2) for(unsigned n=0;n<10;++n) {
@@ -83,14 +91,25 @@ static int confirm(const char *title)
 }
 static void runs(void)
 {
-    const card_t cards[]={{"Slow run","120 mm/s",FW_ICON_RUN},{"Fast run","",FW_ICON_RUN},
-        {"Curves","Smooth turns",FW_ICON_RUN},{"New maze","Explore",FW_ICON_MAZE}};
-    while(fw_app_ready()) {
-        int n=choose("RUNS",cards,4);if(n<0) return;
-        if(n==0) fw_app_run_slow();
-        if(n==1) fw_app_run();
-        if(n==2) fw_app_run_curves();
-        if(n==3) { if(!fw_app_discover() && fw_app_ready()) continue;return; }
+    unsigned proposed[3]={120,300,(unsigned)fw_run_speed};
+    for(unsigned number=1;number<=3 && fw_app_ready();++number) {
+        unsigned speed=proposed[number-1];if(speed<20)speed=20;if(speed>FW_RUN_MAX_SPEED)speed=FW_RUN_MAX_SPEED;
+        block_key();fw_ui_run_setup(number,speed,fw_run_acceleration(speed),fw_app_at_start());
+        uint32_t drawn=hal_os_get_systicks();
+        for(;;) {
+            unsigned k=key();if(k==KEY_BACK)return;
+            if(k==KEY_OK) {
+                if(fw_app_trial(number,speed)) {fw_app_show_result();return;}
+                break;
+            }
+            unsigned step=speed>=300?50:20;
+            if(k==KEY_UP)speed=speed+step>FW_RUN_MAX_SPEED?FW_RUN_MAX_SPEED:speed+step;
+            if(k==KEY_DOWN)speed=speed>step+20?speed-step:20;
+            if(k || hal_os_get_systicks()-drawn>=1000) {
+                fw_ui_run_setup(number,speed,fw_run_acceleration(speed),fw_app_at_start());drawn=hal_os_get_systicks();
+            }
+            __WFI();
+        }
     }
 }
 static void library_menu(int deleting)
@@ -106,7 +125,7 @@ static void library_menu(int deleting)
         unsigned k=key();if(k==KEY_BACK) return;
         if(k==KEY_UP || k==KEY_DOWN) {i=(i+fw_app_maze_count()+(k==KEY_UP?-1:1))%fw_app_maze_count();last_blink=2;}
         if(k==KEY_OK) {
-            if(!deleting && !fw_app_maze_load(i)) {runs();return;}
+            if(!deleting && !fw_app_maze_load(i))return;
             if(deleting && confirm("DELETE THIS MAZE?")) {
                 if(fw_app_maze_delete(i)) notice("Save failed","Kept maze");
             }
@@ -117,15 +136,21 @@ static void library_menu(int deleting)
 }
 static void maze_menu(void)
 {
-    const card_t items[]={{"New maze","Explore",FW_ICON_MAZE},{"Load maze","Library",FW_ICON_MAZE},
-        {"Resume","Learning",FW_ICON_MAZE},{"Delete","Saved maze",FW_ICON_REPORT},{"Runs","",FW_ICON_RUN}};
     for(;;) {
-        int n=choose("MAZE",items,fw_app_ready()?5:4);if(n<0) return;
-        if(n==0) {if(!fw_app_discover() && fw_app_ready()) runs();}
-        if(n==1) library_menu(0);
-        if(n==2) {if(!fw_app_resume() && fw_app_ready()) runs();}
-        if(n==3) library_menu(1);
-        if(n==4) runs();
+        card_t items[5]={{"New maze","Explore",FW_ICON_MAZE},{"Load maze","Library",FW_ICON_MAZE}};
+        unsigned count=2;
+        if(fw_app_has_map()) {
+            items[count++]=(card_t){"View maze","Map / times",FW_ICON_MAZE};
+            items[count++]=fw_app_ready()?(card_t){"Runs","1 / 2 / 3",FW_ICON_RUN}:
+                                        (card_t){"Resume","Learning",FW_ICON_MAZE};
+            if(fw_app_maze_count())items[count++]=(card_t){"Delete","Saved maze",FW_ICON_REPORT};
+        }
+        int n=choose("MAZE",items,count);if(n<0)return;
+        if(n==0) {if(fw_app_discover())fw_app_show_result();else if(fw_app_ready())runs();}
+        if(n==1)library_menu(0);
+        if(n==2)fw_app_show_map();
+        if(n==3) {if(fw_app_ready())runs();else if(fw_app_resume())fw_app_show_result();else if(fw_app_ready())runs();}
+        if(n==4)library_menu(1);
     }
 }
 static void calibration_menu(void)

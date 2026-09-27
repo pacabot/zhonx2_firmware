@@ -2,9 +2,13 @@
 #define FW_MOTION_H
 #include <stdint.h>
 #include "fw_cal_extra.h"
+#include "nimes.h"
 #define FW_RUN_MAX_SPEED 1000u
 #define FW_CURVE_MAX_SPEED 220u
 void fw_motion_init(void);
+/* One continuous forward path, including consecutive smooth 90-degree bends. */
+int fw_motion_path(const nm_map_t *,nm_pose_t,const nm_route_t *,unsigned speed);
+nm_pose_t fw_motion_path_pose(void);
 /* Bench only: each wheel -1, 0, +1, bounded to 20 mm at 20 mm/s. */
 int fw_motion_test_wheels(int right, int left);
 /* Nonblocking: whole calibrated cells, speeds in mm/s, clockwise turns in degrees. */

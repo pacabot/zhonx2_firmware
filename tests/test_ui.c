@@ -64,7 +64,8 @@ int main(void)
     puts("OLED: actual renderer, clipped menu text, wrapped prompts, all 256 map positions");
     fw_ui_card("ZHONX II","Calibration","",FW_ICON_CALIBRATE,1,4);image("build/ui-menu-home.pgm");
     fw_ui_card("MAZE","Load maze","Library",FW_ICON_MAZE,1,4);image("build/ui-menu-maze.pgm");
-    fw_ui_card("RUNS","Slow run","120 mm/s",FW_ICON_RUN,0,4);image("build/ui-menu-run.pgm");
+    fw_ui_run_setup(3,1000,2600,1);image("build/ui-menu-run.pgm");
+    fw_ui_run_setup(1,120,840,0);image("build/ui-run-place-start.pgm");
     const char *cal_names[]={"Walls","Rotation","Left edge","Right edge"};
     const unsigned cal_icons[]={FW_ICON_WALL,FW_ICON_TURN,FW_ICON_EDGE_LEFT,FW_ICON_EDGE_RIGHT};
     for(unsigned i=0;i<4;++i) {
@@ -79,6 +80,11 @@ int main(void)
     unsigned char off[1024];memcpy(off,buffer,sizeof off);
     fw_ui_library(&saved,0,2,1);image("build/ui-library-on.pgm");
     assert(memcmp(off,buffer,sizeof off));
+    fw_ui_map_view(0,0,0);fw_ui_map_route(&saved.route,0);
+    fw_ui_maze(&map,nm_origin(&map),"LOADED MAP",0,0,0x3f);memcpy(off,buffer,sizeof off);
+    fw_ui_map_route(&saved.route,1);fw_ui_maze(&map,nm_origin(&map),"LOADED MAP",0,0,0x3f);
+    assert(memcmp(off,buffer,sizeof off));image("build/ui-loaded-maze.pgm");
+    fw_ui_map_route(0,0);fw_ui_map_view(16,0,0);
     fw_ui_card("HARDWARE TESTS","Telemeters","Live view",FW_ICON_TEST,1,7);
     image("build/ui-hardware-menu.pgm");
     unsigned char before_battery[1024];memcpy(before_battery,buffer,sizeof buffer);

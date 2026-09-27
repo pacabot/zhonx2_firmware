@@ -7,11 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 static uint32_t now;
+void fw_sound_tick(uint32_t tick) {(void)tick;}
 static hal_sensor_snapshot scan;
 static unsigned long remain[2], rates[2], total[2];
 static long commanded[2];
 static double fraction[2];
 static int disabled,trace_path;
+static unsigned pair_starts;
 static double path_x,path_y,path_heading;
 unsigned long hal_os_get_systicks(void) { return now; }
 int hal_sensor_snapshot_read(hal_sensor_snapshot *s) { *s=scan; return scan.sequence>=3; }
@@ -21,7 +23,7 @@ int hal_step_motor_enable(void) { disabled=0; return 0; }
 void hal_step_motor_wakeup(void) {}
 void hal_step_motor_pair_start(long right,long left)
 {
-    commanded[0]=right; commanded[1]=left;
+    ++pair_starts;commanded[0]=right; commanded[1]=left;
     for(int i=0;i<2;++i) {
         remain[i]=(labs(commanded[i])+1u)&~1u;
         total[i]=0; fraction[i]=0;
@@ -37,7 +39,7 @@ void hal_step_motor_pair_rate(unsigned long right,unsigned long left)
 }
 static void setup(void)
 {
-    now=100; scan=(hal_sensor_snapshot){100,10,0x3f,0x3f};
+    pair_starts=0;now=100; scan=(hal_sensor_snapshot){100,10,0x3f,0x3f};
     fw_motion_init(); assert(disabled);
     fw_motion_geometry(0,0,0);
     fw_motion_rotation_profile(0);
@@ -59,7 +61,7 @@ static void tick(int fresh)
         path_y+=(wheel[0]+wheel[1])*0.5*cos(path_heading+yaw/2);
         path_heading+=yaw;
         /* Closed outside walls of the standard 167 mm L-shaped corridor. */
-        for(int a=-1;a<=1;a+=2)for(int b=-1;b<=1;b+=2) {
+        if(trace_path==1)for(int a=-1;a<=1;a+=2)for(int b=-1;b<=1;b+=2) {
             double x=path_x+a*47*cos(path_heading)+b*47*sin(path_heading);
             double y=path_y-a*47*sin(path_heading)+b*47*cos(path_heading);
             assert(fabs(x)<262.5 && y<262.5 && y> -83.5);
@@ -261,6 +263,51 @@ int main(void)
         assert(!fw_motion_busy() && !fw_motion_fault());
         assert(fabs(path_x-dir*179)<1 && fabs(path_y-179)<1);
         assert(fabs(path_heading-dir*M_PI/2)<0.01);
+    }
+    /* Whole-route playback must keep both timers running across adjacent
+     * left/right curves, with no segment restart or wheel direction reversal. */
+    for(unsigned shape=0;shape<3;++shape)for(unsigned speed=120;speed<=1000;speed+=440) {
+        setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+        fw_motion_rotation_profile(&profile);
+        nm_map_t map;nm_init_size(&map,9,0);nm_pose_t pose={0,0,NM_NORTH};
+        nm_route_t route={.length=shape==0?2:shape==1?4:6};
+        const uint8_t directions[]={NM_NORTH,NM_EAST,NM_NORTH,NM_EAST,NM_EAST,NM_NORTH};
+        int cell=0;
+        for(unsigned i=0;i<route.length;++i) {
+            route.direction[i]=directions[i];assert(!nm_edge(&map,cell,directions[i],0));
+            cell=nm_next(&map,cell,directions[i]);
+        }
+        path_x=path_y=path_heading=0;trace_path=shape==0?1:2;
+        assert(!fw_motion_path(&map,pose,&route,speed));float ratio=0;
+        while(fw_motion_busy() && now<20000) {
+            tick(1);
+            if(fw_motion_busy()) {
+                assert(rates[0] && rates[1] && commanded[0]>0 && commanded[1]>0);
+                float next=((float)rates[1]-rates[0])/(rates[0]+rates[1]);
+                assert(fabsf(next-ratio)<.035f);ratio=next;
+            }
+        }
+        trace_path=0;
+        assert(!fw_motion_busy() && !fw_motion_fault() && pair_starts==1);
+        fprintf(stderr,"path shape=%u speed=%u x=%.3f y=%.3f h=%.4f target=%d,%d\n",shape,speed,path_x,path_y,path_heading,(cell%NM_SIDE)*179,(cell/NM_SIDE)*179);
+        assert(fabs(path_x-(cell%NM_SIDE)*179)<2 && fabs(path_y-(cell/NM_SIDE)*179)<2);
+        assert(fabs(path_heading-directions[route.length-1]*M_PI/2)<.025);
+    }
+    for(unsigned mode=0;mode<5;++mode) {
+        setup();fw_motion_geometry(179000,92000,167000);
+        fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
+        nm_map_t map;nm_init_size(&map,9,0);
+        nm_route_t route={.direction={NM_NORTH,NM_EAST},.length=2};
+        assert(!nm_edge(&map,0,NM_NORTH,mode==3));assert(!nm_edge(&map,16,NM_EAST,0));
+        if(mode==0)fw_motion_rotation_profile(0);
+        if(mode==4)route.direction[1]=NM_SOUTH;
+        if(mode==0 || mode>=3) {assert(fw_motion_path(&map,(nm_pose_t){0,0,0},&route,300));assert(disabled);continue;}
+        assert(!fw_motion_path(&map,(nm_pose_t){0,0,0},&route,300));
+        while(fw_motion_travelled_um()<120000)tick(1);
+        if(mode==1) {scan.raw&=~SENSOR_F5_POS;tick(1);assert(fw_motion_fault()==2);}
+        else {for(unsigned i=0;i<60;++i)tick(0);assert(fw_motion_fault()==1);}
+        assert(disabled && !fw_motion_busy());
+        assert(fw_motion_path_pose().x==0); /* A stopped fault must not report arrival. */
     }
     setup();assert(fw_motion_curve(90,220,0)); /* Missing profiles: pivot fallback. */
     fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);

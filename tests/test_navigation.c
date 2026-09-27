@@ -2,6 +2,7 @@
 #include "fw_snapshot.h"
 #include "fw_battery.h"
 #include "fw_motion.h"
+#include "fw_buttons.h"
 #include "fw_flash.h"
 #include "fw_ui.h"
 #include "stm32f4xx.h"
@@ -26,8 +27,9 @@ static nm_map_t ground;
 static nm_pose_t physical,destination;
 static uint32_t now,deadline,move_started;
 static nm_pose_t segment_start;
-static unsigned moving_cells,extensions,maximum_requested_speed;
-static int rotating,backing,recovered,confirm_missing;
+static unsigned moving_cells,extensions,maximum_requested_speed,viewing,alignments,path_calls,victories,failures;
+void fw_sound_play(int success) {if(success)++victories;else ++failures;}
+static int rotating,backing,recovered,confirm_missing,path_dx,path_dy,pathing,path_fail;
 static int32_t fault_travel;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack,curves;
 static int busy,wall_arrival,stopped,inject_obstacle;
@@ -98,11 +100,12 @@ int fw_motion_extend(unsigned cells,int accept) {
     wall_arrival=accept && !!(ground.cell[c].walls&(1u<<destination.heading));return 0;
 }
 void fw_ui_map_progress(int p) {(void)p;}
+void fw_ui_map_route(const nm_route_t *r,int visible) {(void)r;(void)visible;}
 void fw_ui_map_view(unsigned z,int x,int y) {assert(z==0 || z==16 || z==24);(void)x;(void)y;}
-void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
-int fw_motion_center_wall(void) {assert(!"Navigation must correct in motion, never probe walls");return -1;}
-int fw_motion_centered(void) {return 0;}
-void fw_motion_init(void) { busy=stopped=wall_arrival=backing=0; }
+void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {strcpy(last_status,s);(void)a;(void)b;(void)p;}
+int fw_motion_center_wall(void) {assert(!busy && physical.y==0 && physical.x==(inject_obstacle==9?5:0));++alignments;return 0;}
+int fw_motion_centered(void) {return 1;}
+void fw_motion_init(void) { busy=stopped=wall_arrival=backing=pathing=0; }
 int fw_motion_obstacle_backoff(uint32_t um)
 {
     assert(stopped==2 && inject_obstacle==2 && !recovered);
@@ -149,6 +152,20 @@ int fw_motion_curve(int degrees,unsigned speed,int accept)
     wall_arrival=accept && !!(ground.cell[c].walls&(1u<<heading));
     busy=rotating=1;deadline=now+1500;++curves;return 0;
 }
+int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,unsigned speed)
+{
+    assert(!busy && route->length && speed>=20 && speed<=1000);
+    path_dx=(inject_obstacle==9?5:0)-map->start_x;path_dy=-(int)map->start_y;
+    assert(physical.x==(int)pose.x+path_dx && physical.y==(int)pose.y+path_dy && physical.heading==pose.heading);
+    int c=physical.y*NM_SIDE+physical.x;
+    for(unsigned i=0;i<route->length;++i) {
+        unsigned d=route->direction[i];assert(!(ground.cell[c].walls&(1u<<d)));
+        c=nm_next(&ground,c,d);assert(c>=0);
+    }
+    destination=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,route->direction[route->length-1]};
+    busy=rotating=pathing=1;deadline=now+route->length*100;wall_arrival=0;++path_calls;return 0;
+}
+nm_pose_t fw_motion_path_pose(void) {nm_pose_t p=busy?physical:destination;p.x-=path_dx;p.y-=path_dy;return p;}
 int fw_motion_turn(int degrees)
 {
     assert(!busy && now>=400); assert(degrees==90 || degrees==-90 || degrees==180);
@@ -169,11 +186,12 @@ void fw_test_idle(void)
        now-move_started>=(inject_obstacle==2?1950u:500u)) {
         fault_travel=(int32_t)(now-move_started)*179;busy=0;stopped=2;
     }
+    if(busy && pathing && path_fail && now+50>=deadline) {busy=0;stopped=2;path_fail=0;}
     if(busy && now>=deadline) {
         busy=0;
         physical=destination;backing=0;
     }
-    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE") || !strcmp(last_status,"GOAL FOUND") || !strcmp(last_status,"CHECK LIMIT")) {
+    if(viewing) {
         ++ack;test_gpioc.IDR|=(1u<<12)|(1u<<13);
         if(ack<100)test_gpioc.IDR&=~(1u<<12); /* Long centre must NOT exit. */
         else if(ack>=110 && ack<200)test_gpioc.IDR&=~(1u<<13);
@@ -212,6 +230,10 @@ static void scenario(int obstacle)
     fw_cal_data_t calibration={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
         .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
     assert(!fw_app_calibration_commit(&calibration));
+    fw_rotation_data_t rotation={.valid=1,.geometry=calibration.geometry};
+    for(unsigned i=0;i<3;++i)rotation.point[i]=(fw_rotation_point_t){.speed=40+40*i,.quarter_um={65581,65581}};
+    /* Rotation is only required for start alignment and timed smooth paths. */
+    assert(!fw_app_rotation_commit(&rotation));
     for(unsigned side=0;side<2;++side) {
         fw_corner_data_t corner={.valid=1,.side=side,.post_um=173000,.geometry=calibration.geometry};
         for(unsigned facing=0;facing<2;++facing)for(unsigned i=0;i<3;++i)
@@ -220,14 +242,15 @@ static void scenario(int obstacle)
                 .open_um={0,facing?-26000:50000},.close_um={0,facing?-35000:40000}};
         assert(!fw_app_corner_commit(&corner));
     }
-    saves=0;
+    saves=0;alignments=0;
     int result=fw_app_discover();
-    assert(saves==1 && ack>=200);
+    assert(saves==1);
     if(obstacle==8)assert(maximum_requested_speed==220 && extensions>0);
     if(obstacle==9) {
         assert(!result && !strcmp(last_status,"OPTIMAL PATH"));
-        assert(physical.x==5 && physical.y==0 && physical.heading==NM_NORTH);
+        assert(physical.x==5 && physical.y==0 && physical.heading==fw_app_maze(0)->route.direction[0]);
         assert(fw_app_ready() && fw_app_maze_count()==1);
+        assert(alignments>=2 && fw_app_at_start());
         fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
         return;
     }
@@ -237,6 +260,20 @@ static void scenario(int obstacle)
         assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
         assert(physical.x==0 && physical.y==0 && physical.heading==0 && !strcmp(last_status,"OPTIMAL PATH"));
         assert(fw_app_ready() && fw_app_maze_count()==1);
+        if(obstacle==0) {
+            viewing=1;ack=0;assert(!fw_app_show_map());viewing=0;
+            assert(ack>=190 && ack<200 && !(test_gpioc.IDR&FW_ESCAPE_PIN));
+            test_gpioc.IDR=0xffff;
+            for(unsigned trial=1;trial<=3;++trial) {
+                now=0;path_calls=0;
+                assert(!fw_app_trial(trial,trial*200));
+                assert(path_calls==2 && physical.x==0 && physical.y==0 && physical.heading==0);
+                assert(fw_app_at_start() && fw_run_speed==260 && saves==1);
+            }
+            now=0;path_calls=0;path_fail=1;unsigned old_failures=failures;
+            assert(fw_app_trial(1,300)==-1 && fw_last_stop_code==2);
+            assert(path_calls==1 && !fw_app_at_start() && failures==old_failures+1 && saves==1);
+        }
         fw_saved_maze_t entry=*fw_app_maze(0);
         fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
         assert(!memcmp(fw_app_maze(0),&entry,sizeof entry));

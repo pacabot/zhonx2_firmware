@@ -6,6 +6,7 @@
 #include "fw_layout.h"
 #include "fw_store.h"
 #include "fw_motion.h"
+#include "fw_sound.h"
 #include "fw_buttons.h"
 #include "nimes.h"
 #include "stm32f4xx.h"
@@ -45,7 +46,12 @@ static uint32_t search_used(uint32_t now)
     uint32_t base=search_clock_running ? search_base : search_ms;
     return base>=search_limit() || elapsed>=search_limit()-base ? search_limit() : base+elapsed;
 }
-static int has_map;
+static int has_map,start_prepared,goal_announced;
+static uint32_t trial_ms[3];
+static const char *last_result="LOADED MAP";
+int fw_app_has_map(void) {return has_map;}
+int fw_app_at_start(void) {return start_prepared;}
+
 volatile unsigned fw_loaded_schema;
 static calibration_bundle_t measurements;
 int fw_cal_nose_tenth_mm=470, fw_cal_width_tenth_mm=940;
@@ -69,6 +75,7 @@ static int bundle_valid(const calibration_bundle_t *b)
 }
 static void apply_calibration(void)
 {
+    start_prepared=0;
     const fw_cal_data_t *wall=&measurements.wall;
     const fw_cal_geometry_t *g=wall->valid?&wall->geometry:measurements.rotation.valid?
         &measurements.rotation.geometry:measurements.corner[0].valid?&measurements.corner[0].geometry:
@@ -177,7 +184,7 @@ static int load(void)
     fw_battery_set_reference(current->battery);fw_loaded_schema=loaded_schema;
     return 0;
 }
-void fw_app_init(void) { fw_loaded_schema=0; fw_battery_set_reference((fw_battery_reference_t){0}); has_map=learned=0; memset(&library,0,sizeof library); nm_init_size(&maze,fw_maze_size,0); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
+void fw_app_init(void) { memset(trial_ms,0,sizeof trial_ms);last_result="LOADED MAP";start_prepared=0; fw_loaded_schema=0; fw_battery_set_reference((fw_battery_reference_t){0}); has_map=learned=0; memset(&library,0,sizeof library); nm_init_size(&maze,fw_maze_size,0); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
 static int save(void)
 {
     if (fw_motion_busy() || !parameters_valid() || !settings_valid(&zhonxSettings)) return -1;
@@ -266,7 +273,7 @@ int fw_app_maze_load(unsigned index)
     const fw_saved_maze_t *m=&library.item[index];
     maze=m->map;fw_maze_size=maze.side; fw_start_corner=(int)m->corner; fw_start_heading=(int)m->heading;
     search_ms=m->search_ms; search_clock_running=0; has_map=learned=1;
-    displayed_pose=nm_origin(&m->map); return 0;
+    displayed_pose=nm_origin(&m->map);start_prepared=0;last_result="LOADED MAP";memset(trial_ms,0,sizeof trial_ms);return 0;
 }
 int fw_app_maze_delete(unsigned index)
 {
@@ -319,39 +326,42 @@ static int wait_hand(nm_pose_t pose)
         __WFI();
     }
 }
-static void map_message(nm_pose_t pose, const char *message)
+static void map_message(nm_pose_t pose, const char *message,int map_view)
 {
-    unsigned page=0,level=0;int x=0,y=0;uint32_t drawn=0;
+    unsigned page=map_view?0:2,level=0;int x=0,y=0;uint32_t drawn=0;
     const unsigned scales[]={0,16,24};
+    nm_route_t best;int certified=learned && fw_maze_certify(&maze,fw_start_corner,fw_start_heading,&best);
     fw_ui_map_progress(0);
     /* Escape zooms only after motion has stopped. All four joystick directions
      * pan; centre cycles result pages, a long Escape/zoom press exits. */
-    while((GPIOC->IDR&0x3f00)!=0x3f00)__WFI();
+    int ignore_keys=(GPIOC->IDR&0x3f00)!=0x3f00;
     for(;;) {
         uint32_t now=hal_os_get_systicks();
         if(!drawn || now-drawn>=100) {
+            fw_ui_map_route(certified?&best:0,(now/500)%2);
             fw_ui_map_view(scales[level],x,y);
             if(!page)fw_ui_maze(&maze,pose,message,0,search_ms,live_sensors());
-            else fw_ui_result(message,search_ms,last_run_ms,page);
+            else if(page<3)fw_ui_result(message,search_ms,last_run_ms,page);
+            else fw_ui_result((const char *const[]){"RUN 1","RUN 2","RUN 3"}[page-3],search_ms,trial_ms[page-3],1);
             drawn=now;
         }
         unsigned keys=(~GPIOC->IDR)&0x3f00;
+        if(ignore_keys) {if(!keys)ignore_keys=0;__WFI();continue;}
         if(keys) {
             uint32_t pressed=now;
             while(((~GPIOC->IDR)&0x3f00)==keys) {
                 if((keys&FW_ESCAPE_PIN) && hal_os_get_systicks()-pressed>=800) {
-                    while(!(GPIOC->IDR&FW_ESCAPE_PIN))__WFI();
-                    fw_ui_map_view(16,0,0);return;
+                    fw_ui_map_route(0,0);fw_ui_map_view(16,0,0);return;
                 }
                 __WFI();
             }
             if(hal_os_get_systicks()-pressed<20)continue;
-            if(keys&FW_ESCAPE_PIN) {level=(level+1)%3;page=0;}
-            if(keys&(1u<<12))page=(page+1)%3;
-            if(keys&FW_UP_PIN) {++y;page=0;}
-            if(keys&FW_DOWN_PIN) {--y;page=0;}
-            if(keys&FW_BACK_PIN) {--x;page=0;}
-            if(keys&(1u<<11)) {++x;page=0;}
+            if(keys&FW_ESCAPE_PIN) {if(map_view) {level=(level+1)%3;page=0;}else page=page==1?2:1;}
+            if(keys&(1u<<12))page=map_view?(page+1)%6:page==1?2:1;
+            if(map_view && (keys&FW_UP_PIN)) {++y;page=0;}
+            if(map_view && (keys&FW_DOWN_PIN)) {--y;page=0;}
+            if(map_view && (keys&FW_BACK_PIN)) {--x;page=0;}
+            if(map_view && (keys&(1u<<11))) {++x;page=0;}
             if(x>16)x=16;
             if(x< -16)x=-16;
             if(y>16)y=16;
@@ -364,8 +374,9 @@ static void map_message(nm_pose_t pose, const char *message)
 int fw_app_show_map(void)
 {
     if (!has_map) { hal_ui_display_prompt(app_context.ui,"MAP","NO MAP"); return -1; }
-    map_message(displayed_pose,"SAVED MAP"); return 0;
+    map_message(displayed_pose,last_result,1); return 0;
 }
+int fw_app_show_result(void) {map_message(displayed_pose,last_result,0);return 0;}
 /* Foreground planning; sensors, position observer and pulse generation remain
  * interrupt-driven. Early stable observations can append the next cell in flight. */
 static unsigned run_speed_override;
@@ -379,6 +390,7 @@ static int plan_from(nm_pose_t pose,int timed,int *returning,int *certified,nm_r
     home[cell(origin)]=1;
     int rooms=nm_goal(&maze,goals);
     if(rooms>1) {*message="AMBIGUOUS GOAL";return -1;}
+    if(rooms==1 && !goal_announced) {goal_announced=1;fw_sound_play(1);}
     if(timed) {
         if(rooms!=1) {*message="UNKNOWN GOAL";return -1;}
         if(goals[cell(pose)]) {*message="GOAL FOUND";return 4;}
@@ -533,9 +545,9 @@ static int execute(int timed_run,int fresh)
      * preview and post references instead of silently disabling both at 300. */
     if(!timed_run && speed>220 && fw_cal_valid(&measurements.wall) &&
        fw_corner_valid(&measurements.corner[0]) && fw_corner_valid(&measurements.corner[1]))speed=220;
-    fw_motion_init();confirmation_pass=0;memset(rechecked,0,sizeof rechecked);
+    start_prepared=0;goal_announced=0;fw_motion_init();confirmation_pass=0;memset(rechecked,0,sizeof rechecked);
     if(fresh) {learned=0;nm_init_size(&maze,fw_maze_size,1);fw_start_corner=fw_start_heading=0;
-        search_ms=last_run_ms=0;has_map=1;search_clock_running=0;}
+        memset(trial_ms,0,sizeof trial_ms);search_ms=last_run_ms=0;has_map=1;search_clock_running=0;}
     fw_ui_map_view(16,0,0);fw_ui_map_progress(0);
     nm_pose_t pose=start_pose(),segment=pose;displayed_pose=pose;fw_last_stop_code=0;
     if(wait_hand(pose))return -1;
@@ -705,7 +717,10 @@ static int execute(int timed_run,int fresh)
     if(!timed_run) {learned=result==0 && certified;
         if(learned)archive_failed=fw_library_put(&library,&maze,fw_start_corner,fw_start_heading,search_ms)<0;}
     int saved=save();
-    map_message(pose,message);
+    displayed_pose=pose;last_result=message;
+    if(!result && !timed_run && fw_app_prepare_run()) {result=-1;last_result="START ALIGN FAILED";}
+    fw_ui_result(last_result,search_ms,last_run_ms,2);
+    if(result && !fw_cancel_pressed())fw_sound_play(0);
     if(archive_failed)hal_ui_display_prompt(app_context.ui,"Library","ACTIVE MAZE SAVED");
     if(saved)hal_ui_display_prompt(app_context.ui,"Flash","FLASH SAVE FAILED");
     USART1->CR1|=USART_CR1_UE;return result;
@@ -732,4 +747,100 @@ int fw_app_bootloader(void)
     RCC->APB1ENR |= RCC_APB1ENR_PWREN; PWR->CR |= PWR_CR_DBP;
     RTC->BKP0R=FW_REQUEST_MAGIC; __DSB(); NVIC_SystemReset();
     return 0;
+}
+
+static int wait_move(nm_pose_t *pose,const char *status,int path_mode)
+{
+    uint32_t began=hal_os_get_systicks(),drawn=began;
+    while(fw_motion_busy()) {
+        uint32_t now=hal_os_get_systicks();
+        if(fw_cancel_pressed() || now-began>(path_mode?600000u:6000u)) {fw_motion_stop();return -1;}
+        if(path_mode)*pose=fw_motion_path_pose();
+        if(now-drawn>=80) {fw_ui_maze(&maze,*pose,status,fw_motion_speed(),last_run_ms,live_sensors());drawn=now;}
+        __WFI();
+    }
+    if(path_mode && !fw_motion_fault())*pose=fw_motion_path_pose();
+    displayed_pose=*pose;return fw_motion_fault()?-1:0;
+}
+static int face_start(nm_pose_t *pose,unsigned heading)
+{
+    int quarters=(heading+4-pose->heading)%4;if(!quarters)return 0;
+    if(quarters==3)quarters=-1;
+    if(fw_motion_turn(quarters*90) || wait_move(pose,"START ALIGN",0))return -1;
+    pose->heading=heading;return 0;
+}
+int fw_app_prepare_run(void)
+{
+    if(start_prepared)return 0;
+    if(!fw_app_ready() || !fw_cal_valid(&measurements.wall) || !fw_rotation_valid(&measurements.rotation))return -1;
+    nm_pose_t pose=start_pose();fw_motion_init();radio_off();
+    int result=0;
+    /* Only at the known start, between trials. No probes during exploration
+     * or on the timed path; retain all measured calibration coefficients. */
+    for(unsigned axis=0;axis<2 && !result;++axis) {
+        int reference=0,centered=0;
+        for(unsigned opposite=0;opposite<2;++opposite) {
+            unsigned d=(maze.start_heading+(axis?0:1)+2*opposite)%4;
+            if(!(maze.cell[cell(pose)].walls&(1u<<d)))continue;
+            reference=1;
+            if(face_start(&pose,d)) {result=-1;break;}
+            int r=fw_motion_center_wall();
+            if(r<0 || (!r && wait_move(&pose,"START ALIGN",0))) {result=-1;break;}
+            if(!r && fw_motion_centered()) {centered=1;break;}
+        }
+        if(reference && !centered)result=-1;
+    }
+    if(!result) {
+        nm_route_t route;uint8_t goals[NM_CELLS];
+        if(nm_goal(&maze,goals)!=1 || nm_route(&maze,start_pose(),goals,0,&route) || !route.length)result=-1;
+        else result=face_start(&pose,route.direction[0]);
+    }
+    fw_motion_stop();displayed_pose=pose;USART1->CR1|=USART_CR1_UE;
+    start_prepared=!result;return result;
+}
+static int follow_route(nm_pose_t *pose,nm_route_t *route,unsigned speed,const char *status)
+{
+    if(!route->length)return 0;
+    if(face_start(pose,route->direction[0]))return -1;
+    if(fw_motion_path(&maze,*pose,route,speed))return -1;
+    return wait_move(pose,status,1);
+}
+int fw_app_trial(unsigned number,unsigned speed)
+{
+    if(number<1 || number>3 || speed<20 || speed>FW_RUN_MAX_SPEED || !fw_app_ready())return -1;
+    const char *error="START ALIGN FAILED";int result=-1;
+    if(fw_app_prepare_run())goto done;
+    nm_pose_t pose=displayed_pose;nm_route_t route;uint8_t goals[NM_CELLS];
+    if(wait_hand(pose)) {error="USER STOP";goto done;}
+    fw_motion_init();radio_off();start_prepared=0;
+    error="NO PATH";
+    if(nm_goal(&maze,goals)!=1 || nm_route(&maze,pose,goals,0,&route))goto done;
+    /* Time starts after the start gate; alignment/return are not part of a run. */
+    uint32_t began=hal_os_get_systicks();
+    error="RUN STOPPED";
+    if(follow_route(&pose,&route,speed,"RUN"))goto done;
+    last_run_ms=hal_os_get_systicks()-began;trial_ms[number-1]=last_run_ms;
+    fw_motion_stop();fw_sound_play(1);
+    uint8_t home[NM_CELLS]={0};home[cell(start_pose())]=1;
+    error="RETURN STOPPED";
+    fw_motion_init();
+    if(nm_route(&maze,pose,home,0,&route) || follow_route(&pose,&route,120,"RETURN"))goto done;
+    if(face_start(&pose,maze.start_heading))goto done;
+    displayed_pose=pose;error="START ALIGN FAILED";
+    if(fw_app_prepare_run())goto done;
+    result=0;error="RUN COMPLETE";
+done:
+    fw_last_stop_code=(unsigned)fw_motion_fault();fw_motion_stop();USART1->CR1|=USART_CR1_UE;
+    if(result) {
+        start_prepared=0;
+        if(fw_cancel_pressed())error="USER STOP";
+        else {
+            if(fw_motion_fault()==1)error="SENSOR OR TIMEOUT";
+            if(fw_motion_fault()==2)error="EARLY OBSTACLE";
+            if(fw_motion_fault()==4)error="START ALIGN FAILED";
+            fw_sound_play(0);
+        }
+    }
+    last_result=error;fw_ui_result(last_result,search_ms,last_run_ms,2);
+    return result;
 }

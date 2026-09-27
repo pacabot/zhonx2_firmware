@@ -161,60 +161,34 @@ int hal_beeper_set_state(HAL_BEEPER_HANDLE handle, int state)
 }
 
 
-int hal_beeper_beep(HAL_BEEPER_HANDLE handle, long freq, long duration)
+int hal_beeper_tone(HAL_BEEPER_HANDLE handle, long freq)
 {
 #ifdef HAL_BEEPER_ON
-    beeper_handle *h;
-    unsigned short timer_period = 0;
-
-    if (zhonxSettings.beeper_enabled == false)
-    {
+    if (handle == null) return HAL_BEEPER_E_BAD_HANDLE;
+    beeper_handle *h = (beeper_handle *)handle;
+    if (freq <= 0 || !zhonxSettings.beeper_enabled) {
+        BEEPER_TIMER->CCER &= ~TIM_CCER_CC3E;
+        TIM_Cmd(BEEPER_TIMER, DISABLE); h->freq = 0;
         return HAL_BEEPER_E_SUCCESS;
     }
-
-    /* Return error if handle is not valid */
-    if (handle == null)
-    {
-        return HAL_BEEPER_E_ERROR;
-    }
-
-    h = (beeper_handle *)handle;
-
-    if (freq <= 0)
-    {
-        BEEPER_TIMER->CCER &= ~TIM_CCER_CC3E;
-        TIM_Cmd(BEEPER_TIMER, DISABLE);
-        h->freq = 0;
-    }
-    else if (freq > TIMER_FREQ)
-    {
-        timer_period = MIN(TIMER_FREQ, 0xFFFF);
-        h->freq = freq;
-    }
-    else
-    {
-        if (h->freq == 0)
-        {
-            TIM_Cmd(BEEPER_TIMER, ENABLE);
-        }
-        timer_period = ((TIMER_FREQ / freq) - 1);
-        h->freq = freq;
-    }
-
-    if (timer_period > 0)
-    {
-        TIM_SetAutoreload(BEEPER_TIMER, timer_period);
-    }
-
+    if (freq > TIMER_FREQ) freq = TIMER_FREQ;
+    unsigned long period = TIMER_FREQ / freq - 1;
+    if (period > 0xffff) period = 0xffff;
+    TIM_SetAutoreload(BEEPER_TIMER, period);
+    h->freq = freq;
     BEEPER_TIMER->CCER |= TIM_CCER_CC3E;
-
-    /* Enable timer counter */
     TIM_Cmd(BEEPER_TIMER, ENABLE);
-    HAL_Delay(duration);
-    TIM_Cmd(BEEPER_TIMER, DISABLE);
-    BEEPER_TIMER->CCER &= ~TIM_CCER_CC3E;
+#else
+    UNUSED(handle); UNUSED(freq);
 #endif
     return HAL_BEEPER_E_SUCCESS;
+}
+int hal_beeper_beep(HAL_BEEPER_HANDLE handle, long freq, long duration)
+{
+    int result = hal_beeper_tone(handle, freq);
+    if (result) return result;
+    HAL_Delay(duration);
+    return hal_beeper_tone(handle, 0);
 }
 
 

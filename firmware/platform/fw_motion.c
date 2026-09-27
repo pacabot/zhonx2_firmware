@@ -1,4 +1,6 @@
 #include "fw_motion.h"
+#include "fw_path.h"
+#include "fw_sound.h"
 #include "wall_control.h"
 #include "stm32f4xx.h"
 #include "stm32f4xx_tim.h"
@@ -10,6 +12,13 @@
 #include <string.h>
 #define TICKS_PER_MM (2.0f * (float)STEPS_PER_MM)
 static volatile int active, fault;
+static fw_path_t path;
+static unsigned path_active,path_index;
+static uint32_t path_count[2];
+static float path_heading,path_trim;
+static void path_tick(const hal_sensor_snapshot *scan);
+static void front_tick(const hal_sensor_snapshot *scan);
+
 static int straight, allow_wall, wall_arrival;
 static int32_t obstacle_travel;
 static int calibration, travel_sign;
@@ -67,10 +76,9 @@ void fw_motion_corner_profiles(const fw_corner_data_t *left,const fw_corner_data
         else memset(&corner_profile[i],0,sizeof corner_profile[i]);
     }
 }
-static void post_observation(uint8_t sensors)
+static void post_observation(uint8_t sensors,int32_t raw)
 {
     unsigned speed=fw_motion_speed();
-    int32_t raw=raw_distance_um();
     for(unsigned side=0;side<2;++side)for(int sensor=1;sensor>=0;--sensor) {
         unsigned bit=sensor?(side?SENSOR_R10_POS:SENSOR_L10_POS):(side?SENSOR_R5_POS:SENSOR_L5_POS);
         if(!((sensors^previous_sensors)&bit))continue;
@@ -126,6 +134,7 @@ void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 int32_t fw_motion_travelled_um(void)
 {
     if(fault==2)return obstacle_travel;
+    if(calibration==6)return raw_distance_um()+longitudinal_um;
     if(calibration==4)return curve_completed_um+raw_distance_um();
     if(straight && !calibration)return raw_distance_um()+longitudinal_um;
     uint32_t remaining=fw_motion_remaining();
@@ -141,7 +150,7 @@ int fw_motion_fault(void) { return fault; }
 int fw_motion_wall_arrival(void) { return wall_arrival; }
 uint32_t fw_motion_remaining(void)
 {
-    if(straight && !calibration) {
+    if((straight && !calibration) || calibration==6) {
         int32_t left=(int32_t)goal_um-raw_distance_um()-longitudinal_um;
         return left>0?(uint32_t)lroundf(left*TICKS_PER_MM/1000.0f):0;
     }
@@ -150,7 +159,7 @@ uint32_t fw_motion_remaining(void)
 }
 void fw_motion_stop(void)
 {
-    active=0;curve_phase=0;centre_phase=0;
+    active=0;curve_phase=0;centre_phase=0;path_active=0;
     hal_step_motor_pair_release();
     hal_step_motor_disable();
     velocity=0;
@@ -373,37 +382,17 @@ int fw_motion_calibration_spin(int32_t um,unsigned speed)
     if (!r) travel_sign=um<0?-1:1;
     return r;
 }
-void fw_motion_tick(uint32_t now)
+static void front_tick(const hal_sensor_snapshot *scan)
 {
-    if (!active) return;
-    hal_sensor_snapshot scan;
-    if (!hal_sensor_snapshot_read(&scan) || now-scan.timestamp>50 || now-started>60000) {
-        fault=1; fw_motion_stop(); return;
-    }
-    if(curve_phase) {curve_tick(&scan);return;}
-    if(centre_phase==1) {centre_tick(&scan);if(!active)return;}
     uint32_t remaining=fw_motion_remaining();
-    if (!remaining) {
-        if(centre_phase==1) {
-            /* No edge: undo exactly the measured probe rather than assuming
-             * that a suspect mapped wall supplied a valid position reference. */
-            int32_t travel=fw_motion_travelled_um();fw_motion_stop();
-            long pulses=lroundf(-travel*TICKS_PER_MM/1000.0f);
-            if(start(pulses,pulses,40,0,0,5)) {fault=4;return;}
-            centre_phase=3;return;
-        }
-        if(centre_phase==2)centre_ok=1;
-        centre_phase=0;
-        active=0; velocity=0; hal_step_motor_pair_rate(0,0); return;
-    }
-    if(straight && (scan.raw&SENSOR_F10_POS))front_reference_valid=0;
+    if(straight && (scan->raw&SENSOR_F10_POS))front_reference_valid=0;
     if(straight && allow_wall && wall_profile.valid &&
-       (previous_raw&SENSOR_F10_POS) && !(scan.raw&SENSOR_F10_POS)) {
+       (previous_raw&SENSOR_F10_POS) && !(scan->raw&SENSOR_F10_POS)) {
         int32_t allowance=(int32_t)wall_profile.front[1].on_um-(int32_t)wall_profile.geometry.inner_um/2;
         int32_t raw=raw_distance_um();
         int32_t residual=(int32_t)goal_um-allowance-raw-longitudinal_um;
         int32_t window=front_pair_window();
-        if((scan.raw&SENSOR_F5_POS) && residual>=-window && residual<=window) {
+        if((scan->raw&SENSOR_F5_POS) && residual>=-window && residual<=window) {
             front_reference_raw=raw;front_reference_goal=raw+allowance;
             front_reference_speed=fw_motion_speed();front_reference_valid=1;
         }
@@ -413,11 +402,11 @@ void fw_motion_tick(uint32_t now)
             longitudinal_um+=residual;
         }
     }
-    if (straight && !(scan.raw & SENSOR_F5_POS)) {
+    if (straight && !(scan->raw & SENSOR_F5_POS)) {
         int32_t residual=(int32_t)goal_um-(int32_t)front_allowance_um-raw_distance_um()-longitudinal_um;
         int paired=0;
         if(front_reference_valid && wall_profile.valid && (previous_raw&SENSOR_F5_POS) &&
-           !(scan.raw&SENSOR_F10_POS) && !(scan.filtered&SENSOR_F10_POS)) {
+           !(scan->raw&SENSOR_F10_POS) && !(scan->filtered&SENSOR_F10_POS)) {
             int32_t expected=(int32_t)wall_profile.front[1].on_um-(int32_t)wall_profile.front[0].on_um;
             front_pair_error=raw_distance_um()-front_reference_raw-expected;
             unsigned speed=fw_motion_speed();if(speed<front_reference_speed)speed=front_reference_speed;
@@ -446,7 +435,34 @@ void fw_motion_tick(uint32_t now)
         } else { obstacle_travel=fw_motion_travelled_um(); fault=2; fw_motion_stop(); }
         if (!active) return;
     }
-    previous_raw=scan.raw;
+    previous_raw=scan->raw;
+}
+void fw_motion_tick(uint32_t now)
+{
+    fw_sound_tick(now);
+    if (!active) return;
+    hal_sensor_snapshot scan;
+    if (!hal_sensor_snapshot_read(&scan) || now-scan.timestamp>50 || now-started>(path_active?600000u:60000u)) {
+        fault=1; fw_motion_stop(); return;
+    }
+    if(path_active) {path_tick(&scan);return;}
+    if(curve_phase) {curve_tick(&scan);return;}
+    if(centre_phase==1) {centre_tick(&scan);if(!active)return;}
+    uint32_t remaining=fw_motion_remaining();
+    if (!remaining) {
+        if(centre_phase==1) {
+            /* No edge: undo exactly the measured probe rather than assuming
+             * that a suspect mapped wall supplied a valid position reference. */
+            int32_t travel=fw_motion_travelled_um();fw_motion_stop();
+            long pulses=lroundf(-travel*TICKS_PER_MM/1000.0f);
+            if(start(pulses,pulses,40,0,0,5)) {fault=4;return;}
+            centre_phase=3;return;
+        }
+        if(centre_phase==2)centre_ok=1;
+        centre_phase=0;
+        active=0; velocity=0; hal_step_motor_pair_rate(0,0); return;
+    }
+    front_tick(&scan);if(!active)return;
     remaining=fw_motion_remaining(); /* Include this scan's frontal position reference. */
     if (scan.sequence!=last_scan) {
         last_scan=scan.sequence;
@@ -459,7 +475,7 @@ void fw_motion_tick(uint32_t now)
             yaw_fraction+=(dl-dr)*1000000.0f/(TICKS_PER_MM*track);
             int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
             int32_t forward=(int32_t)lroundf((dl+dr)*500.0f/TICKS_PER_MM);
-            post_observation(scan.filtered);
+            post_observation(scan.filtered,raw_distance_um());
             wall_control_position(&wall,scan.filtered,&wall_profile,forward,yaw);
         }
     }
@@ -489,4 +505,96 @@ void fw_motion_tick(uint32_t now)
     if (skew<-40) skew=-40;
     correction-=(int)skew;
     hal_step_motor_pair_rate(base*(1000-correction)/1000,base*(1000+correction)/1000);
+}
+
+static float wrap_angle(float angle)
+{
+    while(angle>3.14159265f)angle-=6.28318531f;
+    while(angle< -3.14159265f)angle+=6.28318531f;
+    return angle;
+}
+int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,unsigned speed)
+{
+    if(active || fault || !fw_cal_valid(&wall_profile) || !fw_rotation_valid(&rotation_profile) ||
+       fw_path_plan(&path,map,pose,route,&wall_profile.geometry,speed))return -1;
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    /* Reserve wheel travel once. Neither arcs nor joins reset timers/counters. */
+    long budget=lroundf(path.length*.0017f*TICKS_PER_MM);
+    int result=start(budget,budget,speed,0,0,6);
+    if(!result) {
+        goal_um=(uint32_t)lroundf(path.length);path_index=0;path_active=1;
+        path_count[0]=path_count[1]=0;path_heading=pose.heading*3.14159265f/2;path_trim=0;
+        straight=1;
+        int c=path.end.y*NM_SIDE+path.end.x;
+        curve_accept=!!(map->cell[c].walls&(1u<<path.end.heading));
+    }
+    __set_PRIMASK(mask);return result;
+}
+nm_pose_t fw_motion_path_pose(void)
+{
+    if(!path.count || (!path_active && !fault))return path.end;
+    fw_path_point_t point;fw_path_point(&path,path_index,fw_motion_travelled_um()-path.segment[path_index].start,&point);
+    int h=(int)lroundf(point.heading/(3.14159265f/2));h=(h%4+4)%4;
+    int x=(int)lroundf(point.x/cell_pitch_um),y=(int)lroundf(point.y/cell_pitch_um);
+    return (nm_pose_t){x<0?0:x>=NM_SIDE?NM_SIDE-1:x,y<0?0:y>=NM_SIDE?NM_SIDE-1:y,h};
+}
+static void path_tick(const hal_sensor_snapshot *scan)
+{
+    float distance=(float)fw_motion_travelled_um();
+    while(path_index+1<path.count && distance>=path.segment[path_index].start+path.segment[path_index].length) {
+        ++path_index;front_reference_valid=0;wall_control_reset(&wall);
+        previous_raw=scan->raw;previous_sensors=scan->filtered;
+        for(unsigned a=0;a<2;++a)for(unsigned b=0;b<2;++b)last_post[a][b]=-100;
+    }
+    fw_path_segment_t *s=&path.segment[path_index];
+    fw_path_point_t point;fw_path_point(&path,path_index,distance-s->start,&point);
+    straight=!s->turn;allow_wall=path_index+1==path.count && curve_accept;
+    uint32_t count[2]={hal_step_motor_pair_count(0),hal_step_motor_pair_count(1)};
+    int32_t dr=(int32_t)(count[0]-path_count[0]),dl=(int32_t)(count[1]-path_count[1]);
+    path_count[0]=count[0];path_count[1]=count[1];
+    unsigned spin=(unsigned)(velocity*fabsf(point.curvature)*WHEELS_DISTANCE*500);
+    if(spin<40)spin=40;
+    if(spin>120)spin=120;
+    float quarter=(float)fw_rotation_quarter(&rotation_profile,spin,s->turn<0);
+    float track=quarter*4/3.14159265f;
+    path_heading+=(dl-dr)*1000.0f/(TICKS_PER_MM*track);
+    if(straight && !wall.initialized) {
+        wall.initialized=1;wall.sensors=scan->filtered;
+        wall.lateral_um=(int32_t)wall_profile.geometry.inner_um/2;
+        wall.heading_mrad=(int32_t)lroundf(wrap_angle(path_heading-point.heading)*1000);
+        previous_count[0]=count[0];previous_count[1]=count[1];last_scan=scan->sequence;
+    }
+    if(straight)front_tick(scan);
+    else if(!(scan->raw&SENSOR_F5_POS)) {obstacle_travel=fw_motion_travelled_um();fault=2;fw_motion_stop();}
+    if(!active)return;
+    if(scan->sequence!=last_scan) {
+        last_scan=scan->sequence;
+        int32_t r=(int32_t)(count[0]-previous_count[0]),l=(int32_t)(count[1]-previous_count[1]);
+        previous_count[0]=count[0];previous_count[1]=count[1];
+        if(straight) {
+            int32_t before=wall.heading_mrad;
+            post_observation(scan->filtered,raw_distance_um()-(int32_t)s->start+s->phase_um);
+            yaw_fraction+=(l-r)*1000000.0f/(TICKS_PER_MM*track);
+            int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
+            wall_control_position(&wall,scan->filtered,&wall_profile,
+                (int32_t)lroundf((r+l)*500.0f/TICKS_PER_MM),yaw);
+            /* Retain sub-mrad wheel yaw; only optical innovations adjust the
+             * floating heading. Replacing it by rounded state accumulated drift. */
+            path_heading+=(wall.heading_mrad-before-yaw)*.001f;
+        }
+    }
+    distance=(float)fw_motion_travelled_um();
+    if(distance>=path.length) {active=path_active=0;velocity=0;hal_step_motor_pair_rate(0,0);return;}
+    float left=fmaxf(0,(s->start+s->length-distance)*.001f);
+    if(straight && front_reference_valid)left=fminf(left,fmaxf(0,(front_reference_goal-raw_distance_um())*.001f));
+    float target=fminf(s->limit,sqrtf(s->exit_speed*s->exit_speed+2*path.acceleration*left));
+    float change=target-velocity,step=path.acceleration*.001f;
+    velocity+=fmaxf(-step,fminf(step,change));
+    fw_path_point_t midpoint;fw_path_point(&path,path_index,distance-s->start+velocity*.5f,&midpoint);
+    float desired=straight?wall.output*.001f:
+        midpoint.curvature*track*.5f+2*wrap_angle(point.heading-path_heading);
+    desired=fmaxf(-.85f,fminf(.85f,desired));
+    path_trim+=fmaxf(-.008f,fminf(.008f,desired-path_trim));
+    unsigned long base=(unsigned long)(velocity*TICKS_PER_MM);
+    hal_step_motor_pair_rate((unsigned long)(base*(1-path_trim)),(unsigned long)(base*(1+path_trim)));
 }

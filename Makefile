@@ -71,7 +71,7 @@ package: app boot
 test:
 	@mkdir -p $(BUILD)
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-	 -Ifirmware/include tests/test_firmware.c firmware/core/*.c -o $(BUILD)/test_firmware
+	 -Ifirmware/include tests/test_firmware.c firmware/core/*.c -lm -o $(BUILD)/test_firmware
 	$(BUILD)/test_firmware
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Ifirmware/include tests/test_library.c firmware/core/fw_library.c firmware/core/nimes.c -o $(BUILD)/test_library
@@ -90,7 +90,7 @@ test:
 	$(BUILD)/test_calibration_extra
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_motion.c \
-	 firmware/platform/fw_motion.c firmware/core/wall_control.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_motion
+	 firmware/platform/fw_motion.c firmware/core/fw_path.c firmware/core/nimes.c firmware/core/wall_control.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_motion
 	$(BUILD)/test_motion
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_navigation.c \
@@ -110,4 +110,7 @@ test:
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_hardware.c \
 	 firmware/core/fw_battery.c firmware/platform/fw_hardware.c firmware/core/fw_text.c firmware/platform/fw_display.c pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_hardware
 	$(BUILD)/test_hardware
+	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_sound.c firmware/platform/fw_sound.c -o $(BUILD)/test_sound
+	$(BUILD)/test_sound
 	python3 -m unittest discover -s tests -p 'test_*.py'

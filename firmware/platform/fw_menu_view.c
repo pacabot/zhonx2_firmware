@@ -132,3 +132,12 @@ void fw_ui_setting(unsigned index,int value)
     large(index==7?49:59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":"CELLS");
     fw_ui_hint("UP/DN  OK:SAVE");fw_ui_menu_refresh();
 }
+
+void fw_ui_run_setup(unsigned number,unsigned speed,unsigned accel,int aligned)
+{
+    char value[24];ssd1306ClearScreen();
+    snprintf(value,sizeof value,"Run %u",number);large(3,0,value);
+    snprintf(value,sizeof value,"%u",speed);large(5,21,value);fw_display_text(77,26,"mm/s");
+    snprintf(value,sizeof value,"Acc %u mm/s2",accel);fw_display_text(3,39,value);
+    fw_ui_hint(aligned?"UP/DN OK: ARM":"START CELL? OK");fw_ui_menu_refresh();
+}
