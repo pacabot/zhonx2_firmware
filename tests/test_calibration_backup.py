@@ -18,20 +18,21 @@ ENTRY = dict(uid=UID, serial='51FF66064982565324552187')
 
 def payload(schema=6, right=False):
     p = bytearray(cal.SIZES[schema])
-    struct.pack_into('<18I', p, 412, 1, 3, 47000, 94000, 167000, 179000,
+    base, geom, battery = cal.layout(p)
+    struct.pack_into('<18I', p, base, 1, 3, 47000, 94000, 167000, 179000,
                      91000, 92000, 400, 131000, 132000, 200, 84500, 85500, 0, 81500, 83500, 1000)
-    struct.pack_into('<5I', p, 484, 1, 47000, 94000, 167000, 179000)
+    struct.pack_into('<5I', p, base+72, 1, 47000, 94000, 167000, 179000)
     for i, speed in enumerate((40, 80, 120)):
-        struct.pack_into('<9I', p, 504+36*i, speed, 65000, 65500, 500, 500, 300, 400, 6, 6)
+        struct.pack_into('<9I', p, base+92+36*i, speed, 65000, 65500, 500, 500, 300, 400, 6, 6)
     for side in range(2 if right else 1):
-        offset = 612+316*side
+        offset = base+200+316*side
         struct.pack_into('<7I', p, offset, 1, side, 173000, 47000, 94000, 167000, 179000)
         for i in range(6):
             struct.pack_into('<2I8i2I', p, offset+28+i*48, (40, 120, 220)[i % 3], 3,
                              -12000, 15000, -11000, 14000, -11500, 15500, -11500, 13500, 1000, 1500)
-    struct.pack_into('<5i', p, 4680, 470, 940, 167, 179, 173)
-    if schema == 6:
-        struct.pack_into('<2I', p, 4700, 3000, 8400)
+    struct.pack_into('<5i', p, geom, 470, 940, 167, 179, 173)
+    if schema >= 6:
+        struct.pack_into('<2I', p, battery, 3000, 8400)
     return p
 
 
@@ -83,10 +84,29 @@ class CalibrationBackupTest(unittest.TestCase):
         for schema in (5, 6):
             _, _, final = cal.plan(flash(bank(schema, 1, payload(schema))), source)
             self.assertEqual(len(final), 32+cal.SIZES[schema])
-            if schema == 6:
+            if schema >= 6:
                 self.assertEqual(final[-8:], struct.pack('<2I', 3000, 8400))
         with self.assertRaisesRegex(ValueError, 'Target snapshot v5'):
             cal.plan(source, flash(bank(6, 1, payload())))
+
+    def test_schema7_merge_preserves_large_maps_and_settings(self):
+        for source_schema in (5, 6, 7):
+            for target_schema in (6, 7):
+                source=payload(source_schema);target=payload(target_schema, right=True)
+                tb,tg,tv=cal.layout(target);sb,sg,sv=cal.layout(source)
+                target[:tb]=bytes([0x55])*tb
+                target[tb+832:tg]=bytes([0xaa])*(tg-tb-832)
+                if target_schema==7:struct.pack_into('<I',target,12488,16)
+                _,_,final=cal.plan(flash(bank(target_schema,9,target)),flash(bank(source_schema,1,source)))
+                merged=final[32:]
+                self.assertEqual(merged[:tb],target[:tb])
+                self.assertEqual(merged[tb+832:tg],target[tb+832:tg])
+                self.assertEqual(merged[tb:tb+832],source[sb:sb+832])
+                self.assertEqual(merged[tg:tg+20],source[sg:sg+20])
+                if target_schema==7:self.assertEqual(merged[12488:12492],struct.pack('<I',16))
+                report=cal.decode(flash(final))
+                self.assertTrue(report['wall']['valid'])
+                self.assertEqual(report['battery_reference']['pack_mv'],8400)
 
     def test_reject_bad_crc_or_unsupported_schema(self):
         good = flash(bank(6, 1, payload()))

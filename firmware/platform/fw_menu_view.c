@@ -26,7 +26,7 @@ void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
     char value[8];ssd1306ClearRect(96,0,32,13);
-    if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%",b.percent);
+    if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%%s",b.percent,b.lower_bound && b.percent<100?"+":"");
     else snprintf(value,sizeof value,"--%%");
     fw_display_text(128-strlen(value)*8,0,value);
 }
@@ -89,23 +89,24 @@ void fw_ui_card(const char *title,const char *first,const char *second,unsigned 
 void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int blink)
 {
     char s[24];ssd1306ClearScreen();scroll(index,count);
-    for(unsigned c=0;c<NM_CELLS;++c) {
-        unsigned x=(c%9)*6,y=9+(8-c/9)*6;
+    unsigned side=nm_size(&m->map), scale=54/side;
+    for(unsigned yy=0;yy<side;++yy)for(unsigned xx=0;xx<side;++xx) {
+        unsigned c=yy*NM_SIDE+xx,x=xx*scale,y=9+(side-1-yy)*scale;
         for(unsigned d=0;d<4;++d) {
             unsigned x0=x,y0=y,x1=x,y1=y;
-            if(d==0) x1+=6;
-            if(d==1) {x0+=6;x1+=6;y1+=6;}
-            if(d==2) {y0+=6;y1+=6;x1+=6;}
-            if(d==3) y1+=6;
+            if(d==0) x1+=scale;
+            if(d==1) {x0+=scale;x1+=scale;y1+=scale;}
+            if(d==2) {y0+=scale;y1+=scale;x1+=scale;}
+            if(d==3) y1+=scale;
             if(m->map.cell[c].walls&(1u<<d)) ssd1306DrawLine(x0,y0,x1,y1);
             else if(!(m->map.cell[c].known&(1u<<d))) ssd1306DrawDashedLine(x0,y0,x1,y1);
         }
     }
-    nm_pose_t start=fw_maze_origin(m->corner,m->heading); int c=start.y*9+start.x;
-    ssd1306FillRect(start.x*6+1,9+(8-start.y)*6+1,3,3);
+    nm_pose_t start=nm_origin(&m->map); int c=start.y*NM_SIDE+start.x;
+    ssd1306FillRect(start.x*scale+1,9+(side-1-start.y)*scale+1,scale-1,scale-1);
     if(blink) for(unsigned i=0;i<m->route.length;++i) {
-        int next=nm_neighbour(c,m->route.direction[i]);if(next<0) break;
-        unsigned x=c%9*6+3,y=9+(8-c/9)*6+3,xx=next%9*6+3,yy=9+(8-next/9)*6+3;
+        int next=nm_next(&m->map,c,m->route.direction[i]);if(next<0) break;
+        unsigned x=c%NM_SIDE*scale+scale/2,y=9+(side-1-c/NM_SIDE)*scale+scale/2,xx=next%NM_SIDE*scale+scale/2,yy=9+(side-1-next/NM_SIDE)*scale+scale/2;
         ssd1306DrawLine(x,y,xx,yy);ssd1306DrawLine(x+1,y,xx+1,yy);c=next;
     }
     large(58,13,"MAZE");snprintf(s,sizeof s,"%lu",(unsigned long)m->id);large(58,31,s);
@@ -114,7 +115,7 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int bl
 void fw_ui_setting(unsigned index,int value)
 {
     static const char *const names[]={"Axle-nose","Width","Cell clear","Cell pitch","Post center",
-        "Explore","Fast run","Start cell","Heading"};
+        "Explore","Fast run","Maze size"};
     char s[24];ssd1306ClearScreen();fw_ui_header(names[index]);
     ssd1306DrawRect(5,14,40,39);ssd1306DrawRect(17,25,16,16);
     ssd1306FillRect(15,31,2,6);ssd1306FillRect(33,31,2,6);
@@ -123,12 +124,11 @@ void fw_ui_setting(unsigned index,int value)
     else if(index==4) {ssd1306FillRect(3,49,5,5);ssd1306DrawLine(12,16,12,51);ssd1306DrawLine(9,16,15,16);ssd1306DrawLine(9,51,15,51);}
     else if(index<4) {ssd1306DrawLine(index==2?7:5,21,index==2?43:45,21);ssd1306DrawLine(7,18,7,24);ssd1306DrawLine(43,18,43,24);}
     else if(index<7) {ssd1306DrawLine(25,40,25,18);ssd1306DrawLine(20,23,25,18);ssd1306DrawLine(25,18,30,23);}
-    else if(index==7) {static const unsigned xx[]={6,39,39,6},yy[]={47,47,15,15};ssd1306FillRect(xx[value],yy[value],5,5);}
-    else {static const int dx[]={0,10,0,-10},dy[]={-10,0,10,0};ssd1306DrawLine(25,33,25+dx[value],33+dy[value]);}
+    else {ssd1306ClearRect(4,14,43,39);
+        for(unsigned j=0;j<=3;++j) {ssd1306DrawLine(5+j*12,16,5+j*12,52);ssd1306DrawLine(5,16+j*12,41,16+j*12);}}
     if(index<2) snprintf(s,sizeof s,"%d.%d",value/10,value%10);
-    else if(index==7) snprintf(s,sizeof s,"%s",(const char*[]){"SW","SE","NE","NW"}[value]);
-    else if(index==8) snprintf(s,sizeof s,"%s",(const char*[]){"NORTH","EAST","SOUTH","WEST"}[value]);
+    else if(index==7) snprintf(s,sizeof s,"%dx%d",value,value);
     else snprintf(s,sizeof s,"%d",value);
-    large(59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":"START");
+    large(index==7?49:59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":"CELLS");
     fw_ui_hint("UP/DN  OK:SAVE");fw_ui_menu_refresh();
 }

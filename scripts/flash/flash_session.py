@@ -133,6 +133,10 @@ set scan_after [lindex [read_memory {sequence:#x} 32 1] 0]
 echo "Ticks $ticks_before -> $ticks_after ; capteurs $scan_before -> $scan_after"
 if {{$ticks_after == $ticks_before || $scan_after == $scan_before}} {{ error "Tick ou acquisition capteurs bloques" }}
 '''
+        if 'convertedValues' in symbols:
+            startup += f'echo "BATTERY_ADC [read_memory {symbols["convertedValues"]:#x} 16 2] VREFINT_CAL [read_memory 0x1fff7a2a 16 1]"\n'
+        if 'fw_loaded_schema' in symbols:
+            startup += f'echo "LOADED_DATA_SCHEMA [read_memory {symbols["fw_loaded_schema"]:#x} 32 1]"\n'
     else:
         startup += '''
 if {([lindex [read_memory 0x40020014 32 1] 0] & 0x10c) != 0x100} { error "Moteurs non desactives au repos" }

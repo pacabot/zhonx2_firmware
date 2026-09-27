@@ -1,4 +1,5 @@
 #include "fw_app.h"
+#include "fw_snapshot.h"
 #include "fw_battery.h"
 #include "fw_motion.h"
 #include "fw_flash.h"
@@ -23,11 +24,14 @@ app_config app_context;
 const fw_flash_t fw_stm32_flash={0};
 static nm_map_t ground;
 static nm_pose_t physical,destination;
-static uint32_t now,deadline;
+static uint32_t now,deadline,move_started;
+static nm_pose_t segment_start;
+static unsigned moving_cells,extensions;
+static int rotating;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
-static unsigned char saved_snapshot[8192];
+static unsigned char saved_snapshot[16384];
 static size_t saved_size;
 static uint32_t saved_schema,applied_pitch;
 static int save_failure;
@@ -52,7 +56,16 @@ int fw_store_save(const fw_flash_t *f,uint32_t schema,const void *data,size_t si
 }
 int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
 {
-    unsigned cell=physical.y*9+physical.x,wall=ground.cell[cell].walls;
+    nm_pose_t sensed=physical;
+    if(busy && !rotating) {
+        sensed=segment_start;
+        unsigned steps=((now-move_started)*179+39000)/179000;
+        if(steps>moving_cells)steps=moving_cells;
+        int c=sensed.y*NM_SIDE+sensed.x;
+        while(steps--) {c=nm_next(&ground,c,sensed.heading);assert(c>=0);}
+        sensed.x=c%NM_SIDE;sensed.y=c/NM_SIDE;
+    }
+    unsigned cell=sensed.y*NM_SIDE+sensed.x,wall=ground.cell[cell].walls;
     uint8_t bits=0x3f;
     if(wall & 1u<<physical.heading) bits &= ~SENSOR_F10_POS;
     if(wall & 1u<<((physical.heading+3)%4)) bits &= ~SENSOR_L10_POS;
@@ -60,9 +73,23 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
     if(now<300) bits &= ~SENSOR_F10_POS; /* The user's hand at the start. */
     *s=(hal_sensor_snapshot){now,now/10+5,bits,bits}; return 1;
 }
+unsigned fw_motion_speed(void) {return 120;}
+int32_t fw_motion_travelled_um(void) {return rotating?0:(int32_t)(now-move_started)*179;}
+int fw_motion_extend(unsigned cells,int accept) {
+    assert(busy && !rotating && cells==1);++extensions;++moving_cells;
+    int c=destination.y*NM_SIDE+destination.x;
+    assert(!(ground.cell[c].walls&(1u<<destination.heading)));
+    c=nm_next(&ground,c,destination.heading);assert(c>=0);
+    destination.x=c%NM_SIDE;destination.y=c/NM_SIDE;deadline+=1000;
+    wall_arrival=accept && !!(ground.cell[c].walls&(1u<<destination.heading));return 0;
+}
+void fw_ui_map_progress(int p) {(void)p;}
+void fw_ui_map_view(unsigned z,int x,int y) {(void)z;(void)x;(void)y;}
+void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
 void fw_motion_init(void) { busy=stopped=wall_arrival=0; }
 void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 { applied_pitch=pitch;(void)front;(void)inner; }
+void fw_motion_corner_profiles(const fw_corner_data_t *l,const fw_corner_data_t *r) {(void)l;(void)r;}
 void fw_motion_wall_profile(const fw_cal_data_t *d) { (void)d; }
 void fw_motion_rotation_profile(const fw_rotation_data_t *d) { (void)d; }
 void fw_motion_stop(void) { busy=0; }
@@ -73,20 +100,21 @@ uint32_t fw_motion_remaining(void) { return 0; }
 int fw_motion_straight_to(unsigned cells,unsigned speed,int accept_wall)
 {
     assert(!busy && now>=400 && speed>=20 && cells>0); ++moves;
-    destination=physical; int c=physical.y*9+physical.x;
+    destination=physical; int c=physical.y*NM_SIDE+physical.x;
     for(unsigned i=0;i<cells;++i) {
         assert(!(ground.cell[c].walls & 1u<<physical.heading));
         c=nm_neighbour(c,physical.heading); assert(c>=0);
     }
-    destination.x=c%9; destination.y=c/9;
+    destination.x=c%NM_SIDE; destination.y=c/NM_SIDE;
     wall_arrival=accept_wall && !!(ground.cell[c].walls & 1u<<physical.heading);
     if(wall_arrival) ++wall_arrivals;
-    busy=1;deadline=now+100*cells; return 0;
+    segment_start=physical;move_started=now;moving_cells=cells;rotating=0;
+    busy=1;deadline=now+1000*cells; return 0;
 }
 int fw_motion_turn(int degrees)
 {
     assert(!busy && now>=400); assert(degrees==90 || degrees==-90 || degrees==180);
-    ++turns; destination=physical;
+    ++turns; destination=physical;rotating=1;
     destination.heading=(physical.heading+degrees/90+4)%4;
     busy=1;wall_arrival=0;deadline=now+100;return 0;
 }
@@ -98,15 +126,16 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t pose,const char *status,unsigned spe
 }
 void fw_test_idle(void)
 {
-    now+=10; assert(now<20000);
+    now+=10; assert(now<200000);
+    if(busy && !rotating && inject_obstacle && moves==1 && now-move_started>=500) {busy=0;stopped=2;}
     if(busy && now>=deadline) {
         busy=0;
-        if(inject_obstacle && moves==1 && turns==0) stopped=2;
+        if(inject_obstacle && moves==1 && !rotating) stopped=2;
         else physical=destination;
     }
-    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE")) {
-        if(!ack++) test_gpioc.IDR &= ~GPIO_Pin_11;
-        else test_gpioc.IDR |= GPIO_Pin_11;
+    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE") || !strcmp(last_status,"GOAL FOUND")) {
+        if(ack++<90) test_gpioc.IDR &= ~(1u<<12);
+        else test_gpioc.IDR |= (1u<<12);
     }
 }
 static void edge(int c,unsigned d)
@@ -117,20 +146,33 @@ static void edge(int c,unsigned d)
 }
 static void scenario(int obstacle)
 {
+    nm_init_size(&ground,9,0);fw_maze_size=9;
     for(unsigned c=0;c<NM_CELLS;++c) ground.cell[c]=(nm_cell_t){15,15,0,0};
-    edge(0,NM_NORTH);edge(9,NM_NORTH);edge(18,NM_EAST);edge(19,NM_EAST);
-    edge(20,NM_EAST);edge(20,NM_NORTH);edge(21,NM_NORTH);edge(29,NM_EAST);
-    now=moves=turns=wall_arrivals=draws=saves=ack=0; saved_size=0;
+    edge(0,NM_NORTH);edge(16,NM_NORTH);edge(32,NM_EAST);edge(33,NM_EAST);
+    edge(34,NM_EAST);edge(34,NM_NORTH);edge(35,NM_NORTH);edge(50,NM_EAST);
+    now=moves=turns=wall_arrivals=draws=saves=ack=extensions=0; saved_size=0;
     busy=stopped=0; inject_obstacle=obstacle; last_status[0]=0;
     physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
     fw_app_init();
+    fw_cal_data_t calibration={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
+        .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
+    assert(!fw_app_calibration_commit(&calibration));
+    for(unsigned side=0;side<2;++side) {
+        fw_corner_data_t corner={.valid=1,.side=side,.post_um=173000,.geometry=calibration.geometry};
+        for(unsigned facing=0;facing<2;++facing)for(unsigned i=0;i<3;++i)
+            corner.point[facing][i]=(fw_corner_point_t){.speed=i==0?40:i==1?120:220,.mask=2,
+                .raw_open_um={0,facing?-30000:45000},.raw_close_um={0,facing?-32000:42000},
+                .open_um={0,facing?-26000:50000},.close_um={0,facing?-35000:40000}};
+        assert(!fw_app_corner_commit(&corner));
+    }
+    saves=0;
     int result=fw_app_discover();
     assert(saves==1);
     if(!obstacle) {
-        assert(!result && moves>=8 && turns>=4 && wall_arrivals>=2 && draws>=10);
-        assert(physical.x==0 && physical.y==0 && !strcmp(last_status,"OPTIMAL PATH"));
+        assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
+        assert(physical.x==0 && physical.y==0 && physical.heading==0 && !strcmp(last_status,"OPTIMAL PATH"));
         assert(fw_app_ready() && fw_app_maze_count()==1);
         fw_saved_maze_t entry=*fw_app_maze(0);
         fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
@@ -138,6 +180,10 @@ static void scenario(int obstacle)
         save_failure=1; assert(fw_app_maze_delete(0));save_failure=0;
         assert(fw_app_maze_count()==1);
         assert(!fw_app_maze_load(0));
+        unsigned exploration_moves=moves;
+        now=moves=turns=ack=extensions=0;last_status[0]=0;test_gpioc.IDR=0xffff;
+        assert(!fw_app_run() && !strcmp(last_status,"GOAL FOUND"));
+        assert(moves<exploration_moves && moves<=2); /* Known straights are grouped, even at 260 mm/s. */
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
     } else {
         assert(result==-1 && fw_last_stop_code==2 && moves==1);
@@ -151,7 +197,7 @@ static void calibration_snapshot(void)
       .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
     assert(fw_cal_valid(&d));
     fw_motion_init(); assert(!fw_app_calibration_commit(&d));
-    assert(saved_schema==6 && applied_pitch==179000);
+    assert(saved_schema==7 && applied_pitch==179000);
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     fw_cal_data_t changed=d; changed.front[0].on_um=75000;
     save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
@@ -162,20 +208,25 @@ static void calibration_snapshot(void)
     assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     save_failure=1;assert(fw_app_battery_commit(3100,8300));save_failure=0;
     assert(fw_battery_reference().raw==3000);
-    saved_schema=5;saved_size-=sizeof(fw_battery_reference_t);
-    fw_app_init();assert(!fw_battery_reference().raw);
-    assert(!memcmp(fw_app_calibration(),&d,sizeof d));
-    size_t old_size=saved_size-sizeof(fw_library_t)-24;
-    saved_schema=4; saved_size=old_size;
-    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
-    size_t legacy_size=old_size-sizeof d-sizeof(fw_rotation_data_t)-2*sizeof(fw_corner_data_t);
-    saved_schema=3; saved_size=legacy_size+sizeof d;
-    fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
-    unsigned char legacy[2048]; memcpy(legacy,saved_snapshot,legacy_size);
-    saved_schema=2; saved_size=legacy_size;
-    fw_app_init(); assert(!fw_cal_valid(fw_app_calibration()) && applied_pitch==179000);
+    /* Construct the frozen legacy ABI, rather than relabelling a current map. */
+    snapshot_t latest;memcpy(&latest,saved_snapshot,sizeof latest);
+    snapshot_v6_t old={0};old.base.settings=zhonxSettings;
+    nm_map_t empty;nm_init_size(&empty,9,0);
+    for(unsigned y=0;y<9;++y)for(unsigned x=0;x<9;++x)old.base.map.cell[y*9+x]=empty.cell[y*NM_SIDE+x];
+    old.base.search_speed=120;old.base.run_speed=200;
+    old.measurements=latest.measurements;old.battery=latest.battery;
+    const size_t sizes[]={sizeof(snapshot_v2_t),sizeof(snapshot_v3_t),sizeof(snapshot_v4_t),SNAPSHOT_V5_SIZE,sizeof(snapshot_v6_t)};
+    for(unsigned schema=2;schema<=6;++schema) {
+        memcpy(saved_snapshot,&old,sizeof old);saved_schema=schema;saved_size=sizes[schema-2];
+        fw_app_init();
+        if(schema>=3)assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+        else assert(!fw_app_calibration()->valid);
+        assert(fw_battery_reference().raw==(schema==6?3000u:0u));
+        assert(applied_pitch==179000);
+        assert(!fw_app_settings_save() && saved_schema==7);
+        fw_app_init();if(schema>=3)assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    }
     assert(!fw_app_calibration_commit(&d));
-    assert(!memcmp(saved_snapshot,legacy,legacy_size));
     fw_rotation_data_t rotation={.valid=1,.geometry=d.geometry};
     for(unsigned i=0;i<3;++i) rotation.point[i]=(fw_rotation_point_t){.speed=40+40*i,.quarter_um={66000,65000}};
     assert(!fw_app_rotation_commit(&rotation));

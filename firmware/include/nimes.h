@@ -1,15 +1,24 @@
 #ifndef NIMES_H
 #define NIMES_H
 #include <stdint.h>
-#define NM_SIDE 9
+#define NM_SIDE 16
 #define NM_CELLS (NM_SIDE * NM_SIDE)
 #define NM_SEARCH_MS UINT32_C(300000)
 enum { NM_NORTH, NM_EAST, NM_SOUTH, NM_WEST };
 typedef struct { uint8_t known, walls, visited, reserved; } nm_cell_t;
-typedef struct { nm_cell_t cell[NM_CELLS]; } nm_map_t;
+typedef struct {
+    nm_cell_t cell[NM_CELLS];
+    uint8_t side,start_x,start_y,start_heading,axes,reserved[3];
+} nm_map_t;
 typedef struct { uint8_t x, y, heading; } nm_pose_t;
 typedef struct { uint8_t direction[NM_CELLS]; uint16_t length; uint32_t cost; } nm_route_t;
 void nm_init(nm_map_t *map);
+void nm_init_size(nm_map_t *,unsigned side,int automatic_origin);
+unsigned nm_size(const nm_map_t *);
+nm_pose_t nm_origin(const nm_map_t *);
+int nm_next(const nm_map_t *,int cell,unsigned direction);
+/* Rebase an initially unanchored map as openings reveal its extent. */
+int nm_observe_auto(nm_map_t *,nm_pose_t *,uint8_t walls);
 int nm_neighbour(int cell, unsigned direction);
 int nm_edge(nm_map_t *map, int cell, unsigned direction, int wall);
 /* Observe front, left, right at a cell centre; bit 0=front, 1=left, 2=right. */

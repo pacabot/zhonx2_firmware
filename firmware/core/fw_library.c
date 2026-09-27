@@ -6,17 +6,18 @@ int fw_maze_certify(const nm_map_t *m,unsigned corner,unsigned heading,nm_route_
 {
     uint8_t goals[NM_CELLS]; nm_route_t optimistic={0};
     if(corner>3 || heading>3 || !nm_valid(m) || nm_goal(m,goals)!=1) return 0;
-    nm_pose_t start=fw_maze_origin(corner,heading);
+    nm_pose_t start=nm_origin(m);
     memset(route,0,sizeof *route);
-    return !nm_route(m,start,goals,0,route) && route->length &&
-        !nm_route(m,start,goals,1,&optimistic) && route->cost==optimistic.cost;
+    if(nm_route(m,start,goals,0,route) || !route->length)return 0;
+    if(m->axes!=3)return nm_frontier(m,start,&optimistic)<0;
+    return !nm_route(m,start,goals,1,&optimistic) && route->cost==optimistic.cost;
 }
 int fw_library_valid(const fw_library_t *l)
 {
     if(l->count>FW_MAZE_SLOTS) return 0;
     for(unsigned i=0;i<l->count;++i) {
         const fw_saved_maze_t *m=&l->item[i]; nm_route_t r;
-        if(!m->id || m->search_ms>NM_SEARCH_MS || !fw_maze_certify(&m->map,m->corner,m->heading,&r) ||
+        if(!m->id || m->search_ms>(m->map.side==16?600000u:NM_SEARCH_MS) || !fw_maze_certify(&m->map,m->corner,m->heading,&r) ||
             r.length!=m->route.length || r.cost!=m->route.cost ||
             memcmp(r.direction,m->route.direction,r.length)) return 0;
         for(unsigned j=0;j<i;++j) if(l->item[j].id==m->id) return 0;
@@ -26,7 +27,7 @@ int fw_library_valid(const fw_library_t *l)
 int fw_library_put(fw_library_t *l,const nm_map_t *map,unsigned corner,unsigned heading,uint32_t ms)
 {
     nm_route_t route;
-    if(!fw_maze_certify(map,corner,heading,&route) || ms>NM_SEARCH_MS) return -1;
+    if(!fw_maze_certify(map,corner,heading,&route) || ms>(map->side==16?600000u:NM_SEARCH_MS)) return -1;
     unsigned at=0;
     for(;at<l->count;++at) if(l->item[at].corner==corner && l->item[at].heading==heading &&
         !memcmp(&l->item[at].map,map,sizeof *map)) break;

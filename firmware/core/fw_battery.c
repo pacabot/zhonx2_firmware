@@ -4,6 +4,8 @@ static fw_battery_reference_t reference;
 static fw_battery_status_t state;
 static uint32_t last,quiet;
 static int initialized;
+static unsigned supply_mv=3300;
+void fw_battery_supply(unsigned mv) {supply_mv=mv>=2700 && mv<=3600?mv:0;}
 static int32_t filtered_q8;
 int fw_battery_reference_valid(const fw_battery_reference_t *r)
 {
@@ -35,7 +37,8 @@ void fw_battery_sample(unsigned raw,uint32_t now,int moving)
     int fresh_start=!initialized || dt>1500;
     last=now;state.raw=raw;
     state.calibrated=reference.raw!=0;
-    if(raw<16 || raw>=4090) {
+    state.lower_bound=raw>=4090;
+    if(raw<16 || raw>4095 || (!reference.raw && !supply_mv)) {
         state.sample_valid=state.soc_valid=state.rested=0;state.pack_mv=0;initialized=0;return;
     }
     if(fresh_start) {filtered_q8=(int32_t)raw*256;quiet=now;}
@@ -44,9 +47,13 @@ void fw_battery_sample(unsigned raw,uint32_t now,int moving)
     if(moving)quiet=now;
     state.rested=!moving && (uint32_t)(now-quiet)>=5000;
     unsigned filtered=(unsigned)(filtered_q8+128)/256;state.raw=filtered;
-    if(!state.calibrated)return;
-    state.pack_mv=(unsigned)(((uint64_t)filtered*reference.pack_mv+reference.raw/2)/reference.raw);
-    if(state.pack_mv<5000 || state.pack_mv>8800) {state.sample_valid=state.soc_valid=0;return;}
+    /* TEST_BAT: 10 kOhm above PA4, 6.8 kOhm to ground. VREFINT
+     * compensates actual VDDA; an optional meter reference corrects divider gain.
+     * At ADC saturation this conversion is only a lower bound. */
+    state.pack_mv=state.calibrated?
+        (unsigned)(((uint64_t)filtered*reference.pack_mv+reference.raw/2)/reference.raw):
+        (unsigned)(((uint64_t)filtered*supply_mv*168+4095*34)/(4095*68));
+    if(state.pack_mv<5000 || state.pack_mv>8800) {state.sample_valid=state.soc_valid=0;initialized=0;return;}
     if(!moving && (uint32_t)(now-quiet)>=5000) {
         unsigned percent=fw_battery_percent(state.pack_mv);
         if(!state.soc_valid || abs((int)percent-(int)state.percent)>=2)state.percent=percent;

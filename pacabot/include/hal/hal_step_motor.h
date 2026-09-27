@@ -247,5 +247,7 @@ void hal_step_motor_pair_start(long right, long left);
 void hal_step_motor_pair_stop(void);
 void hal_step_motor_pair_rate(unsigned long right, unsigned long left);
 unsigned long hal_step_motor_pair_remaining(unsigned int wheel);
+unsigned long hal_step_motor_pair_count(unsigned int wheel);
+void hal_step_motor_pair_extend(unsigned long pulses);
 void hal_step_motor_pair_release(void);
 #endif /* __HAL_STEP_MOTOR_H__ */

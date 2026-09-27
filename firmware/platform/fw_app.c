@@ -19,49 +19,34 @@
 #include "hal/hal_step_motor.h"
 #include <stdio.h>
 #include <string.h>
-#define SNAPSHOT_SCHEMA 6
-/* ARM ABI-specific snapshot. Change schema for any layout or settings ABI change. */
-typedef struct {
-    robot_settings settings;
-    nm_map_t map;
-    uint32_t corner, heading, search_speed, run_speed, search_ms, has_map;
-} snapshot_v2_t;
-typedef struct { snapshot_v2_t base; fw_cal_data_t calibration; } snapshot_v3_t;
-typedef struct {
-    fw_cal_data_t wall;
-    fw_rotation_data_t rotation;
-    fw_corner_data_t corner[2];
-} calibration_bundle_t;
-typedef struct { snapshot_v2_t base; calibration_bundle_t measurements; } snapshot_v4_t;
-typedef struct {
-    snapshot_v2_t base;
-    calibration_bundle_t measurements;
-    fw_library_t library;
-    uint32_t learned;
-    int32_t nose, width, inner, pitch, post;
-    fw_battery_reference_t battery;
-} snapshot_t;
-#define SNAPSHOT_V5_SIZE offsetof(snapshot_t,battery)
+#include "fw_snapshot.h"
+#define SNAPSHOT_SCHEMA FW_SNAPSHOT_SCHEMA
 static fw_library_t library;
 static int learned;
 static snapshot_t snapshot_buffer; /* Foreground only; keep the 8 KiB stack for planning. */
 _Static_assert(sizeof(snapshot_t)<FW_STORE_SIZE-32,"persistent library capacity");
 _Static_assert(sizeof(snapshot_t)%4==0,"snapshot alignment");
 #ifdef __arm__
-_Static_assert(sizeof(snapshot_t)==4708,"battery dump ARM ABI");
+_Static_assert(sizeof(snapshot_t)==12492,"snapshot dump ARM ABI");
+_Static_assert(offsetof(snapshot_t,measurements)==1120,"calibration bundle offset");
+_Static_assert(offsetof(snapshot_t,nose)==12460,"geometry offset");
+_Static_assert(offsetof(snapshot_t,battery)==12480,"battery reference offset");
+_Static_assert(sizeof(snapshot_v6_t)==4708,"legacy snapshot ARM ABI");
 _Static_assert(sizeof(snapshot_v2_t)==412,"calibration dump ARM ABI");
 _Static_assert(sizeof(calibration_bundle_t)==832,"calibration dump layout");
 #endif
 static nm_map_t maze;
-static uint32_t search_ms, search_epoch, search_base;
+static uint32_t search_ms, search_epoch, search_base, last_run_ms;
+static uint32_t search_limit(void) {return nm_size(&maze)==16?600000u:NM_SEARCH_MS;}
 static int search_clock_running;
 static uint32_t search_used(uint32_t now)
 {
     uint32_t elapsed=search_clock_running ? now-search_epoch : 0;
     uint32_t base=search_clock_running ? search_base : search_ms;
-    return elapsed>=NM_SEARCH_MS-base ? NM_SEARCH_MS : base+elapsed;
+    return base>=search_limit() || elapsed>=search_limit()-base ? search_limit() : base+elapsed;
 }
 static int has_map;
+volatile unsigned fw_loaded_schema;
 static calibration_bundle_t measurements;
 int fw_cal_nose_tenth_mm=470, fw_cal_width_tenth_mm=940;
 int fw_cal_inner_mm=167, fw_cal_pitch_mm=179, fw_cal_post_mm=173;
@@ -95,15 +80,17 @@ static void apply_calibration(void)
     fw_motion_geometry(g?g->pitch_um:179000,wall->valid?wall->front[0].on_um:0,g?g->inner_um:167000);
     fw_motion_rotation_profile(&measurements.rotation);
     fw_motion_wall_profile(wall);
+    fw_motion_corner_profiles(&measurements.corner[0],&measurements.corner[1]);
     if (measurements.corner[0].valid) fw_cal_post_mm=(int)measurements.corner[0].post_um/1000;
     else if (measurements.corner[1].valid) fw_cal_post_mm=(int)measurements.corner[1].post_um/1000;
 }
 static nm_pose_t displayed_pose;
 volatile unsigned fw_last_stop_code;
 int fw_start_corner=0, fw_start_heading=NM_NORTH, fw_search_speed=220, fw_run_speed=260;
+int fw_maze_size=9;
 static int parameters_valid(void)
 {
-    return fw_start_corner>=0 && fw_start_corner<=3 && fw_start_heading>=0 && fw_start_heading<4 &&
+    return (fw_maze_size==6 || fw_maze_size==9 || fw_maze_size==16) && fw_start_corner>=0 && fw_start_corner<=3 && fw_start_heading>=0 && fw_start_heading<4 &&
         fw_search_speed>=20 && fw_search_speed<=300 && fw_run_speed>=20 && fw_run_speed<=300;
 }
 static int settings_valid(const robot_settings *s)
@@ -113,34 +100,63 @@ static int settings_valid(const robot_settings *s)
         s->correction_p>0 && s->correction_i>0 && s->max_correction<=MAX_SPEED &&
         s->max_speed_distance<=1000000 && s->emergency_decel>0 && s->emergency_decel<=10000;
 }
+static void import_map(nm_map_t *map,const legacy_map_t *old,unsigned corner,unsigned heading)
+{
+    nm_init_size(map,9,0);
+    for(unsigned y=0;y<9;++y)for(unsigned x=0;x<9;++x)map->cell[y*NM_SIDE+x]=old->cell[y*9+x];
+    nm_pose_t start=fw_maze_origin(corner,heading);
+    map->start_x=start.x;map->start_y=start.y;map->start_heading=start.heading;
+}
 static int load(void)
 {
-    snapshot_t *current=&snapshot_buffer; memset(current,0,sizeof *current); snapshot_v2_t s;
-    int legacy=0, format5=0;
-    int loaded6=!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,current,sizeof *current);
-    if (loaded6 || !fw_store_load(&fw_stm32_flash,5,current,SNAPSHOT_V5_SIZE)) {
-        if(!loaded6)current->battery=(fw_battery_reference_t){0};
-        if(!fw_battery_reference_valid(&current->battery))return -1;
-        if (!bundle_valid(&current->measurements) || !fw_library_valid(&current->library) || current->learned>1) return -1;
-        format5=1; s=current->base;
+    snapshot_t *current=&snapshot_buffer;memset(current,0,sizeof *current);
+    snapshot_base_t s;int legacy=0,format5=0;unsigned loaded_schema=7;
+    if(!fw_store_load(&fw_stm32_flash,SNAPSHOT_SCHEMA,current,sizeof *current)) {
+        format5=1;s=current->base;
     } else {
         memset(current,0,sizeof *current);
-        snapshot_v4_t old4; snapshot_v3_t old;
-        if (!fw_store_load(&fw_stm32_flash,4,&old4,sizeof old4)) {
-            if (!bundle_valid(&old4.measurements)) return -1;
-            s=old4.base; current->measurements=old4.measurements;
-        } else if (!fw_store_load(&fw_stm32_flash,3,&old,sizeof old)) {
-            if (old.calibration.valid && !fw_cal_valid(&old.calibration)) return -1;
-            s=old.base; current->measurements.wall=old.calibration;
-        } else if (fw_store_load(&fw_stm32_flash,2,&s,sizeof s)) {
-            legacy=1;
-            if (fw_store_load(&fw_stm32_flash,1,&s,sizeof s)) return -1;
+        snapshot_v6_t old;memset(&old,0,sizeof old);
+        if(!fw_store_load(&fw_stm32_flash,6,&old,sizeof old)) {loaded_schema=6;format5=1;}
+        else if(!fw_store_load(&fw_stm32_flash,5,&old,SNAPSHOT_V5_SIZE)) {loaded_schema=5;format5=1;}
+        else if(!fw_store_load(&fw_stm32_flash,4,&old,sizeof(snapshot_v4_t)))loaded_schema=4;
+        else if(!fw_store_load(&fw_stm32_flash,3,&old,sizeof(snapshot_v3_t)))loaded_schema=3;
+        else if(!fw_store_load(&fw_stm32_flash,2,&old,sizeof(snapshot_v2_t)))loaded_schema=2;
+        else {legacy=1;loaded_schema=1;if(fw_store_load(&fw_stm32_flash,1,&old,sizeof(snapshot_v2_t)))return -1;}
+        if(loaded_schema<6)memset(&old.battery,0,sizeof old.battery);
+        if(loaded_schema<5) {
+            memset(&old.library,0,sizeof old.library);old.learned=0;
+            old.nose=old.width=old.inner=old.pitch=old.post=0;
         }
+        if(loaded_schema<4) {memset(&old.measurements.rotation,0,sizeof old.measurements.rotation);
+            memset(old.measurements.corner,0,sizeof old.measurements.corner);}
+        if(loaded_schema<3)memset(&old.measurements.wall,0,sizeof old.measurements.wall);
+        current->base.settings=old.base.settings;
+        import_map(&current->base.map,&old.base.map,old.base.corner,old.base.heading);
+        current->base.corner=old.base.corner;current->base.heading=old.base.heading;
+        current->base.search_speed=old.base.search_speed;current->base.run_speed=old.base.run_speed;
+        current->base.search_ms=old.base.search_ms;current->base.has_map=old.base.has_map;
+        current->measurements=old.measurements;current->learned=old.learned;
+        current->maze_size=9;
+        current->nose=old.nose;current->width=old.width;current->inner=old.inner;
+        current->pitch=old.pitch;current->post=old.post;current->battery=old.battery;
+        if(old.library.count>FW_MAZE_SLOTS)return -1;
+        current->library.count=old.library.count;current->library.next_id=old.library.next_id;
+        for(unsigned i=0;i<old.library.count;++i) {
+            fw_saved_maze_t *to=&current->library.item[i];const legacy_maze_t *from=&old.library.item[i];
+            import_map(&to->map,&from->map,from->corner,from->heading);
+            to->corner=from->corner;to->heading=from->heading;to->id=from->id;to->search_ms=from->search_ms;
+            if(!fw_maze_certify(&to->map,to->corner,to->heading,&to->route))return -1;
+        }
+        s=current->base;
     }
+    if(!fw_battery_reference_valid(&current->battery) || !bundle_valid(&current->measurements) ||
+       !fw_library_valid(&current->library) || current->learned>1)return -1;
     if (!nm_valid(&s.map) ||
         !settings_valid(&s.settings) || s.corner>3 || s.heading>3 || s.search_speed<20 ||
         s.search_speed>300 || s.run_speed<20 || s.run_speed>300 || s.has_map>1 ||
-        s.search_ms>NM_SEARCH_MS) return -1;
+        s.search_ms>(nm_size(&s.map)==16?600000u:NM_SEARCH_MS)) return -1;
+    if(current->maze_size!=6 && current->maze_size!=9 && current->maze_size!=16)return -1;
+    fw_maze_size=current->maze_size;
     zhonxSettings=s.settings; maze=s.map; has_map=s.has_map; search_ms=s.search_ms;
     search_clock_running=0;
     fw_start_corner=s.corner; fw_start_heading=s.heading;
@@ -158,10 +174,10 @@ static int load(void)
         fw_cal_nose_tenth_mm=current->nose; fw_cal_width_tenth_mm=current->width;
         fw_cal_inner_mm=current->inner; fw_cal_pitch_mm=current->pitch; fw_cal_post_mm=current->post;
     }
-    fw_battery_set_reference(current->battery);
+    fw_battery_set_reference(current->battery);fw_loaded_schema=loaded_schema;
     return 0;
 }
-void fw_app_init(void) { fw_battery_set_reference((fw_battery_reference_t){0}); has_map=learned=0; memset(&library,0,sizeof library); nm_init(&maze); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
+void fw_app_init(void) { fw_loaded_schema=0; fw_battery_set_reference((fw_battery_reference_t){0}); has_map=learned=0; memset(&library,0,sizeof library); nm_init_size(&maze,fw_maze_size,0); memset(&measurements,0,sizeof measurements); apply_calibration(); (void)load(); }
 static int save(void)
 {
     if (fw_motion_busy() || !parameters_valid() || !settings_valid(&zhonxSettings)) return -1;
@@ -173,7 +189,7 @@ static int save(void)
     s->measurements=measurements; s->library=library; s->learned=learned;
     s->nose=fw_cal_nose_tenth_mm; s->width=fw_cal_width_tenth_mm;
     s->inner=fw_cal_inner_mm; s->pitch=fw_cal_pitch_mm; s->post=fw_cal_post_mm;
-    s->battery=fw_battery_reference();
+    s->battery=fw_battery_reference();s->maze_size=(uint32_t)fw_maze_size;
     /* Single-bank flash stalls instruction fetch. Never save while motors move. */
     fw_motion_stop();
     return fw_store_save(&fw_stm32_flash,SNAPSHOT_SCHEMA,s,sizeof *s);
@@ -248,9 +264,9 @@ int fw_app_maze_load(unsigned index)
 {
     if(fw_motion_busy() || index>=library.count) return -1;
     const fw_saved_maze_t *m=&library.item[index];
-    maze=m->map; fw_start_corner=(int)m->corner; fw_start_heading=(int)m->heading;
+    maze=m->map;fw_maze_size=maze.side; fw_start_corner=(int)m->corner; fw_start_heading=(int)m->heading;
     search_ms=m->search_ms; search_clock_running=0; has_map=learned=1;
-    displayed_pose=fw_maze_origin(m->corner,m->heading); return 0;
+    displayed_pose=nm_origin(&m->map); return 0;
 }
 int fw_app_maze_delete(unsigned index)
 {
@@ -261,18 +277,12 @@ int fw_app_maze_delete(unsigned index)
     memmove(&library.item[index+1],&library.item[index],(count-index-1)*sizeof previous);
     library.item[index]=previous; library.count=count; return -1;
 }
-static nm_pose_t start_pose(void)
-{
-    /* 0=SW, 1=SE, 2=NE, 3=NW; heading 0=N,1=E,2=S,3=W. */
-    nm_pose_t p={(fw_start_corner==1 || fw_start_corner==2)?8:0,
-                 fw_start_corner>=2?8:0,(uint8_t)fw_start_heading};
-    return p;
-}
+static nm_pose_t start_pose(void) {return nm_origin(&maze);}
 static int cell(nm_pose_t p) { return p.y*NM_SIDE+p.x; }
 static void advance(nm_pose_t *p, unsigned count)
 {
     for (unsigned i=0;i<count;++i) {
-        int n=nm_neighbour(cell(*p),p->heading);
+        int n=nm_next(&maze,cell(*p),p->heading);
         p->x=n%NM_SIDE; p->y=n/NM_SIDE;
     }
 }
@@ -282,7 +292,7 @@ static uint8_t observation(uint8_t s)
 }
 static void radio_off(void)
 {
-    /* Nimes forbids external communication during autonomous trials. */
+    /* Autonomous trials keep external radios disabled. */
     USART1->CR1 &= ~USART_CR1_UE;
     USART2->CR1 &= ~USART_CR1_UE;
     USART3->CR1 &= ~USART_CR1_UE;
@@ -311,154 +321,224 @@ static int wait_hand(nm_pose_t pose)
 }
 static void map_message(nm_pose_t pose, const char *message)
 {
-    fw_ui_maze(&maze,pose,message,0,search_ms,live_sensors());
-    /* Keep the map and the full stop reason visible until acknowledged. */
-    while (!fw_select_pressed() && !fw_cancel_pressed()) __WFI();
-    while (fw_select_pressed()) __WFI();
+    unsigned page=0,level=0;int x=0,y=0;uint32_t drawn=0;
+    const unsigned scales[]={0,16,24,32};
+    fw_ui_map_progress(0);
+    /* Escape zooms only after motion has stopped. All four joystick directions
+     * pan; centre cycles result pages, a long centre press exits. */
+    while((GPIOC->IDR&0x3f00)!=0x3f00)__WFI();
+    for(;;) {
+        uint32_t now=hal_os_get_systicks();
+        if(!drawn || now-drawn>=100) {
+            fw_ui_map_view(scales[level],x,y);
+            if(!page)fw_ui_maze(&maze,pose,message,0,search_ms,live_sensors());
+            else fw_ui_result(message,search_ms,last_run_ms,page);
+            drawn=now;
+        }
+        unsigned keys=(~GPIOC->IDR)&0x3f00;
+        if(keys) {
+            uint32_t pressed=now;
+            while(((~GPIOC->IDR)&0x3f00)==keys) {
+                if((keys&(1u<<12)) && hal_os_get_systicks()-pressed>=800) {
+                    while(!(GPIOC->IDR&(1u<<12)))__WFI();
+                    fw_ui_map_view(16,0,0);return;
+                }
+                __WFI();
+            }
+            if(hal_os_get_systicks()-pressed<20)continue;
+            if(keys&FW_ESCAPE_PIN) {level=(level+1)%4;page=0;}
+            if(keys&(1u<<12))page=(page+1)%3;
+            if(keys&FW_UP_PIN) {++y;page=0;}
+            if(keys&FW_DOWN_PIN) {--y;page=0;}
+            if(keys&FW_BACK_PIN) {--x;page=0;}
+            if(keys&(1u<<11)) {++x;page=0;}
+            if(x>16)x=16;
+            if(x< -16)x=-16;
+            if(y>16)y=16;
+            if(y< -16)y=-16;
+            drawn=0;
+        }
+        __WFI();
+    }
 }
 int fw_app_show_map(void)
 {
     if (!has_map) { hal_ui_display_prompt(app_context.ui,"MAP","NO MAP"); return -1; }
     map_message(displayed_pose,"SAVED MAP"); return 0;
 }
-/* Foreground state machine. The pulse IRQs, 200 Hz acquisition phases and
- * 1 kHz motion controller run independently while path planning/OLED run here. */
+/* Foreground planning; sensors, position observer and pulse generation remain
+ * interrupt-driven. Early stable observations can append the next cell in flight. */
 static unsigned run_speed_override;
-static int execute(int timed_run, int fresh)
-{
-    if (!parameters_valid()) {
-        hal_ui_display_prompt(app_context.ui,"9x9","INVALID SETTINGS"); return -1;
-    }
-    if (timed_run && !fw_app_ready()) {
-        hal_ui_display_prompt(app_context.ui,"9x9","LEARN A MAZE FIRST"); return -1;
-    }
-    unsigned commanded_speed=timed_run?(run_speed_override?run_speed_override:(unsigned)fw_run_speed):(unsigned)fw_search_speed;
-    fw_motion_init();
-    if (fresh) { learned=0; nm_init(&maze); search_ms=0; has_map=1; search_clock_running=0; }
-    nm_pose_t origin=start_pose(), pose=origin;
-    displayed_pose=pose; fw_last_stop_code=0;
-    if (wait_hand(pose)) return -1;
-    radio_off();
-    if (timed_run) { search_ms=search_used(hal_os_get_systicks()); search_clock_running=0; }
-    else if (!search_clock_running) {
-        search_base=search_ms; search_epoch=hal_os_get_systicks(); search_clock_running=1;
-    }
-    nm_route_t route={0}, prepared={0};
-    uint8_t goals[NM_CELLS], home[NM_CELLS]={0}; home[cell(origin)]=1;
-    uint32_t started=hal_os_get_systicks(), stopped=started, ui_time=started, seen=0;
-    unsigned moving=0, turn_heading=0, wall_reached=0;
-    uint32_t mismatch_since=0; int mismatch=0;
-    int turning=0, returning=0, certified=0, prepared_ok=0, state=0, result=-1, at_start=1;
-    const char *message="STOPPED";
-    for (;;) {
-        uint32_t now=hal_os_get_systicks();
-        if (fw_cancel_pressed()) { message="USER STOP"; break; }
-        if (!timed_run && search_used(now)>=NM_SEARCH_MS) { message="5 MIN ELAPSED"; break; }
-        if (fw_motion_fault()) {
-            fw_last_stop_code=(unsigned)fw_motion_fault();
-            message=fw_motion_fault()==2?"EARLY OBSTACLE":"SENSOR OR TIMEOUT"; break;
-        }
-        if (now-ui_time>=100) {
-            fw_ui_maze(&maze,pose,returning?"RETURN":timed_run?"RUN":"EXPLORATION",
-                       fw_motion_busy()?commanded_speed:0,
-                       timed_run?now-started:search_used(now),live_sensors());
-            ui_time=now;
-        }
-        if (state==1) { /* TURN or MOVE in progress; plan from its destination now. */
-            if (!prepared_ok && moving && (returning || timed_run)) {
-                nm_pose_t destination=pose; advance(&destination,moving);
-                prepared_ok=!nm_route(&maze,destination,returning?home:goals,0,&prepared);
-            }
-            if (fw_motion_busy()) { __WFI(); continue; }
-            if (turning) { pose.heading=turn_heading; wall_reached=0; }
-            else { advance(&pose,moving); wall_reached=fw_motion_wall_arrival(); }
-            displayed_pose=pose;
-            moving=0; turning=0; stopped=now; seen=0; state=0;
-        }
-        /* Only map at stopped cell centres, after three full stable scan periods.
-         * Interior cells of grouped moves are already mapped before that move. */
-        hal_sensor_snapshot scan;
-        if (!hal_sensor_snapshot_read(&scan) || now-scan.timestamp>50 || now-stopped<40 || scan.sequence==seen) {
-            __WFI(); continue;
-        }
-        seen=scan.sequence;
-        if (nm_observe(&maze,pose,observation(scan.filtered) | (wall_reached?1u:0u))) {
-            /* Re-read before abandoning the run for a single binary-sensor disagreement. */
-            if (!mismatch) { mismatch=1; mismatch_since=now; }
-            if (now-mismatch_since<150) { __WFI(); continue; }
-            message="MAP CONFLICT"; fw_last_stop_code=3; break;
-        }
-        mismatch=0;
-        if (at_start && maze.cell[cell(pose)].known==15) {
-            unsigned walls=maze.cell[cell(pose)].walls, count=0;
-            for (unsigned i=0;i<4;++i) count+=(walls>>i)&1u;
-            if (count!=3) { message="CHECK START CELL"; break; }
-            at_start=0;
-        }
-        int rooms=nm_goal(&maze,goals);
-        if (rooms>1) { message="AMBIGUOUS GOAL"; break; }
-        if (timed_run) {
-            if (rooms!=1) { message="UNKNOWN GOAL"; break; }
-            if (goals[cell(pose)]) { message="GOAL FOUND"; result=0; break; }
-            if (prepared_ok) route=prepared;
-            else if (nm_route(&maze,pose,goals,0,&route)) { message="NO PATH"; break; }
-        } else if (returning) {
-            if (home[cell(pose)]) { message=certified?"OPTIMAL PATH":"BACK AT START"; result=0; break; }
-            if (prepared_ok) route=prepared;
-            else if (nm_route(&maze,pose,home,0,&route)) { message="NO RETURN PATH"; break; }
-        } else if (rooms==1) {
-            int r=nm_refine(&maze,pose,origin,goals,&route);
-            if (r==1) { certified=1; returning=1; continue; }
-            if (r<0) { message="INCOMPLETE PATH"; break; }
-        } else if (nm_frontier(&maze,pose,&route)) { message="NO FRONTIER"; break; }
-        prepared_ok=0;
-        if (!route.length) {
-            /* An unobserved edge can only be behind the current pose. Face it. */
-            unsigned d;
-            for (d=0;d<4;++d) if (!(maze.cell[cell(pose)].known & (1u<<d))) break;
-            if (d==4) { message="MAP ERROR"; break; }
-            turn_heading=d;
-        } else turn_heading=route.direction[0];
-        if (turn_heading!=pose.heading) {
-            int quarters=(turn_heading+4-pose.heading)%4;
-            if (quarters==3) quarters=-1;
-            if (fw_motion_turn(quarters*90)) { message="TURN REJECTED"; break; }
-            turning=1; state=1;
-        } else {
-            /* Traverse mapped straight corridors continuously, including the
-             * first unmapped destination, but never an unobserved edge. */
-            moving=1; int c=nm_neighbour(cell(pose),pose.heading);
-            while (moving<route.length && route.direction[moving]==pose.heading &&
-                   maze.cell[c].visited && maze.cell[c].known==15) {
-                c=nm_neighbour(c,pose.heading); ++moving;
-            }
-            /* An unseen or closed end wall may stop the final 30 mm. A known
-             * passage ahead must never be mistaken for a normal wall arrival. */
-            unsigned bit=1u<<pose.heading;
-            int accept_wall=!(maze.cell[c].known & bit) || (maze.cell[c].walls & bit);
-            if (fw_motion_straight_to(moving,commanded_speed,accept_wall)) {
-                message="MOVE REJECTED"; break;
-            }
-            state=1;
-        }
 
+static int plan_from(nm_pose_t pose,int timed,int *returning,int *certified,nm_route_t *route,const char **message)
+{
+    uint8_t goals[NM_CELLS],home[NM_CELLS]={0};nm_pose_t origin=nm_origin(&maze);
+    home[cell(origin)]=1;
+    int rooms=nm_goal(&maze,goals);
+    if(rooms>1) {*message="AMBIGUOUS GOAL";return -1;}
+    if(timed) {
+        if(rooms!=1) {*message="UNKNOWN GOAL";return -1;}
+        if(goals[cell(pose)]) {*message="GOAL FOUND";return 4;}
+        if(nm_route(&maze,pose,goals,0,route)) {*message="NO PATH";return -1;}
+    } else if(*returning) {
+        if(home[cell(pose)] && pose.heading!=origin.heading)return origin.heading;
+        if(home[cell(pose)]) {*message=*certified?"OPTIMAL PATH":"BACK AT START";return 4;}
+        if(nm_route(&maze,pose,home,0,route)) {*message="NO RETURN PATH";return -1;}
+    } else if(rooms==1) {
+        int result=nm_refine(&maze,pose,origin,goals,route);
+        if(result==1) {*certified=1;*returning=1;return plan_from(pose,0,returning,certified,route,message);}
+        if(result<0) {*message="INCOMPLETE PATH";return -1;}
+    } else if(nm_frontier(&maze,pose,route)) {*message=maze.axes==3?"NO FRONTIER":"START AMBIGUOUS";return -1;}
+    if(route->length)return route->direction[0];
+    const unsigned order[]={pose.heading,(pose.heading+3)%4,(pose.heading+1)%4,(pose.heading+2)%4};
+    for(unsigned i=0;i<4;++i) {
+        unsigned d=order[i];int n=nm_next(&maze,cell(pose),d);
+        if(n>=0 && (maze.cell[cell(pose)].known&(1u<<d)) &&
+           !(maze.cell[cell(pose)].walls&(1u<<d)) && !maze.cell[n].visited)return (int)d;
+    }
+    for(unsigned d=0;d<4;++d)if(!(maze.cell[cell(pose)].known&(1u<<d)))return (int)d;
+    *message="MAP ERROR";return -1;
+}
+static int32_t preview_distance(unsigned speed)
+{
+    if(!fw_cal_valid(&measurements.wall))return 0;
+    const fw_cal_geometry_t *g=&measurements.wall.geometry;
+    /* F10 must already have triggered even with filter latency and placement
+     * uncertainty. Two further identical scans confirm the observation. */
+    int32_t window=(int32_t)measurements.wall.front[1].on_um-(int32_t)g->inner_um/2-(int32_t)speed*40-5000;
+    for(unsigned side=0;side<2;++side)for(unsigned opening=0;opening<2;++opening) {
+        int32_t offset;
+        if(fw_corner_offset(&measurements.corner[opening?1-side:side],opening?1:0,speed,1,opening,&offset))return 0;
+        if(!opening)offset=-offset;
+        int32_t side_window=(int32_t)g->pitch_um/2-offset-5000;
+        if(window>side_window)window=side_window;
+    }
+    if(window<0)return 0;
+    return window>40000?40000:window;
+}
+static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_t *segment)
+{
+    nm_pose_t before=*target;
+    if(nm_observe_auto(&maze,target,walls))return -1;
+    int dx=(int)target->x-before.x,dy=(int)target->y-before.y;
+    pose->x+=dx;pose->y+=dy;segment->x+=dx;segment->y+=dy;
+    return 0;
+}
+static int execute(int timed_run,int fresh)
+{
+    if(!parameters_valid()) {hal_ui_display_prompt(app_context.ui,"Maze","INVALID SETTINGS");return -1;}
+    if(timed_run && !fw_app_ready()) {hal_ui_display_prompt(app_context.ui,"Maze","LEARN A MAZE FIRST");return -1;}
+    unsigned speed=timed_run?(run_speed_override?run_speed_override:(unsigned)fw_run_speed):(unsigned)fw_search_speed;
+    fw_motion_init();
+    if(fresh) {learned=0;nm_init_size(&maze,fw_maze_size,1);fw_start_corner=fw_start_heading=0;
+        search_ms=last_run_ms=0;has_map=1;search_clock_running=0;}
+    fw_ui_map_view(16,0,0);fw_ui_map_progress(0);
+    nm_pose_t pose=start_pose(),segment=pose;displayed_pose=pose;fw_last_stop_code=0;
+    if(wait_hand(pose))return -1;
+    radio_off();uint32_t started=hal_os_get_systicks();
+    if(!timed_run) {search_base=search_ms;search_epoch=started;search_clock_running=1;}
+    uint32_t stopped=started,ui_time=started,seen=0,mismatch_since=0;
+    unsigned moving=0,turn_heading=0,stable=0;int in_window=0;uint8_t candidate=0;
+    int state=0,turning=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
+    const char *message="STOPPED";nm_route_t route;
+    int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=preview_distance(speed);
+    for(;;) {
+        uint32_t now=hal_os_get_systicks();
+        if(fw_cancel_pressed()) {message="USER STOP";break;}
+        if(!timed_run && search_used(now)>=search_limit()) {message="TIME LIMIT";break;}
+        if(fw_motion_fault()) {fw_last_stop_code=(unsigned)fw_motion_fault();
+            message=fw_motion_fault()==2?"EARLY OBSTACLE":"SENSOR OR TIMEOUT";break;}
+        if(now-ui_time>=80) {
+            nm_pose_t visual=pose;
+            if(state && !turning) {
+                int32_t travel=fw_motion_travelled_um();if(travel<0)travel=0;
+                unsigned passed=(unsigned)(travel/pitch);if(passed>=moving)passed=moving-1;
+                visual=segment;advance(&visual,passed);
+                fw_ui_map_progress((travel-(int32_t)passed*pitch)*1000/pitch);
+            }
+            else fw_ui_map_progress(0);
+            fw_ui_maze(&maze,visual,returning?"RETURN":timed_run?"RUN":"EXPLORATION",
+                       fw_motion_speed(),timed_run?now-started:search_used(now),live_sensors());ui_time=now;
+        }
+        hal_sensor_snapshot scan;int scan_ready=hal_sensor_snapshot_read(&scan) && now-scan.timestamp<=50 && scan.sequence!=seen;
+        int window=state && !turning && preview>0 && fw_motion_travelled_um()>=(int32_t)moving*pitch-preview;
+        if(window && !in_window)stable=0;
+        in_window=window;
+        if(scan_ready) {
+            seen=scan.sequence;uint8_t value=observation(scan.filtered);
+            stable=value==candidate?stable+1:1;candidate=value;
+        }
+        if(state && fw_motion_busy()) {
+            if(!turning && !previewed && scan_ready && stable>=2 &&
+               fw_motion_travelled_um()>=(int32_t)moving*pitch-preview && preview>0) {
+                nm_pose_t destination=segment;advance(&destination,moving);
+                if(!observe_pose(&destination,candidate,&pose,&segment)) {
+                    prepared=plan_from(destination,timed_run,&returning,&certified,&route,&message);
+                    previewed=1;
+                    nm_pose_t next=destination;
+                    if(prepared==(int)pose.heading && !(candidate&1))advance(&next,1);
+                    int accept=!(maze.cell[cell(next)].known&(1u<<pose.heading)) ||
+                                (maze.cell[cell(next)].walls&(1u<<pose.heading));
+                    if(prepared==(int)pose.heading && !(candidate&1) && !fw_motion_extend(1,accept)) {
+                        pose=destination;displayed_pose=pose;++moving;previewed=0;stable=0;in_window=0;
+                    }
+                }
+            }
+            __WFI();continue;
+        }
+        if(state) {
+            if(turning) {pose.heading=turn_heading;stopped=now;stable=0;}
+            else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;}
+            displayed_pose=pose;moving=0;turning=0;state=0;
+        }
+        if(!previewed) {
+            if(!scan_ready || stable<2 || now-stopped<30) {__WFI();continue;}
+            nm_pose_t target=pose;
+            if(observe_pose(&target,candidate|(fw_motion_wall_arrival()?1:0),&pose,&segment)) {
+                if(!mismatch) {mismatch=1;mismatch_since=now;}
+                if(now-mismatch_since<150) {__WFI();continue;}
+                message="MAP CONFLICT";fw_last_stop_code=3;break;
+            }
+            pose=target;mismatch=0;
+            prepared=plan_from(pose,timed_run,&returning,&certified,&route,&message);
+        }
+        previewed=0;displayed_pose=pose;
+        if(prepared<0)break;
+        if(prepared==4) {result=0;break;}
+        turn_heading=(unsigned)prepared;
+        if(turn_heading!=pose.heading) {
+            int quarters=(turn_heading+4-pose.heading)%4;if(quarters==3)quarters=-1;
+            if(fw_motion_turn(quarters*90)) {message="TURN REJECTED";break;}
+            turning=1;state=1;stable=0;
+        } else {
+            unsigned cells=1;
+            /* Known stretches can be submitted as one command, including runs
+             * faster than the calibrated observation window. */
+            if(route.length && route.direction[0]==pose.heading) {
+                nm_pose_t end=pose;advance(&end,1);
+                while(cells<route.length && cells<16 && route.direction[cells]==pose.heading &&
+                      maze.cell[cell(end)].visited && maze.cell[cell(end)].known==15) {
+                    ++cells;advance(&end,1);
+                }
+            }
+            nm_pose_t end=pose;advance(&end,cells);
+            int accept=!(maze.cell[cell(end)].known&(1u<<pose.heading)) ||
+                        (maze.cell[cell(end)].walls&(1u<<pose.heading));
+            if(fw_motion_straight_to(cells,speed,accept)) {message="MOVE REJECTED";break;}
+            segment=pose;moving=cells;state=1;stable=0;
+        }
     }
     fw_motion_stop();
-    if (!timed_run) {
-        search_ms=search_used(hal_os_get_systicks());
-    }
-    /* Completed learning is archived; partial work remains separately resumable. */
+    if(timed_run)last_run_ms=hal_os_get_systicks()-started;
+    else {search_ms=search_used(hal_os_get_systicks());search_clock_running=0;}
     int archive_failed=0;
-    if(!timed_run) {
-        learned=result==0 && certified;
-        if(learned) archive_failed=fw_library_put(&library,&maze,fw_start_corner,fw_start_heading,search_ms)<0;
-    }
+    if(!timed_run) {learned=result==0 && certified;
+        if(learned)archive_failed=fw_library_put(&library,&maze,fw_start_corner,fw_start_heading,search_ms)<0;}
     int saved=save();
     map_message(pose,message);
-    if (archive_failed) hal_ui_display_prompt(app_context.ui,"LIBRARY FULL","ACTIVE MAZE SAVED");
-    if (saved) hal_ui_display_prompt(app_context.ui,"FLASH","FLASH SAVE FAILED");
-    USART1->CR1 |= USART_CR1_UE; /* Local diagnostics outside the trial. */
-    return result;
+    if(archive_failed)hal_ui_display_prompt(app_context.ui,"Library","ACTIVE MAZE SAVED");
+    if(saved)hal_ui_display_prompt(app_context.ui,"Flash","FLASH SAVE FAILED");
+    USART1->CR1|=USART_CR1_UE;return result;
 }
 int fw_app_discover(void) { return execute(0,1); }
 int fw_app_resume(void)

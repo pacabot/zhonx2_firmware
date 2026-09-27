@@ -196,15 +196,16 @@ static void maze_test(void)
 {
     nm_map_t m; nm_init(&m); assert(nm_valid(&m));
     assert(nm_edge(&m,0,NM_SOUTH,0));
-    assert(!nm_edge(&m,0,NM_NORTH,0)); assert(nm_edge(&m,9,NM_SOUTH,1));
+    assert(!nm_edge(&m,0,NM_NORTH,0)); assert(nm_edge(&m,NM_SIDE,NM_SOUTH,1));
     nm_map_t copy=m;
     assert(nm_observe(&m,(nm_pose_t){0,0,NM_NORTH},1)); assert(!memcmp(&copy,&m,sizeof m));
     uint8_t goals[NM_CELLS]; assert(!nm_goal(&m,goals));
-    /* Noncentral goal room at x=6,y=1. */
-    int c=15;
+    /* Noncentral goal room at x=6,y=1 in the 9x9 format. */
+    nm_init_size(&m,9,0);
+    int c=NM_SIDE+6;
     assert(!nm_edge(&m,c,NM_NORTH,0)); assert(!nm_edge(&m,c,NM_EAST,0));
-    assert(!nm_edge(&m,c+1,NM_NORTH,0)); assert(!nm_edge(&m,c+9,NM_EAST,0));
-    assert(nm_goal(&m,goals)==1 && goals[15] && goals[25] && !goals[40]);
+    assert(!nm_edge(&m,c+1,NM_NORTH,0)); assert(!nm_edge(&m,c+NM_SIDE,NM_EAST,0));
+    assert(nm_goal(&m,goals)==1 && goals[c] && goals[c+NM_SIDE+1] && !goals[40]);
     nm_route_t route;
     assert(nm_route(&m,(nm_pose_t){0,0,0},goals,0,&route));
     assert(!nm_route(&m,(nm_pose_t){0,0,0},goals,1,&route));
@@ -214,7 +215,7 @@ static void maze_test(void)
             if(nm_neighbour(cell,d)>=0) assert(!nm_edge(&m,cell,d,(random32()%100)<35));
         assert(nm_valid(&m)); memset(goals,0,sizeof goals);
         int start=(int)(random32()%NM_CELLS),goal=(int)(random32()%NM_CELLS); goals[goal]=1;
-        nm_pose_t p={start%9,start/9,random32()%4};
+        nm_pose_t p={start%NM_SIDE,start/NM_SIDE,random32()%4};
         int shortest=bfs(&m,start,goal),result=nm_route(&m,p,goals,0,&route);
         assert((shortest<0)==(result<0));
         if(!result) { assert(route.length==shortest); route_check(&m,p,goals,&route); }
@@ -222,9 +223,9 @@ static void maze_test(void)
     nm_init(&m);
     for(int cell=0;cell<NM_CELLS;++cell) for(unsigned d=0;d<2;++d)
         if(nm_neighbour(cell,d)>=0) assert(!nm_edge(&m,cell,d,0));
-    memset(goals,0,sizeof goals); goals[80]=1;
+    memset(goals,0,sizeof goals); goals[NM_CELLS-1]=1;
     assert(!nm_route(&m,(nm_pose_t){0,0,NM_NORTH},goals,0,&route));
-    assert(route.length==16 && route.cost==16*1024+1); /* Turn tie-break. */
+    assert(route.length==30 && route.cost==30*1024+1); /* Turn tie-break. */
     assert(nm_refine(&m,(nm_pose_t){4,4,0},(nm_pose_t){0,0,0},goals,&route)==1);
     puts("maze: 500 random maps vs BFS, reciprocal walls, noncentral 2x2 goal, turn tie-break");
 }
@@ -234,7 +235,7 @@ static void exploration_test(void)
     for(int attempt=0;completed<40 && attempt<500;++attempt) {
         uint8_t opened[NM_CELLS][4]={{0}},visited[NM_CELLS]={0},goals[NM_CELLS];
         int stack[NM_CELLS],depth=0;
-        const int corners[]={0,8,80,72}; int origin=corners[completed%4];
+        const int corners[]={0,15,255,240}; int origin=corners[completed%4];
         stack[depth++]=origin; visited[origin]=1;
         while(depth) {
             int c=stack[depth-1], options[4],count=0;
@@ -246,50 +247,90 @@ static void exploration_test(void)
             unsigned d=(unsigned)options[random32()%(unsigned)count]; int n=nm_neighbour(c,d);
             opened[c][d]=opened[n][(d+2)%4]=1; visited[n]=1; stack[depth++]=n;
         }
-        int room=1+(int)(random32()%6)+(1+(int)(random32()%6))*NM_SIDE;
+        int room=7+7*NM_SIDE;
         const int cells[]={room,room,room+1,room+NM_SIDE};
         const unsigned dirs[]={NM_EAST,NM_NORTH,NM_NORTH,NM_EAST};
         for(unsigned i=0;i<4;++i) {
             int n=nm_neighbour(cells[i],dirs[i]);
             opened[cells[i]][dirs[i]]=opened[n][(dirs[i]+2)%4]=1;
         }
-        nm_map_t truth,known; nm_init(&truth); nm_init(&known);
+        nm_map_t truth,known; nm_init(&truth); nm_init_size(&known,16,1);
         for(int c=0;c<NM_CELLS;++c) for(unsigned d=0;d<2;++d)
             if(nm_neighbour(c,d)>=0) assert(!nm_edge(&truth,c,d,!opened[c][d]));
         if(nm_goal(&truth,goals)!=1) continue;
         unsigned degree=0; for(unsigned d=0;d<4;++d) degree+=opened[origin][d];
         if(degree!=1) continue;
-        nm_pose_t start={origin%9,origin/9,0},pose=start;
+        nm_pose_t true_start={origin%NM_SIDE,origin/NM_SIDE,0},physical=true_start;
+        nm_pose_t start=nm_origin(&known),pose=start;
         int certified=0;
         for(int step=0;step<1000;++step) {
-            int c=pose.y*NM_SIDE+pose.x;
+            int c=physical.y*NM_SIDE+physical.x;
             unsigned headings[]={pose.heading,(pose.heading+3)%4,(pose.heading+1)%4};
             uint8_t walls=0;
             for(unsigned i=0;i<3;++i) walls |= !!(truth.cell[c].walls & 1u<<headings[i])<<i;
-            assert(!nm_observe(&known,pose,walls)); assert(nm_valid(&known));
+            assert(!nm_observe_auto(&known,&pose,walls));start=nm_origin(&known); assert(nm_valid(&known));
             nm_route_t route;
             if(nm_goal(&known,goals)==1) {
                 int r=nm_refine(&known,pose,start,goals,&route); assert(r>=0);
                 if(r==1) { certified=1; break; }
             } else assert(!nm_frontier(&known,pose,&route));
             if(!route.length) {
-                unsigned d; for(d=0;d<4;++d) if(!(known.cell[c].known & 1u<<d)) break;
-                assert(d<4); pose.heading=d; continue;
+                unsigned d; for(d=0;d<4;++d) if(!(known.cell[pose.y*NM_SIDE+pose.x].known & 1u<<d)) break;
+                assert(d<4); pose.heading=d;physical.heading=d; continue;
             }
             unsigned d=route.direction[0]; assert(!(truth.cell[c].walls & 1u<<d));
             int n=nm_neighbour(c,d); assert(n>=0);
-            pose=(nm_pose_t){n%9,n/9,d};
+            physical=(nm_pose_t){n%NM_SIDE,n/NM_SIDE,d};
+            int logical=nm_next(&known,pose.y*NM_SIDE+pose.x,d);assert(logical>=0);
+            pose=(nm_pose_t){logical%NM_SIDE,logical/NM_SIDE,d};
         }
         assert(certified);
         nm_route_t actual,reference;
         assert(!nm_route(&known,start,goals,0,&actual));
-        assert(!nm_route(&truth,start,goals,0,&reference));
+        assert(!nm_route(&truth,true_start,goals,0,&reference));
         assert(actual.cost==reference.cost);
         ++completed;
     }
     assert(completed==40);
-    puts("exploration: 40 generated mazes, all four start corners, goal found and optimal route proven");
+    puts("exploration: 40 generated mazes, automatic origin from all four corners, goal found and optimal route proven");
 }
+static void automatic_origin_test(void)
+{
+    const unsigned sizes[]={6,9,16};
+    for(unsigned si=0;si<3;++si)for(unsigned fixture=0;fixture<8;++fixture)for(unsigned heading=0;heading<4;++heading) {
+        int n=(int)sizes[si],sx=fixture<4?(fixture==1 || fixture==2?n-1:0):fixture==4?0:fixture==5?n-1:n/2;
+        int sy=fixture<4?(fixture>=2?n-1:0):fixture==6?0:fixture==7?n-1:n/2;
+        nm_map_t map;nm_init_size(&map,n,1);nm_pose_t p=nm_origin(&map);
+        int x=sx,y=sy;
+        /* Traverse the physical grid; retain the real pose separately from the
+         * sliding robot-relative map. Try every initial heading and edge. */
+        for(int goal=0;goal<n*n;++goal) {
+            int gx=goal%n,gy=goal/n;
+            for(;;) {
+                unsigned real=(p.heading+heading)%4;
+                unsigned directions[]={real,(real+3)%4,(real+1)%4};uint8_t walls=0;
+                for(unsigned k=0;k<3;++k) {
+                    unsigned d=directions[k];
+                    walls|=((d==0 && y==n-1)||(d==1 && x==n-1)||(d==2 && y==0)||(d==3 && x==0))<<k;
+                }
+                assert(!nm_observe_auto(&map,&p,walls));assert(nm_valid(&map));
+                if(x==gx && y==gy)break;
+                unsigned d=x<gx?1:x>gx?3:y<gy?0:2,logical=(d+4-heading)%4;
+                if(p.heading!=logical) {p.heading=logical;continue;}
+                int next=nm_next(&map,p.y*NM_SIDE+p.x,logical);assert(next>=0);
+                p.x=next%NM_SIDE;p.y=next/NM_SIDE;
+                x+=d==1?1:d==3?-1:0;y+=d==0?1:d==2?-1:0;
+            }
+        }
+        assert(map.axes==3);
+        unsigned visited=0;for(unsigned c=0;c<NM_CELLS;++c)visited+=map.cell[c].visited;
+        assert(visited==(unsigned)(n*n));
+        nm_pose_t start=nm_origin(&map);
+        assert(start.x==0 || start.y==0 || start.x==n-1 || start.y==n-1);
+    }
+    puts("origin: 96 grids, 6/9/16 cells, all headings, corners and middle of every edge; no cropping or false walls");
+}
+
 static void wall_test(void)
 {
     wall_control_t a,b; wall_control_reset(&a); wall_control_reset(&b);
@@ -313,7 +354,33 @@ static void wall_test(void)
     assert(a.output>0); /* Left too near. */
     for(int i=0;i<100;++i) wall_control_calibrated(&a,0x1e,&measured);
     assert(a.output>0); /* Right far constrains robot left of centre. */
-    puts("control: measured asymmetric thresholds, centred dead band, slew limit");
+    measured.geometry=(fw_cal_geometry_t){47000,94000,167000,179000};
+    measured.side[0]=(fw_cal_side_t){84500,85500,0};
+    measured.side[1]=(fw_cal_side_t){81500,83500,1000};
+    for(int sign=-1;sign<=1;sign+=2) {
+        wall_control_reset(&a);
+        double lateral=83500+sign*6000,heading=0,yaw_remainder=0;
+        int left=0,right=0;
+        for(unsigned tick=0;tick<2000;++tick) {
+            if(lateral<=84500)left=1;else if(lateral>=85500)left=0;
+            if(167000-lateral<=81500)right=1;else if(167000-lateral>=83500)right=0;
+            uint8_t sensors=0x3f&~0x21;
+            if(left)sensors&=~0x10;
+            if(right)sensors&=~0x02;
+            int yaw=(int)yaw_remainder;yaw_remainder-=yaw;
+            int correction=wall_control_position(&a,sensors,&measured,2000,yaw);
+            assert(abs(correction)<=120);
+            double change=2.0*correction*2000/83500;
+            yaw_remainder+=change;heading+=change;
+            if(tick==500)heading+=sign*8; /* Unmeasured brief yaw slip. */
+            lateral+=2000*heading/1000;
+            assert(lateral>47000 && lateral<120000);
+        }
+        printf("binary observer sign %d: lateral %.1f um, heading %.1f mrad, estimate %ld / %ld\n",sign,lateral,heading,(long)a.lateral_um,(long)a.heading_mrad);
+        assert(abs((int)lateral-83500)<5000 && abs((int)heading)<50);
+    }
+    puts("control: binary hysteresis, asymmetric thresholds, closed-loop lateral recovery and injected yaw slip");
+
 }
 static void interaction_test(void)
 {
@@ -341,6 +408,6 @@ int main(void)
 {
     assert(fw_crc32("123456789",9)==0xcbf43926);
     assert(fw_crc32_more(fw_crc32("1234",4),"56789",5)==0xcbf43926);
-    interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); wall_test();
+    interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); automatic_origin_test(); wall_test();
     puts("All firmware core tests passed."); return 0;
 }

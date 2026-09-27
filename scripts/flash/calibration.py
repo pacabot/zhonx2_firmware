@@ -21,9 +21,12 @@ from robot_guard import identity, guarded_config
 SECTOR = 0x4000
 ADDRESS = 0x08004000
 COMMIT = 0x434f4d54
-SIZES = {5: 4700, 6: 4708}
+SIZES = {5: 4700, 6: 4708, 7: 12492}
 BUNDLE = slice(412, 1244)
 GEOMETRY = slice(4680, 4700)
+
+def layout(payload):
+    return (1120, 12460, 12480) if len(payload) == SIZES[7] else (412, 4680, 4700)
 
 
 def records(raw):
@@ -54,8 +57,8 @@ def newest(items):
 def selected(raw):
     items = records(raw)
     if any(i['schema'] not in SIZES or len(i['payload']) != SIZES[i['schema']] for i in items):
-        raise ValueError('Supported snapshot formats: 5 and 6 only; incompatible bank present')
-    # Match firmware load priority: schema 6 first, then schema 5, then sequence.
+        raise ValueError('Supported snapshot formats: 5, 6 and 7 only; incompatible bank present')
+    # Match firmware load priority: newest supported schema, then sequence.
     schema = max((i['schema'] for i in items), default=0)
     return newest([i for i in items if i['schema'] == schema])
 
@@ -76,9 +79,10 @@ def validate(payload):
     """Same calibration validity bounds as fw_calibration.c / fw_cal_extra.c."""
     if len(payload) not in SIZES.values():
         raise ValueError('Unsupported payload size')
-    wall = struct.unpack_from('<18I', payload, 412)
-    rot = struct.unpack_from('<32I', payload, 484)
-    corners = [struct.unpack_from('<79I', payload, 612+316*i) for i in range(2)]
+    base, geom_offset, battery = layout(payload)
+    wall = struct.unpack_from('<18I', payload, base)
+    rot = struct.unpack_from('<32I', payload, base+72)
+    corners = [struct.unpack_from('<79I', payload, base+200+316*i) for i in range(2)]
     common = None
     for words, geom in [(wall, wall[2:6]), (rot, rot[1:5])] + [(c, c[3:7]) for c in corners]:
         if words[0] not in (0, 1):
@@ -120,12 +124,12 @@ def validate(payload):
                     signed = [n if n < 0x80000000 else n-0x100000000 for n in p[2+sensor:10:2]]
                     if any(abs(n) > 60000 for n in signed) or p[10+sensor] > 5000:
                         raise ValueError('Invalid corner measurement')
-    n, w, inner, pitch, post = struct.unpack_from('<5i', payload, 4680)
+    n, w, inner, pitch, post = struct.unpack_from('<5i', payload, geom_offset)
     geometry((n*100, w*100, inner*1000, pitch*1000))
     if not 100 <= post <= 250:
         raise ValueError('Invalid configured post position')
-    if len(payload) == 4708:
-        raw, mv = struct.unpack_from('<2I', payload, 4700)
+    if len(payload) in (4708, 12492):
+        raw, mv = struct.unpack_from('<2I', payload, battery)
         if not ((raw == mv == 0) or (256 <= raw <= 4080 and 6000 <= mv <= 8500)):
             raise ValueError('Invalid battery reference')
 
@@ -153,12 +157,13 @@ def plan(current, saved):
     source, target = selected(saved), selected(current)
     validate(source['payload']); validate(target['payload'])
     merged = bytearray(target['payload'])
-    merged[BUNDLE] = source['payload'][BUNDLE]
-    merged[GEOMETRY] = source['payload'][GEOMETRY]
-    if source['schema'] == 6:
-        reference = source['payload'][4700:4708]
-        if target['schema'] == 6:
-            merged[4700:4708] = reference
+    sb, sg, sv = layout(source['payload']); tb, tg, tv = layout(merged)
+    merged[tb:tb+832] = source['payload'][sb:sb+832]
+    merged[tg:tg+20] = source['payload'][sg:sg+20]
+    if source['schema'] >= 6:
+        reference = source['payload'][sv:sv+8]
+        if target['schema'] >= 6:
+            merged[tv:tv+8] = reference
         elif any(reference):
             raise ValueError('Target snapshot v5: save settings with current firmware before restoring battery calibration')
     validate(merged)

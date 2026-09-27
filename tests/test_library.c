@@ -9,11 +9,11 @@ static void edge(nm_map_t *m,int c,unsigned d)
 }
 int main(void)
 {
-    fw_library_t library={0};nm_map_t m;nm_init(&m);nm_route_t r;
+    fw_library_t library={0};nm_map_t m;nm_init_size(&m,9,0);nm_route_t r;
     assert(!fw_maze_certify(&m,0,0,&r) && fw_library_put(&library,&m,0,0,1000)<0);
     for(unsigned c=0;c<NM_CELLS;++c)m.cell[c]=(nm_cell_t){15,15,0,0};
-    edge(&m,0,0);edge(&m,9,0);edge(&m,18,1);edge(&m,19,1);
-    edge(&m,20,1);edge(&m,20,0);edge(&m,21,0);edge(&m,29,1);
+    edge(&m,0,0);edge(&m,16,0);edge(&m,32,1);edge(&m,33,1);
+    edge(&m,34,1);edge(&m,34,0);edge(&m,35,0);edge(&m,50,1);
     assert(fw_maze_certify(&m,0,0,&r) && r.length==4);
     for(unsigned i=0;i<8;++i) {
         for(unsigned b=0;b<4;++b)m.cell[50+b].visited=(i>>b)&1;

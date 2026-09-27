@@ -21,6 +21,7 @@ int fw_app_show_map(void);
 extern volatile unsigned fw_last_stop_code;
 int fw_app_restore(void);
 int fw_app_bootloader(void);
+extern int fw_maze_size;
 extern int fw_start_corner, fw_start_heading, fw_search_speed, fw_run_speed;
 extern int fw_cal_nose_tenth_mm, fw_cal_width_tenth_mm, fw_cal_inner_mm, fw_cal_pitch_mm;
 const fw_cal_data_t *fw_app_calibration(void);

@@ -82,9 +82,9 @@ void fw_hardware_test(unsigned test)
                 if(test==6) {
                     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
                     snprintf(s,sizeof s,"ADC %u/4095",b.raw);text(0,16,s);
-                    if(b.calibrated && b.sample_valid) {
-                        snprintf(s,sizeof s,"PACK: %u.%02u V",b.pack_mv/1000,b.pack_mv%1000/10);text(0,32,s);
-                        if(b.soc_valid)snprintf(s,sizeof s,"SOC: ~%u%%",b.percent);
+                    if(b.sample_valid) {
+                        snprintf(s,sizeof s,"%s %u.%02u V",b.lower_bound?"PACK >=":"PACK:",b.pack_mv/1000,b.pack_mv%1000/10);text(0,32,s);
+                        if(b.soc_valid)snprintf(s,sizeof s,"SOC: %s%u%%",b.lower_bound?">=":"~",b.percent);
                         else snprintf(s,sizeof s,"Wait 5s at rest");
                         text(0,48,s);
                     } else if(!b.sample_valid) {

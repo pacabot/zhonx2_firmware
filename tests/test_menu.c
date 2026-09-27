@@ -1,5 +1,6 @@
 #include "fw_menu.h"
 #include "fw_app.h"
+int fw_maze_size=9;
 #include "fw_battery.h"
 #include "stm32f4xx.h"
 #include <assert.h>

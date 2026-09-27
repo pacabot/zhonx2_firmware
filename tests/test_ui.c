@@ -39,11 +39,19 @@ int main(void)
     assert(!nm_observe(&map,(nm_pose_t){1,2,NM_EAST},6));
     assert(!nm_edge(&map,20,NM_EAST,0));assert(!nm_edge(&map,20,NM_NORTH,0));
     assert(!nm_edge(&map,21,NM_NORTH,0));assert(!nm_edge(&map,29,NM_EAST,0));
-    for(unsigned y=0;y<9;++y) for(unsigned x=0;x<9;++x)
+    for(unsigned y=0;y<16;++y) for(unsigned x=0;x<16;++x)
         fw_ui_maze(&map,(nm_pose_t){x,y,(x+y)%4},"EXPLORATION",220,72000,0x37);
     fw_ui_maze(&map,(nm_pose_t){2,2,NM_NORTH},"EXPLORATION",220,72000,0x37);
     image("build/ui-maze.pgm");
-    puts("OLED: actual renderer, clipped menu text, wrapped prompts, all 81 map positions");
+    for(unsigned heading=0;heading<4;++heading)for(unsigned level=0;level<4;++level) {
+        map.start_heading=heading;
+        fw_ui_map_view((unsigned[]){0,16,24,32}[level],level-1,1-level);
+        fw_ui_maze(&map,(nm_pose_t){2,2,NM_NORTH},"EXPLORATION",220,72000,0);
+    }
+    fw_ui_map_view(16,0,0);map.start_heading=0;
+    fw_ui_result("EARLY OBSTACLE",123456,3141,2);image("build/ui-result.pgm");
+    fw_ui_result("OPTIMAL PATH",123456,3141,1);image("build/ui-times.pgm");
+    puts("OLED: actual renderer, clipped menu text, wrapped prompts, all 256 map positions");
     fw_ui_card("ZHONX II","Calibration","",FW_ICON_CALIBRATE,1,4);image("build/ui-menu-home.pgm");
     fw_ui_card("MAZE","Load maze","Library",FW_ICON_MAZE,1,4);image("build/ui-menu-maze.pgm");
     fw_ui_card("RUNS","Slow run","120 mm/s",FW_ICON_RUN,0,4);image("build/ui-menu-run.pgm");
@@ -53,8 +61,8 @@ int main(void)
         char file[60];fw_ui_card("CALIBRATION",cal_names[i],"Calibrate",cal_icons[i],i,7);
         snprintf(file,sizeof file,"build/ui-calibration-icon-%u.pgm",i);image(file);
     }
-    const int values[]={470,940,167,179,173,220,260,0,0};
-    for(unsigned i=0;i<9;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
+    const int values[]={470,940,167,179,173,220,260,16};
+    for(unsigned i=0;i<8;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
         fw_ui_setting(i,values[i]);image(file);}
     fw_saved_maze_t saved={.map=map,.route={.direction={0,0,1,1},.length=4},.id=7};
     fw_ui_library(&saved,0,2,0);image("build/ui-library-off.pgm");
@@ -113,6 +121,6 @@ int main(void)
     fclose(frames);
     puts("Idle: eight shuffled choreographies, no consecutive repeats, seamless transitions, full-screen frames");
     charge(2700);fw_ui_card("HOME","Maze","",FW_ICON_MAZE,0,5);image("build/ui-battery-partial.pgm");
-    puts("OLED: large icon cards, nine illustrated settings, blinking stored route");
+    puts("OLED: large icon cards, eight illustrated settings, blinking stored route");
     return 0;
 }

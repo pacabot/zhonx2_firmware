@@ -1,10 +1,11 @@
 # Jauge batterie LiPo 2S
 
-## Étalonnage
+## Étalonnage facultatif
 
 La mesure passe par le pont diviseur de la carte, PA4 / ADC1 canal 4.
-Les anciens seuils ADC ne suffisent pas à connaître son rapport réel.
-La jauge affiche donc `--%` dans les menus tant qu'une référence n'a pas été enregistrée.
+Sans étalonnage manuel, la conversion utilise R3 = 10 kΩ / R2 = 6,8 kΩ du schéma
+et la tension VDDA mesurée par VREFINT. Une référence au multimètre reste préférable
+pour corriger les tolérances du pont ou un changement de résistances.
 
 1. Robot immobile, relever la tension du pack au multimètre.
 2. Ouvrir **Hardware → Battery**. Vérifier que l'ADC n'est ni nul ni saturé.
@@ -22,8 +23,9 @@ La tension cible de la ST-Link (~3,3 V) n'est pas celle du pack.
 
 Dans **Hardware → Battery**, lire le diagnostic :
 
-- `NOT CALIBRATED` : enregistrer une tension mesurée au multimètre avec OK.
-- `ADC SATURATED` : entrée proche du maximum (4090 à 4095), vérifier le diviseur.
+- Référence manuelle absente : estimation nominale disponible, sans blocage de la jauge.
+- ADC saturé (4090 à 4095) : affichage d’une borne, par exemple `85%+` ;
+  la tension réelle peut être supérieure à la plage mesurable.
 - `ADC INPUT LOW` : entrée proche de zéro (moins de 16), vérifier PA4 et son alimentation.
 - `VOLTAGE OUT OF RANGE` : conversion hors plage plausible, vérifier l'étalonnage.
 - `Wait 5s at rest` : attendre une mesure au repos après le démarrage ou un mouvement.
@@ -48,8 +50,9 @@ modification a été réalisée ; après changement de résistance, refaire l'é
   et diagnostics affichent uniquement le pourcentage en haut à droite, sans
   pictogramme batterie. La veille réserve tout l’écran à l’animation ; la mesure
   continue en arrière-plan sans superposition.
-- ADC absent ou proche de la saturation : `--%`,
-  jamais interprété comme une batterie vide.
+- ADC absent, référence interne invalide ou conversion incohérente : `--%`,
+  jamais interprété comme une batterie vide. Une saturation cohérente affiche
+  une borne de pourcentage avec `+`, et non un 100 % supposé.
 
 Cette courbe n'est pas une caractérisation du pack du robot. Température,
 vieillissement, charge électrique et déséquilibre des cellules influencent le
@@ -57,11 +60,11 @@ résultat. Aucun courant ni aucune tension individuelle de cellule n'est mesuré
 La jauge n'introduit pas de coupure moteur et ne remplace pas une protection du pack.
 Une tension haute n'est pas interprétée comme une détection du chargeur.
 
-La référence est ajoutée au format de sauvegarde 6. Le firmware lit aussi les
-formats 1 à 5 : calibrations, réglages et labyrinthes restent disponibles ; une
+La référence est conservée dans le format de sauvegarde 7. Le firmware lit aussi les
+formats 1 à 6 : calibrations, réglages et labyrinthes restent disponibles ; une
 ancienne sauvegarde n'a simplement pas encore de référence batterie.
 `scripts/flash/flash.sh --release` préserve les secteurs de données ; l'étalonnage
-y reste enregistré. Un ancien firmware ne sait pas relire le format 6.
+y reste enregistré. Un ancien firmware ne sait pas relire le format 7.
 `tools/calibration_dump.py` expose la référence sous `battery_reference`.
 
 ## Corrections de l'acquisition
@@ -69,6 +72,9 @@ y reste enregistré. Un ancien firmware ne sait pas relire le format 6.
 L'horloge GPIO est activée avant la configuration de PA4 en entrée analogique.
 L'horloge ADC est divisée par quatre (21 MHz avec APB2 à 84 MHz), au lieu de deux.
 La structure d'initialisation ADC est entièrement initialisée avant configuration.
+Le DMA alterne PA4 (rang 1) et VREFINT (rang 2), avec 480 cycles d'échantillonnage.
+VDDA = 3300 × VREFINT_CAL / ADC_VREFINT, avec la constante d'usine à 0x1FFF7A2A
+([STM32F405, DS8626, table 73](https://www.st.com/resource/en/datasheet/stm32f405rg.pdf)).
 
 ## Références et validation
 

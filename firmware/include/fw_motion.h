@@ -10,6 +10,12 @@ int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
 /* Allow a front-wall arrival only in the last 30 mm of the final cell. */
 int fw_motion_straight_to(unsigned cells, unsigned speed_mm_s, int allow_front_wall);
 int fw_motion_wall_arrival(void);
+/* Append a proven open cell while moving; no pulse or controller reset. */
+int fw_motion_extend(unsigned cells,int allow_front_wall);
+unsigned fw_motion_speed(void);
+void fw_motion_corner_profiles(const fw_corner_data_t *left,const fw_corner_data_t *right);
+int32_t fw_motion_lateral_um(void);
+int32_t fw_motion_heading_mrad(void);
 int fw_motion_turn(int clockwise_degrees);
 /* Deliberate contact/sensing moves: bounded, slow, no wall steering or F5 stop.
  * Only the calibration menu may use these; stale sensors still stop the robot. */

@@ -313,7 +313,11 @@ static int corner_report(int selected)
     int valid[2]={fw_corner_valid(fw_app_corner(0)),fw_corner_valid(fw_app_corner(1))};
     snprintf(r->row[0],16,"Left: %s",valid[0]?"SAVED":"MISSING");
     snprintf(r->row[1],16,"Right: %s",valid[1]?"SAVED":"MISSING");
-    snprintf(r->row[2],16,"%s",valid[0]&&valid[1]?"Both fixtures":"INCOMPLETE");
+    unsigned missing5=0;
+    for(unsigned side=0;side<2;++side)if(valid[side])
+        for(unsigned f=0;f<2;++f)for(unsigned v=0;v<FW_CAL_SPEEDS;++v)
+            missing5+=!(fw_app_corner(side)->point[f][v].mask&1);
+    snprintf(r->row[2],16,"%s",!valid[0]||!valid[1]?"INCOMPLETE":missing5?"5cm MISSING":"Both fixtures");
     for(unsigned fixture=0;fixture<2;++fixture) {
         if((selected>=0 && fixture!=(unsigned)selected) || !valid[fixture])continue;
         const fw_corner_data_t *d=fw_app_corner(fixture);
@@ -324,7 +328,7 @@ static int corner_report(int selected)
                     r=page(fixture?"Right setup":"Left setup");
                     snprintf(r->row[0],16,"%c%u %s %lu",(fixture^facing)?'R':'L',sensor?10:5,
                         facing?"FWD":"BACK",(unsigned long)p->speed);
-                    if(!(p->mask&(1u<<sensor))) {snprintf(r->row[1],16,"NOT MEASURED");break;}
+                    if(!(p->mask&(1u<<sensor))) {snprintf(r->row[1],16,"5cm: NO WALL");snprintf(r->row[2],16,"At start pose");break;}
                     mm(r,1,filtered?"Open":"Raw O",filtered?p->open_um[sensor]:p->raw_open_um[sensor]);
                     mm(r,2,filtered?"Close":"Raw C",filtered?p->close_um[sensor]:p->raw_close_um[sensor]);
                 }

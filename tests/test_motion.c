@@ -26,6 +26,8 @@ void hal_step_motor_pair_start(long right,long left)
         total[i]=0; fraction[i]=0;
     }
 }
+unsigned long hal_step_motor_pair_count(unsigned int i) {return total[i];}
+void hal_step_motor_pair_extend(unsigned long n) {remain[0]+=n;remain[1]+=n;}
 unsigned long hal_step_motor_pair_remaining(unsigned int i) { return remain[i]; }
 void hal_step_motor_pair_rate(unsigned long right,unsigned long left)
 {
@@ -38,6 +40,7 @@ static void setup(void)
     fw_motion_init(); assert(disabled);
     fw_motion_geometry(0,0,0);
     fw_motion_rotation_profile(0);
+    fw_motion_wall_profile(0);fw_motion_corner_profiles(0,0);
 }
 static void tick(int fresh)
 {
@@ -56,14 +59,14 @@ int main(void)
     unsigned previous_elapsed=20000;
     for(unsigned speed=20;speed<=300;speed+=20) {
         setup(); assert(!fw_motion_straight(1,speed));
-        assert(commanded[0]==lroundf((float)CELL_LENGTH*2.f*(float)STEPS_PER_MM));
+        assert(commanded[0]>=lroundf((float)CELL_LENGTH*2.f*(float)STEPS_PER_MM));
         assert(commanded[0]==commanded[1]);
         unsigned elapsed=0;
         while(fw_motion_busy() && elapsed++<20000) tick(1);
         assert(!fw_motion_busy() && !fw_motion_fault() && elapsed<20000);
         assert(elapsed<previous_elapsed); previous_elapsed=elapsed;
         if (speed==220) { assert(elapsed<1250); printf("178 mm at 220 mm/s: %u ms\n",elapsed); }
-        assert(total[0]==total[1] && total[0]==((unsigned long)commanded[0]+1u)/2*2);
+        assert(total[0]==total[1] && abs(fw_motion_travelled_um()-CELL_LENGTH*1000)<400);
     }
     setup(); assert(!fw_motion_turn(90)); assert(commanded[0]<0 && commanded[1]>0);
     assert(labs(commanded[0])==lroundf((float)M_PI/4.f*(float)WHEELS_DISTANCE*2.f*(float)STEPS_PER_MM));
@@ -113,12 +116,12 @@ int main(void)
     assert(fw_motion_fault()==1 && disabled);
     setup(); fw_motion_geometry(179000,95000,167000);
     assert(!fw_motion_straight_to(1,220,1));
-    assert(commanded[0]==lroundf(179.f*2.f*(float)STEPS_PER_MM));
+    assert(commanded[0]>lroundf(179.f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_remaining()>10.f*2.f*(float)STEPS_PER_MM) tick(1);
     scan.raw &= ~SENSOR_F5_POS; tick(1);
     assert(fw_motion_busy() && fw_motion_wall_arrival());
     while(fw_motion_busy()) tick(1);
-    assert(!fw_motion_fault() && total[0]==((unsigned long)commanded[0]+1u)/2*2);
+    assert(!fw_motion_fault() && abs(fw_motion_travelled_um()-179000)<400);
     setup(); fw_motion_geometry(179000,95000,167000);
     assert(!fw_motion_straight_to(1,220,1));
     for(int i=0;i<100;++i) tick(1);
@@ -160,6 +163,46 @@ int main(void)
     assert(!fw_motion_test_wheels(1,0));
     for(int i=0;i<60;++i)tick(0);
     assert(fw_motion_fault()==1 && disabled);
+    /* Steering must change wheel travel, not be cancelled by equal endpoints. */
+    setup();
+    fw_cal_data_t walls={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
+      .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
+    fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);scan.raw=scan.filtered=0x1c; /* Left clear, right near: steer left. */
+    assert(!fw_motion_straight_to(1,220,1));
+    while(fw_motion_busy())tick(1);
+    assert(!fw_motion_fault() && total[0]>total[1]);
+    assert(abs(fw_motion_travelled_um()-179000)<400);
+    setup();fw_motion_geometry(179000,92000,167000);
+    assert(!fw_motion_straight_to(1,220,1));
+    while(fw_motion_travelled_um()<140000)tick(1);
+    unsigned before=rates[0];
+    assert(!fw_motion_extend(1,1) && fw_motion_busy() && rates[0]==before);
+    while(fw_motion_travelled_um()<200000) {tick(1);assert(rates[0] && rates[1]);}
+    while(fw_motion_busy())tick(1);
+    assert(abs(fw_motion_travelled_um()-358000)<400 && !fw_motion_fault());
+    assert(fw_motion_extend(1,1));
+    /* A calibrated forward post transition removes a 3 mm longitudinal drift. */
+    setup();fw_motion_geometry(179000,92000,167000);
+    fw_corner_data_t corners[2];
+    for(unsigned side=0;side<2;++side) {
+        corners[side]=(fw_corner_data_t){.valid=1,.side=side,.post_um=173000,.geometry=walls.geometry};
+        for(unsigned facing=0;facing<2;++facing)for(unsigned i=0;i<3;++i)
+            corners[side].point[facing][i]=(fw_corner_point_t){.speed=i==0?40:i==1?120:220,.mask=2,
+                .raw_open_um={0,facing?-32000:45000},.raw_close_um={0,facing?-30000:43000},
+                .open_um={0,facing?-30000:47000},.close_um={0,facing?-32000:41000}};
+    }
+    fw_motion_corner_profiles(&corners[0],&corners[1]);scan.raw=scan.filtered=0x1f;
+    assert(!fw_motion_straight_to(1,120,1));
+    while(fw_motion_travelled_um()<62500)tick(1);
+    scan.raw=scan.filtered=0x3f;
+    for(unsigned i=0;i<10;++i)tick(1);
+    int32_t counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
+    int32_t trim=fw_motion_travelled_um()-counted;
+    assert(trim< -2500 && trim> -5000);
+    while(fw_motion_busy())tick(1);
+    assert(abs(fw_motion_travelled_um()-179000)<400);
+    puts("motion: post offset removes longitudinal drift using the correct fixture and forward profile");
+    puts("motion: steering changes wheel travel; appended cell crosses centre without stopped pulses");
     puts("motion: measured CW/CCW budgets, spin sign, free traverse and bounds");
     puts("motion: signed calibration travel, bounded contact, stale stop, calibrated final-cell budget");
     return 0;

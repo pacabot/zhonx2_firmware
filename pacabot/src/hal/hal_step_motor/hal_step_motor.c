@@ -759,6 +759,17 @@ void hal_step_motor_pair_rate(unsigned long right, unsigned long left)
     }
     __set_PRIMASK(mask);
 }
+unsigned long hal_step_motor_pair_count(unsigned int wheel)
+{
+    return wheel<2?(unsigned long)step_motor[wheel].steps:0;
+}
+void hal_step_motor_pair_extend(unsigned long pulses)
+{
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    pulses=(pulses+1u)&~1u;
+    if(pair_owned) {pair_limit[0]+=pulses;pair_limit[1]+=pulses;}
+    __set_PRIMASK(mask);
+}
 void hal_step_motor_pair_release(void)
 {
     hal_step_motor_pair_stop(); pair_owned=0;

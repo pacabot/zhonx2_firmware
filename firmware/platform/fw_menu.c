@@ -142,12 +142,12 @@ static void settings_menu(void)
     const card_t items[]={{"Axle / nose","Geometry",FW_ICON_SETTINGS},{"Robot width","Geometry",FW_ICON_SETTINGS},
         {"Cell inside","Geometry",FW_ICON_SETTINGS},{"Cell pitch","Geometry",FW_ICON_SETTINGS},
         {"Post center","Geometry",FW_ICON_SETTINGS},{"Explore","Speed",FW_ICON_SETTINGS},
-        {"Fast run","Speed",FW_ICON_SETTINGS},{"Start","Corner",FW_ICON_SETTINGS},{"Start","Heading",FW_ICON_SETTINGS}};
+        {"Fast run","Speed",FW_ICON_SETTINGS},{"Maze size","Cells",FW_ICON_SETTINGS}};
     int *const values[]={&fw_cal_nose_tenth_mm,&fw_cal_width_tenth_mm,&fw_cal_inner_mm,&fw_cal_pitch_mm,&fw_cal_post_mm,
-        &fw_search_speed,&fw_run_speed,&fw_start_corner,&fw_start_heading};
-    const int minimum[]={100,400,140,141,100,20,20,0,0},maximum[]={750,1400,190,210,250,300,300,3,3};
+        &fw_search_speed,&fw_run_speed,&fw_maze_size};
+    const int minimum[]={100,400,140,141,100,20,20,6},maximum[]={750,1400,190,210,250,300,300,16};
     for(;;) {
-        int n=choose("SETTINGS",items,9);if(n<0)return;
+        int n=choose("SETTINGS",items,8);if(n<0)return;
         int old=*values[n],v=old;fw_ui_setting(n,v);
         uint32_t refresh=hal_os_get_systicks(),activity=refresh;
         for(;;) {
@@ -168,6 +168,12 @@ static void settings_menu(void)
                 }
                 *values[n]=v;if(fw_app_settings_save()) {*values[n]=old;notice("Save failed","Try again");}
                 break;
+            }
+            if(n==7) {
+                if(k==KEY_UP)v=v==6?9:v==9?16:6;
+                if(k==KEY_DOWN)v=v==16?9:v==9?6:16;
+                if(k)fw_ui_setting(n,v);
+                __WFI();continue;
             }
             int step=n==1 || n==5 || n==6?10:1;
             if(k==KEY_UP && v<maximum[n]) {v+=step;if(v>maximum[n])v=maximum[n];}

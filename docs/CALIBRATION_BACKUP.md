@@ -34,13 +34,13 @@ Les réglages de vitesse, le départ, le labyrinthe actif et la bibliothèque de
 labyrinthes restent ceux du robot au moment de la restauration. Le firmware et
 le bootloader sont conservés.
 
-La restauration accepte les snapshots **v5 et v6**, après contrôle des CRC et des
+La restauration accepte les snapshots **v5, v6 et v7**, après contrôle des CRC et des
 bornes de validité du firmware. Elle exige un snapshot actuel valide pour pouvoir
 conserver les réglages et labyrinthes. Elle conserve le format du snapshot cible :
-une référence batterie v6 non nulle ne peut pas être injectée dans une cible v5.
+une référence batterie v6/v7 non nulle ne peut pas être injectée dans une cible v5.
 Dans ce cas, démarrer le firmware actuel et sauvegarder ses réglages pour créer
-un snapshot v6, puis relancer la restauration. Une source v5 laisse intacte la
-référence batterie d’une cible v6.
+un snapshot v7, puis relancer la restauration. Une source v5 laisse intacte la
+référence batterie d’une cible v6/v7.
 
 ## Écriture transactionnelle
 
@@ -50,7 +50,7 @@ et l’écriture ont lieu pendant le même arrêt du processeur, pour empêcher 
 sauvegarde concurrente du firmware.
 
 Seul le secteur de données inactif (16 Kio, secteur 1 ou 2) est effacé. Environ
-4,7 Kio sont programmés. Le contenu est vérifié avant l’écriture du marqueur de
+4,7 Kio (v5/v6) ou 12,5 Kio (v7) sont programmés. Le contenu est vérifié avant l’écriture du marqueur de
 validation, puis les deux banques sont relues : la banque précédente doit être
 inchangée. Le robot redémarre ensuite pour charger les calibrations restaurées.
 Cette vérification fait partie de la restauration et ne se désactive pas.
@@ -74,5 +74,7 @@ Dans un rapport : **haut/bas** change de page, **OK** avance et quitte à la fin
 `Left setup` / `Right setup`, puis le capteur physique (`L5`, `R10`, etc.), le sens
 et la vitesse. Après rotation, un montage peut mesurer le capteur du côté opposé :
 cela ne signifie pas que l’autre montage a été calibré. Un canal non mesuré est
-indiqué `NOT MEASURED`. Dans `Turn report`, l’absence de contrôle indépendant à
+indiqué `5cm: NO WALL` / `At start pose` lorsque le canal 5 cm a été exclu
+faute de détection initiale. La synthèse signale alors `5cm MISSING`. Un montage
+absent reste indiqué `MISSING`. Dans `Turn report`, l’absence de contrôle indépendant à
 90° est également signalée par `MISSING`.
