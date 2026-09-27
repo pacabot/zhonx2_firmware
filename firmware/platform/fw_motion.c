@@ -39,10 +39,22 @@ unsigned fw_motion_speed(void);
 
 static uint32_t cell_pitch_um=CELL_LENGTH*1000u, front_allowance_um;
 static int front_calibrated;
+/* Two raw optical edges can validate an axle offset beyond a single sensor's
+ * 15 mm window. Keep their raw travel independent of intermediate corrections. */
+static int front_reference_valid;
+static int32_t front_reference_raw,front_reference_goal,front_pair_error;
+static unsigned front_reference_speed;
+static fw_cal_data_t wall_profile;
+static int32_t front_pair_window(void)
+{
+    int32_t body=(int32_t)wall_profile.geometry.width_um/2;
+    if(body<(int32_t)wall_profile.geometry.nose_um)body=(int32_t)wall_profile.geometry.nose_um;
+    int32_t room=(int32_t)wall_profile.geometry.inner_um/2-body-5000;
+    return room<0?0:room<30000?room:30000;
+}
 static fw_rotation_data_t rotation_profile;
 static float velocity, cruise;
 static wall_control_t wall;
-static fw_cal_data_t wall_profile;
 unsigned fw_motion_speed(void) {return active?(unsigned)velocity:0;}
 int32_t fw_motion_lateral_um(void) {return wall.lateral_um;}
 int32_t fw_motion_heading_mrad(void) {return wall.heading_mrad;}
@@ -152,6 +164,7 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     uint32_t mask=__get_PRIMASK(); __disable_irq();
     TIM_Cmd(TIM5,DISABLE); /* New controller exclusively owns speed corrections. */
     straight=is_straight; allow_wall=accept_wall; wall_arrival=0;
+    front_reference_valid=0;front_pair_error=0;
     calibration=calibrating;
     cruise=(float)speed; velocity=fminf(calibration==1?5.0f:end_speed,cruise);
     started=hal_os_get_systicks();
@@ -257,7 +270,7 @@ int fw_motion_extend(unsigned cells,int accept_wall)
     if(goal_um+extra>16u*cell_pitch_um) {__set_PRIMASK(mask);return -1;}
     goal_um+=extra;travel_ticks+=(uint32_t)lroundf(extra*TICKS_PER_MM/1000.0f);
     hal_step_motor_pair_extend((unsigned long)lroundf(extra*1.25f*TICKS_PER_MM/1000.0f));
-    allow_wall=accept_wall;started=hal_os_get_systicks();
+    allow_wall=accept_wall;front_reference_valid=0;started=hal_os_get_systicks();
     __set_PRIMASK(mask);return 0;
 }
 static void curve_segment(unsigned phase)
@@ -383,10 +396,17 @@ void fw_motion_tick(uint32_t now)
         centre_phase=0;
         active=0; velocity=0; hal_step_motor_pair_rate(0,0); return;
     }
+    if(straight && (scan.raw&SENSOR_F10_POS))front_reference_valid=0;
     if(straight && allow_wall && wall_profile.valid &&
        (previous_raw&SENSOR_F10_POS) && !(scan.raw&SENSOR_F10_POS)) {
         int32_t allowance=(int32_t)wall_profile.front[1].on_um-(int32_t)wall_profile.geometry.inner_um/2;
-        int32_t residual=(int32_t)goal_um-allowance-raw_distance_um()-longitudinal_um;
+        int32_t raw=raw_distance_um();
+        int32_t residual=(int32_t)goal_um-allowance-raw-longitudinal_um;
+        int32_t window=front_pair_window();
+        if((scan.raw&SENSOR_F5_POS) && residual>=-window && residual<=window) {
+            front_reference_raw=raw;front_reference_goal=raw+allowance;
+            front_reference_speed=fw_motion_speed();front_reference_valid=1;
+        }
         if(residual>=-15000 && residual<=15000) {
             if(residual>6000)residual=6000;
             if(residual< -6000)residual=-6000;
@@ -394,18 +414,30 @@ void fw_motion_tick(uint32_t now)
         }
     }
     if (straight && !(scan.raw & SENSOR_F5_POS)) {
+        int32_t residual=(int32_t)goal_um-(int32_t)front_allowance_um-raw_distance_um()-longitudinal_um;
+        int paired=0;
+        if(front_reference_valid && wall_profile.valid && (previous_raw&SENSOR_F5_POS) &&
+           !(scan.raw&SENSOR_F10_POS) && !(scan.filtered&SENSOR_F10_POS)) {
+            int32_t expected=(int32_t)wall_profile.front[1].on_um-(int32_t)wall_profile.front[0].on_um;
+            front_pair_error=raw_distance_um()-front_reference_raw-expected;
+            unsigned speed=fw_motion_speed();if(speed<front_reference_speed)speed=front_reference_speed;
+            int32_t tolerance=2000+(int32_t)(wall_profile.front[0].spread_um+wall_profile.front[1].spread_um+speed*20);
+            if(tolerance>8000)tolerance=8000;
+            int32_t window=front_pair_window();
+            paired=expected>0 && front_pair_error>=-tolerance && front_pair_error<=tolerance &&
+                   residual>=-window && residual<=window;
+        }
         /* A front wall at the final cell centre is an arrival, not a failed maze.
          * Never accept an obstacle in the middle of a corridor or before a known opening. */
         if (front_calibrated && allow_wall &&
-            (float)remaining/TICKS_PER_MM<=(float)front_allowance_um*0.001f+
-                (wall_profile.valid?15.0f:5.0f)) {
+            (paired || (float)remaining/TICKS_PER_MM<=(float)front_allowance_um*0.001f+
+                (wall_profile.valid?15.0f:5.0f))) {
             /* Match the 15 mm reference window used for F10 and posts. The old
              * 5 mm gate faulted on a valid F5 edge after a bounded F10 correction.
              * Use that calibrated edge to finish at the centre without reversing. */
-            wall_arrival=1;
+            wall_arrival=1;front_reference_valid=0;
             if(wall_profile.valid && (previous_raw&SENSOR_F5_POS)) {
-                int32_t residual=(int32_t)goal_um-(int32_t)front_allowance_um-raw_distance_um()-longitudinal_um;
-                if(residual>=-15000 && residual<=15000) {
+                if(paired || (residual>=-15000 && residual<=15000)) {
                     longitudinal_um+=residual;
                 }
             }
@@ -432,6 +464,12 @@ void fw_motion_tick(uint32_t now)
         }
     }
     float distance=(float)remaining/TICKS_PER_MM;
+    if(straight && front_reference_valid) {
+        /* F10 may shorten braking distance before F5 validates the position.
+         * It never authorizes extra travel or suppresses obstacle protection. */
+        float optical_left=(front_reference_goal-raw_distance_um())*0.001f;
+        if(optical_left<distance)distance=fmaxf(0.0f,optical_left);
+    }
     /* Braking-distance envelope with bounded acceleration; no proportional
      * asymptotic tail and no speed-dependent discontinuity near the endpoint. */
     float accel=calibration==1?100.0f:max_accel;

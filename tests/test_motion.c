@@ -321,6 +321,39 @@ int main(void)
         assert(fabs(after_edge-8.348)<0.15 && !fw_motion_fault());
         assert(abs(fw_motion_travelled_um()-716000)<150);
     }
+    /* Second field capture: F5 after 149.5 mm of a 179 mm command. A 21 mm
+     * offset is recoverable only if independent F10/F5 travel matches calibration.
+     * Sensor samples arrive every 10 ms; do not assume perfect edge timing. */
+    for(unsigned mode=0;mode<7;++mode) {
+        setup();fw_cal_data_t captured=walls;
+        captured.front[0].on_um=91848;captured.front[0].off_um=92415;captured.front[0].spread_um=408;
+        captured.front[1].on_um=131991;captured.front[1].off_um=132353;captured.front[1].spread_um=192;
+        fw_motion_geometry(179000,91848,167000);fw_motion_wall_profile(&captured);
+        assert(!fw_motion_straight_to(1,220,mode!=5));
+        double offset=mode==1?28.0:mode==6?35.0:21.15;
+        double f10=179+83.5-131.991-offset,f5=179+83.5-91.848-offset;
+        if(mode==2)f10+=20; /* Inconsistent sensor spacing: cannot validate the offset. */
+        unsigned long edge_count=0,final_rate=0;
+        while(fw_motion_busy() && now<5000) {
+            if(now%10==0) {
+                double raw=(total[0]+total[1])/(4.0*STEPS_PER_MM);
+                uint8_t bits=0x3f;
+                if(mode!=3 && raw>=f10 && !(mode==4 && raw>=f10+10))bits&=~SENSOR_F10_POS;
+                if(raw>=f5)bits&=~SENSOR_F5_POS;
+                if((scan.raw&SENSOR_F5_POS) && !(bits&SENSOR_F5_POS))edge_count=total[0]+total[1];
+                scan.raw=scan.filtered=bits;
+            }
+            final_rate=rates[0];tick(1);
+            assert(commanded[0]>0 && commanded[1]>0);
+        }
+        assert(!fw_motion_busy() && edge_count);
+        if(mode>=2) {assert(fw_motion_fault()==2 && disabled);continue;}
+        assert(!fw_motion_fault() && fw_motion_wall_arrival());
+        assert(abs(fw_motion_travelled_um()-179000)<150);
+        double after_edge=(total[0]+total[1]-edge_count)/(4.0*STEPS_PER_MM);
+        assert(fabs(after_edge-8.348)<0.4);
+        assert(final_rate/(2.0*STEPS_PER_MM)<60); /* Braked before the corrected endpoint. */
+    }
     /* Position reference from the actual hysteresis edge; arbitrary initial
      * longitudinal offsets, both approach and release directions. */
     for(int offset=-12;offset<=12;offset+=6) {

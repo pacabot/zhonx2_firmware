@@ -162,6 +162,23 @@ actifs. La garantie qu'un labyrinthe a une solution déclenche cette recherche,
 mais ne remplace jamais une mesure par une ouverture inventée. Les runs gardent
 leur arrêt strict sur obstacle ou contradiction.
 
+## Référence frontale concordante
+
+Un seul front F5 conserve la fenêtre de correction de ±15 mm. Pour un décalage
+plus grand, le contrôleur mémorise le passage F10 puis compare la distance brute
+parcourue jusqu'à F5 à la différence des deux seuils calibrés. F10 doit toujours
+être actif en brut et en filtré. La tolérance inclut la dispersion mesurée et
+l'échantillonnage, avec un plafond de 8 mm sur cette différence de distances.
+
+Si les deux observations concordent, la position longitudinale peut être
+corrigée jusqu'à 30 mm, ou moins selon le dégagement de la géométrie du robot.
+Le robot termine uniquement la distance F5-centre mesurée (8,348 mm avec la
+calibration présente). F10 permet d'anticiper le freinage avant cette validation,
+sans autoriser un déplacement supplémentaire. La référence est invalidée quand
+F10 se libère, au début d'un mouvement ou à la prolongation d'une ligne droite.
+Un mur dans un passage connu ouvert, des fronts incohérents, l'absence d'un
+front F10 ou un décalage hors fenêtre conservent l'arrêt obstacle.
+
 ## Mur frontal détecté tardivement
 
 L'absence de mur exige que F10 **et** F5 soient libres, en brut et en filtré.

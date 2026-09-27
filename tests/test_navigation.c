@@ -191,9 +191,21 @@ static void scenario(int obstacle)
     for(unsigned c=0;c<NM_CELLS;++c) ground.cell[c]=(nm_cell_t){15,15,0,0};
     edge(0,NM_NORTH);edge(16,NM_NORTH);edge(32,NM_EAST);edge(33,NM_EAST);
     edge(34,NM_EAST);edge(34,NM_NORTH);edge(35,NM_NORTH);edge(50,NM_EAST);
+    if(obstacle==9) {
+        /* Topology derived from the 17:28 field dump. Unknown edges are closed
+         * in this fixture except the last unmeasured edge inside the goal room.
+         * Start at the opposite corner; exercise goal completion and return. */
+        static const uint8_t walls[6][6]={
+            {12,6,12,4,5,6},{8,3,10,11,15,10},{10,13,1,6,12,2},
+            {8,7,15,10,11,10},{10,15,14,9,6,10},{9,5,1,5,3,11}};
+        nm_init_size(&ground,6,0);fw_maze_size=6;
+        for(unsigned y=0;y<6;++y)for(unsigned x=0;x<6;++x)
+            ground.cell[y*NM_SIDE+x]=(nm_cell_t){15,walls[y][x],0,0};
+        assert(nm_valid(&ground));
+    }
     hide_after_recovery=obstacle==7;hidden_door_cleared=0;now=moves=turns=wall_arrivals=draws=saves=ack=extensions=0; saved_size=0;
     busy=stopped=backing=recovered=0;confirm_missing=obstacle==3; inject_obstacle=(obstacle==3 || obstacle==7)?2:obstacle; last_status[0]=0;
-    physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
+    physical=(nm_pose_t){obstacle==9?5:0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
     fw_app_init();fw_search_speed=obstacle==8?300:220;maximum_requested_speed=0;
@@ -212,6 +224,13 @@ static void scenario(int obstacle)
     int result=fw_app_discover();
     assert(saves==1 && ack>=200);
     if(obstacle==8)assert(maximum_requested_speed==220 && extensions>0);
+    if(obstacle==9) {
+        assert(!result && !strcmp(last_status,"OPTIMAL PATH"));
+        assert(physical.x==5 && physical.y==0 && physical.heading==NM_NORTH);
+        assert(fw_app_ready() && fw_app_maze_count()==1);
+        fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
+        return;
+    }
     if(obstacle==0 || obstacle==2 || obstacle==4 || obstacle==5 || obstacle==7 || obstacle==8) {
         if(obstacle==2 || obstacle==7)assert(recovered);
         else assert(!recovered);
@@ -307,7 +326,7 @@ static void calibration_snapshot(void)
 }
 int main(void)
 {
-    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);scenario(8);
+    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);scenario(8);scenario(9);
     puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
     calibration_snapshot();
     fw_run_speed=1000;assert(!fw_app_settings_save());

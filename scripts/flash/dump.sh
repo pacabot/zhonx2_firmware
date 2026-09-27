@@ -87,7 +87,7 @@ elif sys.argv[5] == '1':
 halt
 set failed [catch {{
     if {{([lindex [read_memory 0x40020014 32 1] 0] & 0x10c) != 0x100}} {{error "Motors active"}}
-    echo "CPU_REGISTERS [get_reg {{r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 sp lr pc xpsr}}]"
+    echo "CPU_REGISTERS [get_reg {{r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 sp lr pc}}]"
     echo "VTOR [read_memory 0xe000ed08 32 1]"
     echo "CFSR_HFSR [read_memory 0xe000ed28 32 2]"
     echo "GPIOA_ODR [read_memory 0x40020014 32 1]"
