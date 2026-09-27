@@ -6,6 +6,7 @@
 #include "fw_layout.h"
 #include "nimes.h"
 #include "wall_control.h"
+#include "fw_step_clock.h"
 #include <assert.h>
 #include <math.h>
 
@@ -359,10 +360,10 @@ static void wall_test(void)
     measured.geometry=(fw_cal_geometry_t){47000,94000,167000,179000};
     measured.side[0]=(fw_cal_side_t){84500,85500,0};
     measured.side[1]=(fw_cal_side_t){81500,83500,1000};
-    for(unsigned speed=200;speed<=1000;speed+=800)for(unsigned mismatch=0;mismatch<=1;++mismatch)
+    for(unsigned speed=200;speed<=1500;speed=speed==200?1000:speed==1000?1500:1501)for(unsigned mismatch=0;mismatch<=1;++mismatch)
     for(int sign=-1;sign<=1;sign+=2) {
         unsigned distance=speed*10;
-        wall_control_reset(&a);
+        wall_control_reset(&a);unsigned latency=speed>1000?2:3;a.lag_scans=(uint8_t)latency;
         double lateral=83500+sign*6000,heading=0,yaw_remainder=0;
         int left=0,right=0;uint8_t delayed[3]={0x3f,0x3f,0x3f};
         for(unsigned tick=0;tick<20000000/distance;++tick) {
@@ -371,7 +372,7 @@ static void wall_test(void)
             uint8_t sensors=0x3f&~0x21;
             if(left)sensors&=~0x10;
             if(right)sensors&=~0x02;
-            uint8_t sensed=delayed[tick%3];delayed[tick%3]=sensors;
+            uint8_t sensed=delayed[tick%latency];delayed[tick%latency]=sensors;
             int yaw=(int)yaw_remainder;yaw_remainder-=yaw;
             int correction=wall_control_position(&a,sensed,&measured,distance,yaw);
             assert(abs(correction)<=120);
@@ -394,6 +395,33 @@ static void wall_test(void)
     assert(!a.near_ms[0] && !a.near_um[0]);
     puts("control: 20 m at 200/1000 mm/s, delayed binary sensors, +/-1% wheel mismatch, initial offset and yaw slip");
 
+}
+static void exit_and_clock_test(void)
+{
+    fw_cal_data_t d={.valid=1,.geometry={47000,94000,167000,179000}};
+    for(int sign=-1;sign<=1;sign+=2) {
+        wall_control_t c={.yaw_bias_mrad_m=7};
+        wall_control_exit(&c,&d,0x3f,sign*60,89500);
+        assert(c.output==-sign*120 && c.yaw_bias_mrad_m==7);
+        double heading=sign*60,remainder=0;
+        for(unsigned i=0;i<10;++i) {
+            double yaw=2.0*c.output*3000/83500;heading+=yaw;remainder+=yaw;
+            int measured=(int)remainder;remainder-=measured;
+            wall_control_position_timed(&c,0x3f,&d,3000,measured,10);
+        }
+        assert(fabs(heading)<15 && c.exit_um==59500);
+        int before=c.heading_mrad;wall_control_heading_reference(&c,80);assert(c.heading_mrad-before==45);
+    }
+    const unsigned rates[]={2000,83333,100000,125000,139983,150000};
+    fw_step_clock_t c={0};
+    for(unsigned i=0;i<sizeof rates/sizeof rates[0];++i) {
+        fw_step_clock_set(&c,2000000,rates[i]);uint64_t sum=0;
+        for(unsigned j=0;j<rates[i];++j) {
+            unsigned period=fw_step_clock_next(&c);assert(period==c.base || period==c.base+1);sum+=period;
+        }
+        assert(sum==2000000);
+    }
+    puts("exit: immediate residual-yaw feedback; fractional timers preserve exact mean rates through 150 kHz");
 }
 static void interaction_test(void)
 {
@@ -448,6 +476,7 @@ static void recheck_test(void)
 }
 int main(void)
 {
+    exit_and_clock_test();
     assert(fw_crc32("123456789",9)==0xcbf43926);
     assert(fw_crc32_more(fw_crc32("1234",4),"56789",5)==0xcbf43926);
     recheck_test(); interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); automatic_origin_test(); wall_test();

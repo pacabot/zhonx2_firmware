@@ -61,14 +61,16 @@ Il s'oriente ensuite vers le premier passage du chemin retenu.
 Le menu **Runs** permet de choisir librement **Run 1**, **Run 2** ou **Run 3**.
 Chaque écran propose une vitesse :
 120 mm/s, 300 mm/s, puis la valeur par défaut Fast run des Settings. Haut/bas
-ajuste la vitesse entre 20 et 1 000 mm/s ; OK arme le départ par la main devant
+ajuste la vitesse entre 20 et 1 500 mm/s ; OK arme le départ par la main devant
 F10 puis son retrait. Ces modifications restent temporaires : elles ne changent
 pas les Settings et ne sont pas enregistrées en flash.
 
 Après chaque arrivée, le temps est mémorisé en RAM, le robot revient par les
-passages connus à 120 mm/s, se replace au départ et revient au choix des runs.
-Il ne lance ni ne sélectionne automatiquement le run suivant. Le retour et le
-recentrage sont hors chronomètre. Une erreur ou une annulation quitte le run.
+passages connus à 120 mm/s, se replace au départ et charge directement le réglage du run suivant (1 → 2 → 3).
+Après le troisième, le choix des runs réapparaît. Le lancement attend toujours
+OK puis le top départ par la main ; Retour permet de choisir un autre run.
+Le retour et le recentrage sont hors chronomètre. Une erreur ou une annulation
+ne passe jamais au suivant.
 Lorsqu'une carte est chargée depuis la bibliothèque, l'écran demande de placer
 le robot dans sa cellule de départ avant OK ; le recentrage précède l'armement.
 
@@ -86,10 +88,18 @@ Un demi-tour au départ ou à l'arrivée du trajet reste une manœuvre séparée
 
 La vitesse de chaque segment et le freinage sont calculés à partir des segments
 suivants. L'accélération vaut `600 + 2 × vitesse_max` en mm/s² : 840 à 120 mm/s,
-1 800 à 600 mm/s et 2 600 à 1 000 mm/s. Le plafond des courbes est de 300 mm/s,
+1 800 à 600 mm/s et 3 600 à 1 500 mm/s. Le plafond des courbes est de 300 mm/s,
 abaissé selon leur courbure et la limite d'accélération latérale (moitié de
 l'accélération longitudinale). Une vitesse élevée proposée n'est donc atteinte
 que si la longueur et la géométrie du parcours le permettent.
+
+Les moteurs autorisent désormais 150 kHz de basculements STEP (environ 125 kHz
+à 1 500 mm/s en ligne droite, avec une réserve pour le différentiel). Les périodes
+des timers sont réparties entre deux entiers voisins : cela réduit l’erreur de
+fréquence et de différentiel due à l’arrondi du registre ARR à haute vitesse.
+Les interruptions de pas ne font que des additions/comparaisons ; les divisions
+restent dans la mise à jour de consigne. La vitesse atteinte et l’adhérence à
+1 500 mm/s restent à confirmer sur le robot.
 
 Les rotations calibrées fournissent l'échelle différentielle des roues, selon
 le sens et la vitesse équivalente disponible dans les profils. Le contrôleur
@@ -101,7 +111,7 @@ robot sont contrôlées avant lancement ; un trajet non réalisable est refusé,
 sans remplacer silencieusement une courbe par une rotation sur place.
 
 Les tests intègrent les deux roues sur des parcours en L, en zigzag et avec
-plusieurs virages rapprochés, à des consignes de 120 à 1 000 mm/s. Ils vérifient
+plusieurs virages rapprochés, à des consignes de 120 à 1 500 mm/s. Ils vérifient
 la position finale, le cap, l'absence de redémarrage entre segments, les roues
 toujours en marche avant et les arrêts sur obstacle/capteur périmé. Ils ne
 reproduisent pas toute la mécanique : adhérence et tenue des courbes doivent
@@ -152,12 +162,13 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   le biais de rotation permanent des roues à partir de ces cycles et le corrige
   dans l'observateur. L'apprentissage est borné, exclut les transitions de porte,
   les changements de capteur et les demi-cycles ; il est réinitialisé avec la
-  commande suivante. Deux positions optiques successives recalculent aussi le
+  début d’une nouvelle session de mouvement ; il est conservé entre les segments
+  et les virages d’un même run. Deux positions optiques successives recalculent aussi le
   cap à partir du trajet et de la différence de pas. Les bornes latérales sont
   projetées pendant le retard du filtrage et le gain de cap est réduit à haute
   vitesse. Ce mécanisme vise les petites dissymétries persistantes,
   pas une perte d'adhérence importante. Tests : couloirs simulés de 20 m,
-  200/1 000 mm/s, retard de trois scans, dissymétrie ±1 %, décalage initial et
+  200/1 000/1 500 mm/s, retard de deux à trois scans, dissymétrie ±1 %, décalage initial et
   perturbation de cap.
 - Un état binaire constant ne fournit pas une distance. Le suivi recherche les
   changements d'état autour du seuil réel, au lieu de considérer toute une
@@ -169,6 +180,15 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   plafond à 80 mm/s, de recherche séparée de seuil, ni d’arrêt `SIDE ALIGN FAILED`
   à l’entrée d’un virage. La commande différentielle corrige pendant la marche ;
   les protections frontales et de fraîcheur des capteurs restent actives.
+- En sortie de courbe, le résidu de cap est corrigé dès le premier tick, sans
+  attendre le prochain scan IR. Sur la première demi-cellule, la correction peut
+  varier de 16 ‰ par scan (8 ‰ ensuite), et une paire de poteaux corrige le cap
+  avec davantage de poids. Le cap est aussi corrigé à 1 kHz entre deux scans,
+  sans ajouter deux fois la correction déjà intégrée par l’observateur.
+- Sur un mur 10 cm confirmé en brut et en filtré, deux lectures brutes cohérentes
+  du 5 cm alimentent le guidage avant la troisième lecture filtrée. Le retard
+  utilisé dans l’observateur est adapté. Un pic isolé ou un changement simultané
+  du mur 10 cm conserve le filtrage normal. La cartographie garde son filtrage.
 - Les transitions des poteaux 10 cm recalent la distance longitudinale avec
   les profils d’ouverture/fermeture. La position et la vitesse du premier front
   brut sont mémorisées. Deux scans bruts cohérents valident le poteau 10 cm ; un
@@ -179,7 +199,10 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   La correction du dernier scan droit est appliquée **avant** de décider l’entrée
   en courbe, en conservant les compteurs moteurs et la vitesse. Une paire
   gauche/droite du même type de transition fournit aussi une référence de cap. Corrections bornées : résidu
-  accepté ±15 mm, correction au plus 6 mm par événement de poteau/F10. Le front
+  accepté ±15 mm à basse vitesse, augmenté de l’incertitude d’un demi-scan
+  supplémentaire au-delà de 220 mm/s (±21,4 mm à 1 500). Un poteau isolé corrige
+  au plus 6 mm ; deux observations gauche/droite concordantes donnent une
+  position moyenne, corrigée au plus de 10 mm par paire. F10 reste limité à 6 mm. Le front
   5 cm utilise la correction mesurée complète (±15 mm maximum) pour terminer
   une arrivée devant un mur autorisé, sans recul. F10 recale déjà l'approche
   avant F5. Si le canal 5 cm d'une calibration d'angle est valide, il affine le

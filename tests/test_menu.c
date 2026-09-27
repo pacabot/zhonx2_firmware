@@ -20,9 +20,9 @@ static fw_saved_maze_t saved;
 unsigned long hal_os_get_systicks(void) { return now; }
 /* New learning -> slow run -> back -> library -> direct runs -> escape/back.
  * The last idle period checks that no selection is repeated after release. */
-/* Explore; choose Run 3 first, then Run 1 and Run 2, each explicitly.
- * Back to maze; load then inspect map. */
-static const unsigned events[]={12,12,10,10,12,9,12,9,9,12,9,12,10,12,10,12,8,10,12,12,10,12,8,13};
+/* Choose Run 3 then Run 1; Run 2 setup loads directly after Run 1.
+ * After Run 2, back out of the automatically loaded Run 3; inspect the map. */
+static const unsigned events[]={12,12,10,10,12,9,12,9,9,12,9,12,10,12,8,8,10,12,12,10,12,8,13};
 void fw_test_idle(void)
 {
     ++now;

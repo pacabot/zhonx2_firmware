@@ -1,3 +1,4 @@
+#include "fw_step_clock.h"
 /**
  * hal_step_motor.c
  */
@@ -92,6 +93,7 @@ step_motor_handle;
 static step_motor_handle step_motor[MAX_CHANNELS];
 static volatile unsigned long pair_limit[2];
 static volatile int pair_owned;
+static volatile fw_step_clock_t pair_clock[2];
 
 
 int hal_step_motor_init(void)
@@ -624,7 +626,7 @@ void TIM2_IRQHandler(void)
         if ((unsigned long)step_motor[0].steps >= pair_limit[0]) {
             step_motor[0].timer->CR1 &= ~TIM_CR1_CEN;
             step_motor[0].freq = 0;
-        }
+        } else step_motor[0].timer->ARR=fw_step_clock_next(&pair_clock[0])-1;
         return;
     }
 
@@ -672,7 +674,7 @@ void TIM3_IRQHandler(void)
         if ((unsigned long)step_motor[1].steps >= pair_limit[1]) {
             step_motor[1].timer->CR1 &= ~TIM_CR1_CEN;
             step_motor[1].freq = 0;
-        }
+        } else step_motor[1].timer->ARR=fw_step_clock_next(&pair_clock[1])-1;
         return;
     }
 
@@ -749,7 +751,8 @@ void hal_step_motor_pair_rate(unsigned long right, unsigned long left)
         if (rates[i]>MAX_SPEED) rates[i]=MAX_SPEED;
         step_motor_handle *h=&step_motor[i];
         if (!rates[i]) { h->timer->CR1 &= ~TIM_CR1_CEN; h->freq=0; continue; }
-        h->timer->ARR=TIMER_FREQ/rates[i]-1;
+        fw_step_clock_set(&pair_clock[i],TIMER_FREQ,rates[i]);
+        h->timer->ARR=pair_clock[i].base-1;
         if (!(h->timer->CR1 & TIM_CR1_CEN)) {
             h->timer->EGR=TIM_EGR_UG;
             h->timer->CNT=0; h->timer->SR=0;

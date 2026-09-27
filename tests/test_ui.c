@@ -64,7 +64,7 @@ int main(void)
     puts("OLED: actual renderer, clipped menu text, wrapped prompts, all 256 map positions");
     fw_ui_card("ZHONX II","Calibration","",FW_ICON_CALIBRATE,1,4);image("build/ui-menu-home.pgm");
     fw_ui_card("MAZE","Load maze","Library",FW_ICON_MAZE,1,4);image("build/ui-menu-maze.pgm");
-    fw_ui_run_setup(3,1000,2600,1);image("build/ui-menu-run.pgm");
+    fw_ui_run_setup(3,1500,3600,1);image("build/ui-menu-run.pgm");
     fw_ui_run_setup(1,120,840,0);image("build/ui-run-place-start.pgm");
     const char *cal_names[]={"Walls","Rotation","Left edge","Right edge"};
     const unsigned cal_icons[]={FW_ICON_WALL,FW_ICON_TURN,FW_ICON_EDGE_LEFT,FW_ICON_EDGE_RIGHT};

@@ -231,6 +231,22 @@ int main(void)
     while(fw_motion_busy())tick(1);
     assert(abs(fw_motion_travelled_um()-358000)<400 && !fw_motion_fault());
     assert(fw_motion_extend(1,1));
+    /* L5 may guide after two coherent raw samples, before the three-scan
+     * filtered state. A spike or a concurrent doorway must not guide early. */
+    long observed_steering[3];
+    for(unsigned mode=0;mode<3;++mode) {
+        setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+        scan.raw=scan.filtered=0x1f;assert(!fw_motion_straight(3,120));
+        while(fw_motion_travelled_um()<100000 || now%10)tick(1);
+        scan.raw=mode==2?0x2f:0x0f;
+        for(unsigned i=0;i<10;++i)tick(1);
+        if(mode==1)scan.raw=0x1f;
+        for(unsigned i=0;i<10;++i)tick(1);
+        assert(scan.filtered==0x1f);
+        observed_steering[mode]=(long)rates[1]-(long)rates[0];
+        fw_motion_stop();
+    }
+    assert(observed_steering[0]!=observed_steering[1] && observed_steering[1]==observed_steering[2]);
     /* A calibrated forward post transition removes a 3 mm longitudinal drift. */
     setup();fw_motion_geometry(179000,92000,167000);
     fw_corner_data_t corners[2];
@@ -253,14 +269,16 @@ int main(void)
     assert(abs(fw_motion_travelled_um()-179000)<400);
     /* A confirmed raw edge at run speed uses its original position, not the
      * delayed filter position. A transient spike must not move the bend. */
-    for(unsigned speed=600;speed<=1000;speed+=400)for(unsigned glitch=0;glitch<2;++glitch) {
+    for(unsigned speed=600;speed<=1500;speed=speed==600?1000:speed==1000?1500:1501)for(unsigned glitch=0;glitch<2;++glitch) {
         setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
         for(unsigned i=0;i<3;++i)profile.point[i]=(fw_rotation_point_t){.speed=40+40*i,.quarter_um={65581,65581}};
         fw_motion_rotation_profile(&profile);fw_motion_corner_profiles(&corners[0],&corners[1]);
-        nm_map_t map;nm_init_size(&map,9,0);nm_route_t route={.direction={0,0,1},.length=3};
-        assert(!nm_edge(&map,0,0,0) && !nm_edge(&map,16,0,0) && !nm_edge(&map,32,1,0));
+        nm_map_t map;nm_init_size(&map,9,0);nm_route_t route={.direction={0,0,0,0,0,0,0,1},.length=8};
+        for(unsigned i=0;i<7;++i)assert(!nm_edge(&map,i*NM_SIDE,0,0));
+        assert(!nm_edge(&map,7*NM_SIDE,1,0));
         scan.raw=scan.filtered=0x1f;assert(!fw_motion_path(&map,(nm_pose_t){0,0,0},&route,speed));
-        while(fw_motion_travelled_um()<242500)tick(1);
+        while(fw_motion_travelled_um()<600500)tick(1);
+        assert(fw_motion_speed()>=speed-10);
         scan.raw=0x3f;do {tick(1);}while(now%10); /* First raw observation. */
         int32_t pulse=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
         assert(abs(fw_motion_travelled_um()-pulse)<20);
@@ -273,7 +291,7 @@ int main(void)
         assert(!fw_motion_fault());
     }
     /* Full differential-drive integration, both arc directions and speeds. */
-    for(int dir=-1;dir<=1;dir+=2)for(unsigned speed=120;speed<=1000;speed+=440) {
+    for(int dir=-1;dir<=1;dir+=2)for(unsigned speed=120;speed<=1500;speed=speed<1000?speed+440:speed==1000?1500:1501) {
         setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
         for(unsigned i=0;i<3;++i)profile.point[i]=(fw_rotation_point_t){.speed=40+40*i,
             .quarter_um={65581,65581}}; /* pi * 83.5 / 4, micrometres */
@@ -295,7 +313,7 @@ int main(void)
     }
     /* Whole-route playback must keep both timers running across adjacent
      * left/right curves, with no segment restart or wheel direction reversal. */
-    for(unsigned shape=0;shape<3;++shape)for(unsigned speed=120;speed<=1000;speed+=440) {
+    for(unsigned shape=0;shape<3;++shape)for(unsigned speed=120;speed<=1500;speed=speed<1000?speed+440:speed==1000?1500:1501) {
         setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
         fw_motion_rotation_profile(&profile);
         nm_map_t map;nm_init_size(&map,9,0);nm_pose_t pose={0,0,NM_NORTH};
@@ -363,10 +381,10 @@ int main(void)
         }
         assert(!fw_motion_fault() && !fw_motion_busy() && peak>=(engine?590u:290u));
     }
-    setup();assert(!fw_motion_straight(8,FW_RUN_MAX_SPEED));
+    setup();assert(!fw_motion_straight(16,FW_RUN_MAX_SPEED));
     unsigned peak=0;
     while(fw_motion_busy()) {tick(1);if(fw_motion_speed()>peak)peak=fw_motion_speed();}
-    assert(peak>=990 && !fw_motion_fault());
+    assert(peak>=1490 && !fw_motion_fault());
     /* Use an independently calibrated 5 cm post only after its matching 10 cm edge. */
     setup();fw_motion_geometry(179000,92000,167000);
     for(unsigned side=0;side<2;++side)for(unsigned f=0;f<2;++f)for(unsigned i=0;i<3;++i) {

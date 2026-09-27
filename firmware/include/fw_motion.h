@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "fw_cal_extra.h"
 #include "nimes.h"
-#define FW_RUN_MAX_SPEED 1000u
+#include "fw_limits.h"
 #define FW_CURVE_MAX_SPEED 220u
 void fw_motion_init(void);
 /* One continuous forward path, including consecutive smooth 90-degree bends. */

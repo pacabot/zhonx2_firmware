@@ -157,10 +157,10 @@ int main(void)
         int32_t offset;
         assert(!fw_corner_offset(&corner,1,160,1,1,&offset) && offset<0);
         assert(fw_corner_offset(&corner,1,260,1,1,&offset));
-        assert(!fw_corner_raw_offset(&corner,1,1000,1,1,&offset));
+        assert(!fw_corner_raw_offset(&corner,1,1500,1,1,&offset));
         assert(offset==corner.point[1][2].raw_open_um[1]);
         fw_corner_data_t missing=corner;missing.point[1][2].mask=2;
-        assert(fw_corner_raw_offset(&missing,1,1000,0,1,&offset));
+        assert(fw_corner_raw_offset(&missing,1,1500,0,1,&offset));
         assert(r.x==83500 && r.y==83500);
         if(!side) {left_moves=r.moves;left_turns=r.turns;}
         else assert(r.moves==left_moves && r.turns==left_turns);

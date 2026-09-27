@@ -65,7 +65,7 @@
 /* Initial speed */
 #define INITIAL_SPEED               (5000) //(6000)//1500
 /* Absolute Maximum speed */
-#define MAX_SPEED                   (100000)//(100000)
+#define MAX_SPEED                   (150000) /* Toggle Hz: 1500 mm/s plus steering. */
 /* Minimum distance to reach the maximum speed */
 #define MAX_SPEED_DISTANCE          (155 * STEPS_PER_MM) // MAX 400
 /* Added frequency at each step for acceleration and deceleration */

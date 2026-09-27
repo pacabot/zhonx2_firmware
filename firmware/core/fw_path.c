@@ -1,3 +1,4 @@
+#include "fw_limits.h"
 #include "fw_path.h"
 #include <math.h>
 #include <string.h>
@@ -31,8 +32,8 @@ static void curve_table(void)
 unsigned fw_run_acceleration(unsigned speed)
 {
     if(speed<20)speed=20;
-    if(speed>1000)speed=1000;
-    return 600+2*speed; /* 840 at 120 mm/s, 1800 at 600, 2600 at 1000. */
+    if(speed>FW_RUN_MAX_SPEED)speed=FW_RUN_MAX_SPEED;
+    return 600+2*speed; /* 840 at 120 mm/s, 1800 at 600, 3600 at 1500. */
 }
 static int fits(const fw_cal_geometry_t *g,float radius)
 {
@@ -55,7 +56,7 @@ int fw_path_plan(fw_path_t *p,const nm_map_t *m,nm_pose_t pose,const nm_route_t 
 {
     memset(p,0,sizeof *p);
     if(!nm_valid(m) || !fw_cal_geometry_valid(g) || !route->length || route->length>NM_CELLS ||
-       speed<20 || speed>1000 || route->direction[0]!=pose.heading)return -1;
+       speed<20 || speed>FW_RUN_MAX_SPEED || route->direction[0]!=pose.heading)return -1;
     curve_table();p->radius=g->pitch_um*.5f;p->acceleration=(float)fw_run_acceleration(speed);
     nm_pose_t end=pose;
     for(unsigned i=0;i<route->length;++i) {

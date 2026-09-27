@@ -1,3 +1,4 @@
+#include "fw_limits.h"
 #include "fw_cal_extra.h"
 #include <string.h>
 #include <stdio.h>
@@ -62,7 +63,7 @@ int fw_corner_offset(const fw_corner_data_t *d,unsigned facing,unsigned speed,un
 }
 int fw_corner_raw_offset(const fw_corner_data_t *d,unsigned facing,unsigned speed,unsigned sensor,int opening,int32_t *out)
 {
-    if(!out || !fw_corner_valid(d) || facing>1 || sensor>1 || speed>1000)return -1;
+    if(!out || !fw_corner_valid(d) || facing>1 || sensor>1 || speed>FW_RUN_MAX_SPEED)return -1;
     if(speed<40)speed=40;
     if(speed>220)speed=220;
     for(unsigned i=1;i<FW_CAL_SPEEDS;++i)if(speed<=d->point[facing][i].speed) {

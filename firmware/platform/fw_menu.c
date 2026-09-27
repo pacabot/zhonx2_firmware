@@ -93,8 +93,9 @@ static void runs(void)
 {
     unsigned proposed[3]={120,300,(unsigned)fw_run_speed};
     const card_t items[]={{"Run 1","Straight",FW_ICON_RUN},{"Run 2","Curves",FW_ICON_RUN},{"Run 3","Curves",FW_ICON_RUN}};
+    int next=-1;
     while(fw_app_ready()) {
-        int selected=choose("RUNS",items,3);if(selected<0)return;
+        int selected=next>=0?next:choose("RUNS",items,3);next=-1;if(selected<0)return;
         unsigned number=(unsigned)selected+1;
         unsigned speed=proposed[number-1];if(speed<20)speed=20;if(speed>FW_RUN_MAX_SPEED)speed=FW_RUN_MAX_SPEED;
         block_key();fw_ui_run_setup(number,speed,fw_run_acceleration(speed),fw_app_at_start());
@@ -104,6 +105,7 @@ static void runs(void)
             if(k==KEY_OK) {
                 proposed[number-1]=speed;
                 if(fw_app_trial(number,speed)) {fw_app_show_result();return;}
+                if(number<3)next=(int)number;
                 break;
             }
             unsigned step=speed>=300?50:20;

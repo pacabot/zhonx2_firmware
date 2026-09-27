@@ -40,7 +40,7 @@ static fw_corner_data_t corner_profile[2];
 static uint8_t previous_sensors,previous_raw;
 static int last_post[2][2];
 static int32_t post_measurement[2][2];
-static uint8_t post_raw_previous,post_open[2][2];
+static uint8_t post_raw_previous,post_open[2][2],side_raw_previous,side_stable[2];
 static struct {int32_t position;unsigned speed;uint8_t valid,opening;} post_pending[2][2];
 static int32_t raw_distance_um(void)
 {
@@ -78,6 +78,21 @@ void fw_motion_corner_profiles(const fw_corner_data_t *left,const fw_corner_data
         else memset(&corner_profile[i],0,sizeof corner_profile[i]);
     }
 }
+static uint8_t control_sensors(const hal_sensor_snapshot *scan)
+{
+    uint8_t sensors=scan->filtered;wall.lag_scans=3;
+    for(unsigned side=0;side<2;++side) {
+        unsigned bit=side?SENSOR_R5_POS:SENSOR_L5_POS,wallbit=side?SENSOR_R10_POS:SENSOR_L10_POS;
+        if((scan->raw^side_raw_previous)&(bit|wallbit))side_stable[side]=1;
+        else if(side_stable[side]<3)++side_stable[side];
+        /* Only accelerate 5 cm feedback beside an established wall. A doorway
+         * or a one-scan spike must not be turned into a lateral correction. */
+        if(side_stable[side]>=2 && !((scan->raw|scan->filtered)&wallbit)) {
+            sensors=(uint8_t)((sensors&~bit)|(scan->raw&bit));wall.lag_scans=2;
+        }
+    }
+    side_raw_previous=scan->raw;return sensors;
+}
 static void post_observation(const hal_sensor_snapshot *scan,int32_t raw)
 {
     uint8_t sensors=scan->filtered;
@@ -107,17 +122,24 @@ static void post_observation(const hal_sensor_snapshot *scan,int32_t raw)
         int post=(measured+longitudinal_um)/(int32_t)cell_pitch_um;
         int32_t expected=(int32_t)(post*cell_pitch_um+cell_pitch_um/2);
         int32_t residual=expected-measured-longitudinal_um;
-        if(residual<-15000 || residual>15000 || post==last_post[side][sensor])continue;
+        unsigned edge_speed=post_pending[side][sensor].valid?post_pending[side][sensor].speed:speed;
+        int32_t gate=15000+(edge_speed>220?(int32_t)(edge_speed-220)*5:0);
+        /* At high speed a 10 ms raw sample interval adds position uncertainty.
+         * Widen association only; a single edge still corrects at most 6 mm. */
+        if(residual< -gate || residual>gate || post==last_post[side][sensor])continue;
         /* A 5 cm transition may simply be wall following. Use it as a post
          * only after a matching 10 cm post and with the same open/closed state. */
         if(!sensor && (last_post[side][1]!=post ||
            !!(sensors&(side?SENSOR_R10_POS:SENSOR_L10_POS))!=opening))continue;
         last_post[side][sensor]=post;post_measurement[side][sensor]=measured;post_open[side][sensor]=(uint8_t)opening;
-        /* Bounded correction of step-count drift. Preserve velocity and pulses. */
-        if(residual>6000)residual=6000;
-        if(residual<-6000)residual=-6000;
+        int paired=last_post[0][sensor]==last_post[1][sensor] && post_open[0][sensor]==post_open[1][sensor];
+        if(paired)residual=expected-(post_measurement[0][sensor]+post_measurement[1][sensor])/2-longitudinal_um;
+        /* A concordant pair supplies a mean position as well as yaw. */
+        int32_t bound=paired?10000:6000;
+        if(residual>bound)residual=bound;
+        if(residual< -bound)residual= -bound;
         longitudinal_um+=residual;
-        if(last_post[0][sensor]==last_post[1][sensor] && post_open[0][sensor]==post_open[1][sensor] && wall_profile.valid) {
+        if(paired && wall_profile.valid) {
             int32_t yaw=(post_measurement[1][sensor]-post_measurement[0][sensor])*1000/(int32_t)wall_profile.geometry.inner_um;
             if(yaw>=-100 && yaw<=100)wall_control_heading_reference(&wall,yaw);
         }
@@ -193,7 +215,8 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     calibration=calibrating;
     cruise=(float)speed; velocity=fminf(calibration==1?5.0f:end_speed,cruise);
     started=hal_os_get_systicks();
-    wall_control_reset(&wall);last_scan=scan.sequence;last_scan_time=scan.timestamp;previous_sensors=scan.filtered;previous_raw=scan.raw;post_raw_previous=scan.raw;memset(post_pending,0,sizeof post_pending);
+    int32_t bias=wall.yaw_bias_mrad_m;wall_control_reset(&wall);wall.yaw_bias_mrad_m=bias;
+    side_raw_previous=scan.raw;memset(side_stable,0,sizeof side_stable);last_scan=scan.sequence;last_scan_time=scan.timestamp;previous_sensors=scan.filtered;previous_raw=scan.raw;post_raw_previous=scan.raw;memset(post_pending,0,sizeof post_pending);
     previous_count[0]=previous_count[1]=0;longitudinal_um=0;yaw_fraction=0;
     for(unsigned i=0;i<2;++i)for(unsigned j=0;j<2;++j)last_post[i][j]=-100;
     travel_ticks=(uint32_t)(right<0?-right:right);travel_sign=right<0?-1:1;
@@ -504,7 +527,7 @@ void fw_motion_tick(uint32_t now)
             int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
             int32_t forward=(int32_t)lroundf((dl+dr)*500.0f/TICKS_PER_MM);
             post_observation(&scan,raw_distance_um());
-            wall_control_position_timed(&wall,scan.filtered,&wall_profile,forward,yaw,elapsed);
+            wall_control_position_timed(&wall,control_sensors(&scan),&wall_profile,forward,yaw,elapsed);
         }
     }
     float distance=(float)remaining/TICKS_PER_MM;
@@ -578,7 +601,9 @@ static void path_tick(const hal_sensor_snapshot *scan)
     }
     float distance=(float)fw_motion_travelled_um();
     while(path_index+1<path.count && distance>=path.segment[path_index].start+path.segment[path_index].length) {
-        ++path_index;front_reference_valid=0;wall_control_reset(&wall);
+        ++path_index;front_reference_valid=0;
+        int32_t bias=wall.yaw_bias_mrad_m;wall_control_reset(&wall);wall.yaw_bias_mrad_m=bias;
+        side_raw_previous=scan->raw;memset(side_stable,0,sizeof side_stable);
         previous_raw=scan->raw;previous_sensors=scan->filtered;post_raw_previous=scan->raw;memset(post_pending,0,sizeof post_pending);
         for(unsigned a=0;a<2;++a)for(unsigned b=0;b<2;++b)last_post[a][b]=-100;
     }
@@ -595,9 +620,8 @@ static void path_tick(const hal_sensor_snapshot *scan)
     float track=quarter*4/3.14159265f;
     path_heading+=(dl-dr)*1000.0f/(TICKS_PER_MM*track);
     if(straight && !wall.initialized) {
-        wall.initialized=1;wall.sensors=scan->filtered;
-        wall.lateral_um=(int32_t)wall_profile.geometry.inner_um/2;
-        wall.heading_mrad=(int32_t)lroundf(wrap_angle(path_heading-point.heading)*1000);
+        wall_control_exit(&wall,&wall_profile,scan->filtered,
+            (int32_t)lroundf(wrap_angle(path_heading-point.heading)*1000),path_index?cell_pitch_um/2:0);
         previous_count[0]=count[0];previous_count[1]=count[1];last_scan=scan->sequence;last_scan_time=scan->timestamp;
     }
     if(straight)front_tick(scan);
@@ -612,7 +636,7 @@ static void path_tick(const hal_sensor_snapshot *scan)
             int32_t before=wall.heading_mrad;
             yaw_fraction+=(l-r)*1000000.0f/(TICKS_PER_MM*track);
             int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
-            wall_control_position_timed(&wall,scan->filtered,&wall_profile,
+            wall_control_position_timed(&wall,control_sensors(scan),&wall_profile,
                 (int32_t)lroundf((r+l)*500.0f/TICKS_PER_MM),yaw,elapsed);
             /* Retain sub-mrad wheel yaw; only optical innovations adjust the
              * floating heading. Replacing it by rounded state accumulated drift. */
@@ -627,7 +651,9 @@ static void path_tick(const hal_sensor_snapshot *scan)
     float change=target-velocity,step=path.acceleration*.001f;
     velocity+=fmaxf(-step,fminf(step,change));
     fw_path_point_t midpoint;fw_path_point(&path,path_index,distance-s->start+velocity*.5f,&midpoint);
-    float desired=straight?wall.output*.001f:
+    /* Close the heading loop between IR scans as well. The wall output
+     * already contains scan-time yaw feedback: add only the newer wheel yaw. */
+    float desired=straight?wall.output*.001f+2*(wall.heading_mrad*.001f-wrap_angle(path_heading-point.heading)):
         midpoint.curvature*track*.5f+2*wrap_angle(point.heading-path_heading);
     desired=fmaxf(-.85f,fminf(.85f,desired));
     path_trim+=fmaxf(-.008f,fminf(.008f,desired-path_trim));

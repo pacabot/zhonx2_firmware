@@ -57,7 +57,14 @@ static int32_t limit(int32_t x,int32_t bound) {return x>bound?bound:x<-bound?-bo
 void wall_control_heading_reference(wall_control_t *c,int32_t heading)
 {
     /* Two independent post observations provide a bounded yaw reference. */
-    c->heading_mrad += limit(heading-c->heading_mrad,40)/2;
+    c->heading_mrad += c->exit_um?limit(heading-c->heading_mrad,60)*3/4:limit(heading-c->heading_mrad,40)/2;
+}
+void wall_control_exit(wall_control_t *c,const fw_cal_data_t *d,uint8_t sensors,int32_t heading,uint32_t distance)
+{
+    c->initialized=1;c->sensors=sensors;c->lateral_um=(int32_t)d->geometry.inner_um/2;
+    c->heading_mrad=limit(heading,200);c->exit_um=distance;
+    /* Correct the residual turn angle immediately, before the next IR scan. */
+    c->output=limit(-2*c->heading_mrad,120);
 }
 int wall_control_position(wall_control_t *c,uint8_t s,const fw_cal_data_t *d,
                           int32_t forward,int32_t yaw)
@@ -86,9 +93,9 @@ int wall_control_position_timed(wall_control_t *c,uint8_t s,const fw_cal_data_t 
     c->lateral_um+=forward*c->heading_mrad/1000;
     int32_t lo=(int32_t)d->geometry.width_um/2,hi=(int32_t)d->geometry.inner_um-lo;
     /* Project delayed binary bounds to the current axle position. Filtering
-     * needs three scans; treating the old threshold as current destabilizes
+     * uses two or three scans; treating the old threshold as current destabilizes
      * the observer when a scan covers several millimetres. */
-    int32_t lag=limit(forward*3*c->heading_mrad/1000,5000);
+    int32_t lag=limit(forward*(c->lag_scans?c->lag_scans:3)*c->heading_mrad/1000,5000);
     int walls=0;
     if(!(s&0x20)) {
         walls=1;
@@ -187,6 +194,7 @@ int wall_control_position_timed(wall_control_t *c,uint8_t s,const fw_cal_data_t 
      * when each scan covers a larger distance. */
     int gain=forward>4000?1:2;
     int desired=limit((desired_heading-c->heading_mrad)*gain,120);
-    c->output+=limit(desired-c->output,8);
+    c->output+=limit(desired-c->output,c->exit_um?16:8);
+    if(forward>0)c->exit_um=(uint32_t)forward>=c->exit_um?0:c->exit_um-(uint32_t)forward;
     return c->output;
 }

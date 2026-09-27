@@ -161,7 +161,7 @@ int fw_motion_curve(int degrees,unsigned speed,int accept)
 }
 int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,unsigned speed)
 {
-    assert(!busy && route->length && speed>=20 && speed<=1000);
+    assert(!busy && route->length && speed>=20 && speed<=1500);
     path_dx=(inject_obstacle==9?5:0)-map->start_x;path_dy=-(int)map->start_y;
     assert(physical.x==(int)pose.x+path_dx && physical.y==(int)pose.y+path_dy && physical.heading==pose.heading);
     int c=physical.y*NM_SIDE+physical.x;
@@ -374,7 +374,7 @@ int main(void)
     scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);scenario(8);scenario(9);
     puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
     calibration_snapshot();
-    fw_run_speed=1000;assert(!fw_app_settings_save());
-    fw_run_speed=20;fw_app_init();assert(fw_run_speed==1000);
+    fw_run_speed=1500;assert(!fw_app_settings_save());
+    fw_run_speed=20;fw_app_init();assert(fw_run_speed==1500);
     return 0;
 }
