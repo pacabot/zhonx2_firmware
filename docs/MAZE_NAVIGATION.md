@@ -33,22 +33,25 @@ seuils et l'hystérésis F5 déjà calibrés, sur les murs disponibles de chaque
 et les rotations calibrées. Aucun talonnage ni réécriture des calibrations.
 Il s'oriente ensuite vers le premier passage du chemin retenu.
 
-L'écran **Run 1**, puis **Run 2** et **Run 3**, propose une vitesse :
+Le menu **Runs** permet de choisir librement **Run 1**, **Run 2** ou **Run 3**.
+Chaque écran propose une vitesse :
 120 mm/s, 300 mm/s, puis la valeur par défaut Fast run des Settings. Haut/bas
 ajuste la vitesse entre 20 et 1 000 mm/s ; OK arme le départ par la main devant
 F10 puis son retrait. Ces modifications restent temporaires : elles ne changent
 pas les Settings et ne sont pas enregistrées en flash.
 
 Après chaque arrivée, le temps est mémorisé en RAM, le robot revient par les
-passages connus à 120 mm/s, se replace au départ et prépare le run suivant.
-Le retour et le recentrage sont hors chronomètre. Après le troisième run,
-le menu Maze reprend la main. Une erreur ou une annulation interrompt la série.
+passages connus à 120 mm/s, se replace au départ et revient au choix des runs.
+Il ne lance ni ne sélectionne automatiquement le run suivant. Le retour et le
+recentrage sont hors chronomètre. Une erreur ou une annulation quitte le run.
 Lorsqu'une carte est chargée depuis la bibliothèque, l'écran demande de placer
 le robot dans sa cellule de départ avant OK ; le recentrage précède l'armement.
 
 ## Trajectoires et accélération des runs
 
-Les trois runs utilisent un parcours complet préparé avant mouvement. Les
+**Run 1** parcourt les lignes droites groupées, puis s’arrête pour pivoter à
+chaque changement de direction. Aucune courbe, à l’aller comme au retour.
+**Run 2 et Run 3** utilisent un parcours complet préparé avant mouvement. Les
 lignes droites et virages de 90° sont raccordés par des courbes de Bézier de
 cinquième degré, à courbure nulle aux deux extrémités. Deux virages consécutifs
 peuvent donc s'enchaîner sans segment artificiel d'arrêt et sans pivot intercalé.
@@ -135,6 +138,27 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   changements d'état autour du seuil réel, au lieu de considérer toute une
   demi-cellule comme parfaitement centrée. La position suivie peut différer du
   centre de quelques millimètres selon le montage des capteurs.
+- Chaque capteur latéral conserve ses références d’approche et de relâchement,
+  indépendamment du côté utilisé pour guider. Deux passages du même seuil dans
+  le même sens évitent de confondre l’hystérésis avec un angle. Attention : la
+  calibration latérale sauvegardée donne une **plage statique à 1 mm**, pas une
+  mesure séparée de l’hystérésis comme pour F5/F10 frontaux. Un demi-cycle a donc
+  une confiance réduite selon cette plage et sa dispersion ; aucune nouvelle
+  calibration ni migration des données en flash n’est requise.
+- Une détection 5 cm prolongée est intégrée en **temps réel et distance parcourue**.
+  La correction augmente progressivement sur le même mur 10 cm. Une ouverture,
+  un arrêt ou deux 5 cm actifs ne permettent pas de conclure à une dérive latérale.
+  Au-delà de 120 ms et de `60 mm + 30 × (largeur de plage + dispersion)`, une
+  détection unilatérale près du centre déclenche une recherche de référence à
+  **80 mm/s maximum**, avec freinage selon l’accélération du mouvement.
+  Le robot s’éloigne doucement du mur jusqu’au relâchement, puis redresse son cap
+  pendant au moins 15 mm. Les corrections de cap issues des simples bornes de
+  position sont suspendues pendant cette recherche ; les pas et les transitions
+  optiques continuent d’être intégrés. Aucun talonnage ni pivot systématique.
+  Limites : recherche de 300 mm, redressement de 150 mm, durée totale de 5 s.
+  Une limite dépassée ou une entrée en courbe avant la fin du recentrage arrête
+  les moteurs avec **SIDE ALIGN FAILED** (code 5). Une porte annule la recherche,
+  car son bord ne constitue pas une mesure latérale du mur.
 - Les transitions des poteaux 10 cm recalent la distance longitudinale avec
   les profils d'ouverture/fermeture interpolés à la vitesse courante. Une paire
   gauche/droite fournit aussi une référence de cap. Corrections bornées : résidu

@@ -7,6 +7,8 @@
 #include "nimes.h"
 #include "wall_control.h"
 #include <assert.h>
+#include <math.h>
+
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -359,11 +361,16 @@ static void wall_test(void)
     measured.side[1]=(fw_cal_side_t){81500,83500,1000};
     for(unsigned speed=200;speed<=1000;speed+=800)for(unsigned mismatch=0;mismatch<=1;++mismatch)
     for(int sign=-1;sign<=1;sign+=2) {
-        unsigned distance=speed*10;
+        unsigned distance=speed*10;double actual_speed=speed;
         wall_control_reset(&a);
         double lateral=83500+sign*6000,heading=0,yaw_remainder=0;
         int left=0,right=0;uint8_t delayed[3]={0x3f,0x3f,0x3f};
-        for(unsigned tick=0;tick<20000000/distance;++tick) {
+        for(unsigned tick=0,travel=0;travel<20000000;++tick,travel+=distance) {
+            unsigned cap=wall_control_speed_limit(&a);double target=cap && cap<speed?cap:speed;
+            double dv=(speed>300?600+2*speed:800)*.01;
+            if(actual_speed<target)actual_speed=fmin(target,actual_speed+dv);
+            if(actual_speed>target)actual_speed=fmax(target,actual_speed-dv);
+            distance=(unsigned)(actual_speed*10);
             if(lateral<=84500)left=1;else if(lateral>=85500)left=0;
             if(167000-lateral<=81500)right=1;else if(167000-lateral>=83500)right=0;
             uint8_t sensors=0x3f&~0x21;
@@ -372,7 +379,7 @@ static void wall_test(void)
             uint8_t sensed=delayed[tick%3];delayed[tick%3]=sensors;
             int yaw=(int)yaw_remainder;yaw_remainder-=yaw;
             int correction=wall_control_position(&a,sensed,&measured,distance,yaw);
-            assert(abs(correction)<=120);
+            assert(abs(correction)<=120 && !a.unsafe);
             double change=2.0*correction*distance/83500;
             yaw_remainder+=change;heading+=change+(double)sign*mismatch*0.01*distance/83.5;
             if(tick==500)heading+=sign*8; /* Unmeasured brief yaw slip. */
@@ -383,6 +390,31 @@ static void wall_test(void)
         assert(abs((int)lateral-83500)<5000 && abs((int)heading)<50);
         assert(abs(a.yaw_bias_mrad_m-(int)(sign*(int)mismatch*10000/83.5))<30);
     }
+    /* Persistent unilateral detection must trigger bounded reference recovery;
+     * repeated doorway fragments, stationary time and both-near states must not. */
+    for(unsigned side=0;side<2;++side) {
+        uint8_t near=(uint8_t)(0x3f & ~(side?0x03:0x30));
+        wall_control_reset(&a);
+        for(unsigned i=0;i<200;++i)wall_control_position_timed(&a,near,&measured,0,0,10);
+        assert(!a.recovery_side);
+        for(unsigned i=0;i<60;++i)wall_control_position_timed(&a,near,&measured,3000,0,10);
+        assert(a.recovery_side==side+1 && wall_control_speed_limit(&a)==80 && !a.unsafe);
+        wall_control_position_timed(&a,0x3f,&measured,800,0,10);
+        assert(!a.recovery_side && !a.near_ms[side] && !a.near_um[side]);
+        wall_control_reset(&a);
+        for(unsigned i=0;i<500;++i) {
+            uint8_t sensed=i%10==0?0x3f:near;
+            wall_control_position_timed(&a,sensed,&measured,3000,0,10);
+            assert(!a.recovery_side);
+        }
+        wall_control_reset(&a);
+        for(unsigned i=0;i<700;++i)wall_control_position_timed(&a,near,&measured,800,0,10);
+        assert(a.unsafe); /* Stuck detection cannot cause an endless blind search. */
+    }
+    wall_control_reset(&a);
+    for(unsigned i=0;i<500;++i)wall_control_position_timed(&a,0x0c,&measured,3000,0,10);
+    assert(!a.recovery_side && !a.unsafe); /* Both near is ambiguous. */
+    puts("control: dwell excludes doors/stationary time; bounded slow reference recovery on both sides");
     puts("control: 20 m at 200/1000 mm/s, delayed binary sensors, +/-1% wheel mismatch, initial offset and yaw slip");
 
 }

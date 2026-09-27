@@ -20,7 +20,9 @@ static fw_saved_maze_t saved;
 unsigned long hal_os_get_systicks(void) { return now; }
 /* New learning -> slow run -> back -> library -> direct runs -> escape/back.
  * The last idle period checks that no selection is repeated after release. */
-static const unsigned events[]={12,12,9,12,10,12,9,12,10,12,12,10,12,8,13};
+/* Explore; choose Run 3 first, then Run 1 and Run 2, each explicitly.
+ * Back to maze; load then inspect map. */
+static const unsigned events[]={12,12,10,10,12,9,12,9,9,12,9,12,10,12,10,12,8,10,12,12,10,12,8,13};
 void fw_test_idle(void)
 {
     ++now;
@@ -66,7 +68,7 @@ unsigned fw_run_acceleration(unsigned speed) {return 600+2*speed;}
 void fw_ui_run_setup(unsigned n,unsigned speed,unsigned accel,int aligned)
 {assert(ready && aligned && n>=1 && n<=3 && accel==600+2*speed);}
 int fw_app_trial(unsigned n,unsigned speed)
-{assert((n==slow+1 && speed==(const unsigned[]){140,250,650}[slow]));++slow;return 0;}
+{assert((n==(const unsigned[]){3,1,2}[slow] && speed==(const unsigned[]){650,140,250}[slow]));++slow;return 0;}
 int fw_app_run(void) {assert(0);return 0;}
 int fw_app_run_curves(void) {assert(0);return 0;}
 unsigned fw_app_maze_count(void) {return ready;}

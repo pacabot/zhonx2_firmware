@@ -29,6 +29,7 @@ static uint32_t now,deadline,move_started;
 static nm_pose_t segment_start;
 static unsigned moving_cells,extensions,maximum_requested_speed,viewing,alignments,path_calls,victories,failures;
 void fw_sound_play(int success) {if(success)++victories;else ++failures;}
+static unsigned trial_mode;
 static int rotating,backing,recovered,confirm_missing,path_dx,path_dy,pathing,path_fail;
 static int32_t fault_travel;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack,curves;
@@ -159,7 +160,8 @@ int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,un
     assert(physical.x==(int)pose.x+path_dx && physical.y==(int)pose.y+path_dy && physical.heading==pose.heading);
     int c=physical.y*NM_SIDE+physical.x;
     for(unsigned i=0;i<route->length;++i) {
-        unsigned d=route->direction[i];assert(!(ground.cell[c].walls&(1u<<d)));
+        unsigned d=route->direction[i];if(trial_mode==1)assert(d==route->direction[0]);
+        assert(!(ground.cell[c].walls&(1u<<d)));
         c=nm_next(&ground,c,d);assert(c>=0);
     }
     destination=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,route->direction[route->length-1]};
@@ -265,12 +267,12 @@ static void scenario(int obstacle)
             assert(ack>=190 && ack<200 && !(test_gpioc.IDR&FW_ESCAPE_PIN));
             test_gpioc.IDR=0xffff;
             for(unsigned trial=1;trial<=3;++trial) {
-                now=0;path_calls=0;
+                now=0;path_calls=0;trial_mode=trial;
                 assert(!fw_app_trial(trial,trial*200));
-                assert(path_calls==2 && physical.x==0 && physical.y==0 && physical.heading==0);
+                assert(path_calls==(trial==1?4u:2u) && physical.x==0 && physical.y==0 && physical.heading==0);
                 assert(fw_app_at_start() && fw_run_speed==260 && saves==1);
             }
-            now=0;path_calls=0;path_fail=1;unsigned old_failures=failures;
+            trial_mode=0;now=0;path_calls=0;path_fail=1;unsigned old_failures=failures;
             assert(fw_app_trial(1,300)==-1 && fw_last_stop_code==2);
             assert(path_calls==1 && !fw_app_at_start() && failures==old_failures+1 && saves==1);
         }

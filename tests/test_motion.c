@@ -317,6 +317,24 @@ int main(void)
     setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
     assert(!fw_motion_curve(-90,220,0));for(unsigned i=0;i<60;++i)tick(0);
     assert(fw_motion_fault()==1 && disabled);
+    /* Both engines slow for a sustained lateral detection, then stop with
+     * a distinct fault if the reference never releases. */
+    for(unsigned engine=0;engine<2;++engine)for(unsigned side=0;side<2;++side) {
+        setup();fw_motion_geometry(179000,92000,167000);
+        fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
+        scan.raw=scan.filtered=(uint8_t)(0x3f & ~(side?0x03:0x30));
+        if(engine) {
+            nm_map_t map;nm_init_size(&map,9,0);nm_route_t route={.length=6};
+            for(unsigned i=0;i<6;++i)assert(!nm_edge(&map,i*NM_SIDE,NM_NORTH,0));
+            assert(!fw_motion_path(&map,(nm_pose_t){0,0,0},&route,600));
+        } else assert(!fw_motion_straight(6,300));
+        unsigned peak=0,slowed=0;
+        while(fw_motion_busy() && now<10000) {
+            tick(1);unsigned v=fw_motion_speed();if(v>peak)peak=v;
+            if(fw_motion_busy() && peak>150 && v<=81)slowed=1;
+        }
+        assert(fw_motion_fault()==5 && disabled && slowed);
+    }
     setup();assert(!fw_motion_straight(8,FW_RUN_MAX_SPEED));
     unsigned peak=0;
     while(fw_motion_busy()) {tick(1);if(fw_motion_speed()>peak)peak=fw_motion_speed();}

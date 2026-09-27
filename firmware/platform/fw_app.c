@@ -571,7 +571,7 @@ static int execute(int timed_run,int fresh)
                 moving=stable=0;seen=0;prepared=-1;checking=0;continue;
             }
             fw_last_stop_code=(unsigned)fw_motion_fault();
-            message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":fw_motion_fault()==4?"CENTER FAILED":"EARLY OBSTACLE";break;
+            message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":fw_motion_fault()==4?"CENTER FAILED":fw_motion_fault()==5?"SIDE ALIGN FAILED":"EARLY OBSTACLE";break;
         }
         if(now-ui_time>=80) {
             nm_pose_t visual=pose;
@@ -798,8 +798,17 @@ int fw_app_prepare_run(void)
     fw_motion_stop();displayed_pose=pose;USART1->CR1|=USART_CR1_UE;
     start_prepared=!result;return result;
 }
-static int follow_route(nm_pose_t *pose,nm_route_t *route,unsigned speed,const char *status)
+static int follow_route(nm_pose_t *pose,nm_route_t *route,unsigned speed,const char *status,int curves)
 {
+    if(!curves) {
+        /* Group collinear cells, stop and pivot only at direction changes. */
+        for(unsigned at=0;at<route->length;) {
+            nm_route_t line={0};unsigned direction=route->direction[at];
+            while(at<route->length && route->direction[at]==direction)line.direction[line.length++]=route->direction[at++];
+            if(face_start(pose,direction) || fw_motion_path(&maze,*pose,&line,speed) || wait_move(pose,status,1))return -1;
+        }
+        return 0;
+    }
     if(!route->length)return 0;
     if(face_start(pose,route->direction[0]))return -1;
     if(fw_motion_path(&maze,*pose,route,speed))return -1;
@@ -818,13 +827,13 @@ int fw_app_trial(unsigned number,unsigned speed)
     /* Time starts after the start gate; alignment/return are not part of a run. */
     uint32_t began=hal_os_get_systicks();
     error="RUN STOPPED";
-    if(follow_route(&pose,&route,speed,"RUN"))goto done;
+    if(follow_route(&pose,&route,speed,"RUN",number!=1))goto done;
     last_run_ms=hal_os_get_systicks()-began;trial_ms[number-1]=last_run_ms;
     fw_motion_stop();fw_sound_play(1);
     uint8_t home[NM_CELLS]={0};home[cell(start_pose())]=1;
     error="RETURN STOPPED";
     fw_motion_init();
-    if(nm_route(&maze,pose,home,0,&route) || follow_route(&pose,&route,120,"RETURN"))goto done;
+    if(nm_route(&maze,pose,home,0,&route) || follow_route(&pose,&route,120,"RETURN",number!=1))goto done;
     if(face_start(&pose,maze.start_heading))goto done;
     displayed_pose=pose;error="START ALIGN FAILED";
     if(fw_app_prepare_run())goto done;
@@ -838,6 +847,7 @@ done:
             if(fw_motion_fault()==1)error="SENSOR OR TIMEOUT";
             if(fw_motion_fault()==2)error="EARLY OBSTACLE";
             if(fw_motion_fault()==4)error="START ALIGN FAILED";
+            if(fw_motion_fault()==5)error="SIDE ALIGN FAILED";
             fw_sound_play(0);
         }
     }
