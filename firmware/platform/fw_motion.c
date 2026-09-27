@@ -13,6 +13,11 @@ static volatile int active, fault;
 static int straight, allow_wall, wall_arrival;
 static int32_t obstacle_travel;
 static int calibration, travel_sign;
+static unsigned centre_phase,centre_count;
+static int centre_direction,centre_ok;
+static uint32_t centre_seen;
+static int32_t centre_edge,centre_limit;
+static void centre_tick(const hal_sensor_snapshot *scan);
 static unsigned curve_phase,curve_speed;
 static int curve_direction,curve_accept;
 static float curve_ratio[2];
@@ -24,8 +29,8 @@ static volatile int32_t longitudinal_um;
 static float yaw_fraction;
 static fw_corner_data_t corner_profile[2];
 static uint8_t previous_sensors,previous_raw;
-static int last_post[2];
-static int32_t post_measurement[2];
+static int last_post[2][2];
+static int32_t post_measurement[2][2];
 static int32_t raw_distance_um(void)
 {
     return (int32_t)lroundf((hal_step_motor_pair_count(0)+hal_step_motor_pair_count(1))*500.0f/TICKS_PER_MM);
@@ -54,26 +59,30 @@ static void post_observation(uint8_t sensors)
 {
     unsigned speed=fw_motion_speed();
     int32_t raw=raw_distance_um();
-    for(unsigned side=0;side<2;++side) {
-        unsigned bit=side?SENSOR_R10_POS:SENSOR_L10_POS;
+    for(unsigned side=0;side<2;++side)for(int sensor=1;sensor>=0;--sensor) {
+        unsigned bit=sensor?(side?SENSOR_R10_POS:SENSOR_L10_POS):(side?SENSOR_R5_POS:SENSOR_L5_POS);
         if(!((sensors^previous_sensors)&bit))continue;
         int opening=!!(sensors&bit);int32_t offset;
         /* Forward opening uses the opposite fixture after its 180-degree turn.
          * Forward closing uses the same fixture, traversed towards its wall. */
-        if(fw_corner_offset(&corner_profile[opening?1-side:side],opening?1:0,speed,1,opening,&offset))continue;
+        if(fw_corner_offset(&corner_profile[opening?1-side:side],opening?1:0,speed,(unsigned)sensor,opening,&offset))continue;
         if(!opening)offset=-offset;
         int32_t measured=raw-offset;
         int post=(measured+longitudinal_um)/(int32_t)cell_pitch_um;
         int32_t expected=(int32_t)(post*cell_pitch_um+cell_pitch_um/2);
         int32_t residual=expected-measured-longitudinal_um;
-        if(residual<-15000 || residual>15000 || post==last_post[side])continue;
-        last_post[side]=post;post_measurement[side]=measured;
+        if(residual<-15000 || residual>15000 || post==last_post[side][sensor])continue;
+        /* A 5 cm transition may simply be wall following. Use it as a post
+         * only after a matching 10 cm post and with the same open/closed state. */
+        if(!sensor && (last_post[side][1]!=post ||
+           !!(sensors&(side?SENSOR_R10_POS:SENSOR_L10_POS))!=opening))continue;
+        last_post[side][sensor]=post;post_measurement[side][sensor]=measured;
         /* Bounded correction of step-count drift. Preserve velocity and pulses. */
         if(residual>6000)residual=6000;
         if(residual<-6000)residual=-6000;
         longitudinal_um+=residual;
-        if(last_post[0]==last_post[1] && wall_profile.valid) {
-            int32_t yaw=(post_measurement[1]-post_measurement[0])*1000/(int32_t)wall_profile.geometry.inner_um;
+        if(last_post[0][sensor]==last_post[1][sensor] && wall_profile.valid) {
+            int32_t yaw=(post_measurement[1][sensor]-post_measurement[0][sensor])*1000/(int32_t)wall_profile.geometry.inner_um;
             if(yaw>=-100 && yaw<=100)wall_control_heading_reference(&wall,yaw);
         }
     }
@@ -129,7 +138,7 @@ uint32_t fw_motion_remaining(void)
 }
 void fw_motion_stop(void)
 {
-    active=0;curve_phase=0;
+    active=0;curve_phase=0;centre_phase=0;
     hal_step_motor_pair_release();
     hal_step_motor_disable();
     velocity=0;
@@ -148,7 +157,7 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     started=hal_os_get_systicks();
     wall_control_reset(&wall);last_scan=scan.sequence;previous_sensors=scan.filtered;previous_raw=scan.raw;
     previous_count[0]=previous_count[1]=0;longitudinal_um=0;yaw_fraction=0;
-    last_post[0]=last_post[1]=-100;
+    for(unsigned i=0;i<2;++i)for(unsigned j=0;j<2;++j)last_post[i][j]=-100;
     travel_ticks=(uint32_t)(right<0?-right:right);travel_sign=right<0?-1:1;
     goal_um=(uint32_t)lroundf(travel_ticks*1000.0f/TICKS_PER_MM);
     long reserve=straight?lroundf((25.0f+goal_um*0.00025f)*TICKS_PER_MM):0;
@@ -173,6 +182,54 @@ int fw_motion_obstacle_backoff(uint32_t um)
      * The normal freshness watchdog remains active throughout the retreat. */
     if(start(-pulses,-pulses,80,0,0,3)) {fault=2;return -1;}
     return 0;
+}
+int fw_motion_centered(void) {return centre_ok;}
+int fw_motion_center_wall(void)
+{
+    hal_sensor_snapshot scan;
+    if(active || fault || !fw_cal_valid(&wall_profile) || !hal_sensor_snapshot_read(&scan) ||
+       (uint32_t)(hal_os_get_systicks()-scan.timestamp)>50)return -1;
+    if((scan.raw & scan.filtered & (SENSOR_F5_POS|SENSOR_F10_POS))==(SENSOR_F5_POS|SENSOR_F10_POS))return 1;
+    int32_t half=(int32_t)wall_profile.geometry.inner_um/2;
+    int32_t body=(int32_t)wall_profile.geometry.width_um/2;
+    if(body<(int32_t)wall_profile.geometry.nose_um)body=(int32_t)wall_profile.geometry.nose_um;
+    centre_limit=half-body-5000;if(centre_limit>25000)centre_limit=25000;
+    int32_t offset=(int32_t)wall_profile.front[0].off_um-half;
+    if(centre_limit<5000 || offset< -centre_limit || offset>centre_limit)return -1;
+    centre_direction=(scan.raw&SENSOR_F5_POS)?1:-1;
+    int32_t clearance=centre_direction>0?(int32_t)wall_profile.front[0].on_um-body-5000:
+        (int32_t)wall_profile.geometry.inner_um-(int32_t)wall_profile.front[0].off_um-body-5000;
+    clearance-=(int32_t)wall_profile.front[0].spread_um;
+    if(centre_limit>clearance)centre_limit=clearance;
+    if(centre_limit<5000)return -1;
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    centre_ok=0;
+    long pulses=lroundf(centre_direction*centre_limit*TICKS_PER_MM/1000.0f);
+    int result=start(pulses,pulses,40,0,0,5);
+    if(!result) {centre_phase=1;centre_count=0;centre_seen=scan.sequence;}
+    __set_PRIMASK(mask);return result;
+}
+static void centre_tick(const hal_sensor_snapshot *scan)
+{
+    if(centre_phase!=1 || scan->sequence==centre_seen)return;
+    centre_seen=scan->sequence;
+    int reached=centre_direction>0?!(scan->raw&SENSOR_F5_POS):!!(scan->raw&SENSOR_F5_POS);
+    if(!reached) {centre_count=0;return;}
+    if(!centre_count)centre_edge=fw_motion_travelled_um();
+    if(++centre_count<3)return;
+    int32_t travel=fw_motion_travelled_um();
+    int32_t threshold=(int32_t)(centre_direction>0?wall_profile.front[0].on_um:wall_profile.front[0].off_um);
+    int32_t target=centre_edge+threshold-(int32_t)wall_profile.geometry.inner_um/2;
+    int32_t delta=target-travel;
+    if(target< -15000 || target>15000 || delta< -2*centre_limit || delta>2*centre_limit) {
+        fault=4;fw_motion_stop();return;
+    }
+    /* Read travel before release, which clears paired pulse budgets. */
+    fw_motion_stop();
+    if(delta>-100 && delta<100) {centre_ok=1;return;}
+    long pulses=lroundf(delta*TICKS_PER_MM/1000.0f);
+    if(start(pulses,pulses,40,0,0,5)) {fault=4;return;}
+    centre_phase=2;
 }
 int fw_motion_test_wheels(int right,int left)
 {
@@ -248,7 +305,7 @@ static void curve_tick(const hal_sensor_snapshot *scan)
 {
     unsigned long remaining[2]={hal_step_motor_pair_remaining(0),hal_step_motor_pair_remaining(1)};
     if(!remaining[0] && !remaining[1]) {
-        if(curve_phase==3) {active=0;curve_phase=0;velocity=0;hal_step_motor_pair_rate(0,0);return;}
+        if(curve_phase==3) {active=0;curve_phase=0;centre_phase=0;velocity=0;hal_step_motor_pair_rate(0,0);return;}
         curve_segment(curve_phase+1);
         remaining[0]=curve_budget[0];remaining[1]=curve_budget[1];
     }
@@ -311,9 +368,30 @@ void fw_motion_tick(uint32_t now)
         fault=1; fw_motion_stop(); return;
     }
     if(curve_phase) {curve_tick(&scan);return;}
+    if(centre_phase==1) {centre_tick(&scan);if(!active)return;}
     uint32_t remaining=fw_motion_remaining();
     if (!remaining) {
+        if(centre_phase==1) {
+            /* No edge: undo exactly the measured probe rather than assuming
+             * that a suspect mapped wall supplied a valid position reference. */
+            int32_t travel=fw_motion_travelled_um();fw_motion_stop();
+            long pulses=lroundf(-travel*TICKS_PER_MM/1000.0f);
+            if(start(pulses,pulses,40,0,0,5)) {fault=4;return;}
+            centre_phase=3;return;
+        }
+        if(centre_phase==2)centre_ok=1;
+        centre_phase=0;
         active=0; velocity=0; hal_step_motor_pair_rate(0,0); return;
+    }
+    if(straight && allow_wall && wall_profile.valid &&
+       (previous_raw&SENSOR_F10_POS) && !(scan.raw&SENSOR_F10_POS)) {
+        int32_t allowance=(int32_t)wall_profile.front[1].on_um-(int32_t)wall_profile.geometry.inner_um/2;
+        int32_t residual=(int32_t)goal_um-allowance-raw_distance_um()-longitudinal_um;
+        if(residual>=-15000 && residual<=15000) {
+            if(residual>6000)residual=6000;
+            if(residual< -6000)residual=-6000;
+            longitudinal_um+=residual;
+        }
     }
     if (straight && !(scan.raw & SENSOR_F5_POS)) {
         /* A front wall at the final cell centre is an arrival, not a failed maze.

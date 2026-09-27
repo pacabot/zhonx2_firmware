@@ -80,5 +80,5 @@ void fw_ui_result(const char *reason,uint32_t search,uint32_t run,unsigned page)
         rest=fw_text_line(rest,row,16);fw_display_text(0,15,row);
         fw_text_line(rest,row,16);fw_display_text(0,30,row);
     }
-    fw_display_text(0,49,"Hold OK: exit");ssd1306Refresh();
+    fw_display_text(0,49,"Hold Zoom: exit");ssd1306Refresh();
 }

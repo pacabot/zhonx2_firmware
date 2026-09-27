@@ -408,10 +408,31 @@ static void interaction_test(void)
     p=fw_text_line("A\nB",line,19); assert(!strcmp(line,"A") && !strcmp(p,"B"));
     puts("interaction: hand present/released, stale scans, timer wrap and OLED text wrapping");
 }
+static void recheck_test(void)
+{
+    nm_map_t map;nm_init_size(&map,6,0);nm_pose_t p={2,2,NM_NORTH},target;
+    int c=2*NM_SIDE+2;
+    for(unsigned d=0;d<4;++d)assert(!nm_edge(&map,c,d,1));
+    map.cell[c].visited=1;nm_route_t route;
+    for(unsigned pass=0;pass<3;++pass) {
+        uint8_t checked[NM_CELLS]={0};unsigned count=0;
+        while(!nm_recheck_route(&map,p,checked,&route,&target)) {
+            assert(!route.length && target.x==p.x && target.y==p.y);
+            unsigned bit=1u<<target.heading;assert(!(checked[c]&bit));
+            checked[c]|=bit;++count;assert(count<=4);
+        }
+        assert(count==4);
+    }
+    assert(nm_edge(&map,c,NM_NORTH,0)); /* Ordinary observations still reject contradictions. */
+    assert(!nm_revise_edge(&map,c,NM_NORTH,0));
+    assert(!(map.cell[c].walls&1) && !(map.cell[c+NM_SIDE].walls&4) && nm_valid(&map));
+    assert(nm_revise_edge(&map,0,NM_SOUTH,0)); /* Never open the exterior. */
+    puts("recheck: every internal wall once per pass, reciprocal confirmed reopening, exterior protected");
+}
 int main(void)
 {
     assert(fw_crc32("123456789",9)==0xcbf43926);
     assert(fw_crc32_more(fw_crc32("1234",4),"56789",5)==0xcbf43926);
-    interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); automatic_origin_test(); wall_test();
+    recheck_test(); interaction_test(); store_test(); update_test(); protocol_test(); maze_test(); exploration_test(); automatic_origin_test(); wall_test();
     puts("All firmware core tests passed."); return 0;
 }

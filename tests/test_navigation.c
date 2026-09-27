@@ -35,7 +35,7 @@ static char last_status[32];
 static unsigned char saved_snapshot[16384];
 static size_t saved_size;
 static uint32_t saved_schema,applied_pitch;
-static int save_failure;
+static int save_failure,hidden_door_cleared,hide_after_recovery;
 unsigned long hal_os_get_systicks(void) { return now; }
 void NVIC_SystemReset(void) { assert(0); }
 int hal_ui_display_prompt(HAL_UI_HANDLE h,const char *title,const char *str)
@@ -70,6 +70,10 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
         sensed.x=c%NM_SIDE;sensed.y=c/NM_SIDE;
     }
     unsigned cell=sensed.y*NM_SIDE+sensed.x,wall=ground.cell[cell].walls;
+    if((inject_obstacle==5 || inject_obstacle==6 || hide_after_recovery) && sensed.x==0 && sensed.y==2) {
+        if(physical.heading==NM_EAST && (inject_obstacle==5 || hide_after_recovery))hidden_door_cleared=1;
+        if(!hidden_door_cleared)wall|=1u<<NM_EAST;
+    }
     uint8_t bits=0x3f;
     if(wall & 1u<<physical.heading) bits &= ~SENSOR_F10_POS;
     if(wall & 1u<<((physical.heading+3)%4)) bits &= ~SENSOR_L10_POS;
@@ -96,6 +100,8 @@ int fw_motion_extend(unsigned cells,int accept) {
 void fw_ui_map_progress(int p) {(void)p;}
 void fw_ui_map_view(unsigned z,int x,int y) {assert(z==0 || z==16 || z==24);(void)x;(void)y;}
 void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
+int fw_motion_center_wall(void) {return 1;}
+int fw_motion_centered(void) {return 0;}
 void fw_motion_init(void) { busy=stopped=wall_arrival=backing=0; }
 int fw_motion_obstacle_backoff(uint32_t um)
 {
@@ -166,9 +172,10 @@ void fw_test_idle(void)
         busy=0;
         physical=destination;backing=0;
     }
-    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE") || !strcmp(last_status,"GOAL FOUND")) {
-        if(ack++<90) test_gpioc.IDR &= ~(1u<<12);
-        else test_gpioc.IDR |= (1u<<12);
+    if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE") || !strcmp(last_status,"GOAL FOUND") || !strcmp(last_status,"CHECK LIMIT")) {
+        ++ack;test_gpioc.IDR|=(1u<<12)|(1u<<13);
+        if(ack<100)test_gpioc.IDR&=~(1u<<12); /* Long centre must NOT exit. */
+        else if(ack>=110 && ack<200)test_gpioc.IDR&=~(1u<<13);
     }
 }
 static void edge(int c,unsigned d)
@@ -183,8 +190,8 @@ static void scenario(int obstacle)
     for(unsigned c=0;c<NM_CELLS;++c) ground.cell[c]=(nm_cell_t){15,15,0,0};
     edge(0,NM_NORTH);edge(16,NM_NORTH);edge(32,NM_EAST);edge(33,NM_EAST);
     edge(34,NM_EAST);edge(34,NM_NORTH);edge(35,NM_NORTH);edge(50,NM_EAST);
-    now=moves=turns=wall_arrivals=draws=saves=ack=extensions=0; saved_size=0;
-    busy=stopped=backing=recovered=0;confirm_missing=obstacle==3; inject_obstacle=obstacle==3?2:obstacle; last_status[0]=0;
+    hide_after_recovery=obstacle==7;hidden_door_cleared=0;now=moves=turns=wall_arrivals=draws=saves=ack=extensions=0; saved_size=0;
+    busy=stopped=backing=recovered=0;confirm_missing=obstacle==3; inject_obstacle=(obstacle==3 || obstacle==7)?2:obstacle; last_status[0]=0;
     physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
@@ -202,9 +209,9 @@ static void scenario(int obstacle)
     }
     saves=0;
     int result=fw_app_discover();
-    assert(saves==1);
-    if(obstacle==0 || obstacle==2 || obstacle==4) {
-        if(obstacle==2)assert(recovered);
+    assert(saves==1 && ack>=200);
+    if(obstacle==0 || obstacle==2 || obstacle==4 || obstacle==5 || obstacle==7) {
+        if(obstacle==2 || obstacle==7)assert(recovered);
         else assert(!recovered);
         assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
         assert(physical.x==0 && physical.y==0 && physical.heading==0 && !strcmp(last_status,"OPTIMAL PATH"));
@@ -230,6 +237,9 @@ static void scenario(int obstacle)
         inject_obstacle=1;recovered=0;
         assert(fw_app_run()==-1 && fw_last_stop_code==2 && !recovered);
         assert(!strcmp(last_status,"EARLY OBSTACLE"));
+    } else if(obstacle==6) {
+        assert(result==-1 && !strcmp(last_status,"CHECK LIMIT"));
+        assert(!fw_app_ready() && !fw_app_maze_count());
     } else {
         assert(result==-1 && fw_last_stop_code==2 && moves==1);
         assert(!fw_app_ready() && !fw_app_maze_count());
@@ -295,7 +305,7 @@ static void calibration_snapshot(void)
 }
 int main(void)
 {
-    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);
+    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);
     puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
     calibration_snapshot();
     fw_run_speed=1000;assert(!fw_app_settings_save());

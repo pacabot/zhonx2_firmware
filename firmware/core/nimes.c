@@ -47,6 +47,37 @@ int nm_edge(nm_map_t *map, int c, unsigned d, int wall)
     }
     return 0;
 }
+int nm_revise_edge(nm_map_t *map,int c,unsigned d,int wall)
+{
+    if(c<0 || c>=NM_CELLS || d>3 || c%NM_SIDE>=map->side || c/NM_SIDE>=map->side)return -1;
+    int n=nm_next(map,c,d);if(n<0 && !wall)return -1;
+    unsigned bit=1u<<d,opposite=1u<<((d+2)%4);
+    map->cell[c].known|=bit;
+    if(wall)map->cell[c].walls|=bit;else map->cell[c].walls&=~bit;
+    if(n>=0) {
+        map->cell[n].known|=opposite;
+        if(wall)map->cell[n].walls|=opposite;else map->cell[n].walls&=~opposite;
+    }
+    return 0;
+}
+int nm_recheck_route(const nm_map_t *m,nm_pose_t p,const uint8_t checked[NM_CELLS],
+                     nm_route_t *route,nm_pose_t *target)
+{
+    uint8_t goals[NM_CELLS]={0};
+    for(int c=0;c<NM_CELLS;++c)if(m->cell[c].visited)
+        for(unsigned d=0;d<4;++d)
+            if(nm_next(m,c,d)>=0 && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d)))goals[c]=1;
+    if(nm_route(m,p,goals,0,route))return -1;
+    int c=p.y*NM_SIDE+p.x;
+    for(unsigned i=0;i<route->length;++i)c=nm_next(m,c,route->direction[i]);
+    for(unsigned i=0;i<4;++i) {
+        unsigned d=(p.heading+i)%4;
+        if(nm_next(m,c,d)>=0 && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d))) {
+            *target=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,d};return 0;
+        }
+    }
+    return -1;
+}
 int nm_observe(nm_map_t *map, nm_pose_t p, uint8_t walls)
 {
     if (p.x >= map->side || p.y >= map->side || p.heading > 3) return -1;

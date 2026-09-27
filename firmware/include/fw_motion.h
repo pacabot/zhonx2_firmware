@@ -12,6 +12,12 @@ int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
 /* Allow a front-wall arrival only in the last 30 mm of the final cell. */
 int fw_motion_straight_to(unsigned cells, unsigned speed_mm_s, int allow_front_wall);
 int fw_motion_wall_arrival(void);
+/* Bounded non-contact F5 threshold search, then calibrated centre approach.
+ * 0 started, 1 no front reference visible, -1 invalid/busy. Fault 4 if the
+ * centre would exceed the correction envelope. A missing threshold cancels
+ * the probe and leaves fw_motion_centered() false. */
+int fw_motion_center_wall(void);
+int fw_motion_centered(void);
 /* Exploration recovery only, after a confirmed F5 obstacle. Reverse at 80 mm/s,
  * at most one cell and never farther than the interrupted forward travel.
  * Zero distance acknowledges an obstacle detected at the starting centre. */

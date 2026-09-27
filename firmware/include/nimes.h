@@ -21,6 +21,11 @@ int nm_next(const nm_map_t *,int cell,unsigned direction);
 int nm_observe_auto(nm_map_t *,nm_pose_t *,uint8_t walls);
 int nm_neighbour(int cell, unsigned direction);
 int nm_edge(nm_map_t *map, int cell, unsigned direction, int wall);
+/* Explicit confirmed revision only; ordinary observations remain strict. */
+int nm_revise_edge(nm_map_t *,int cell,unsigned direction,int wall);
+/* Nearest reachable visited cell with an internal wall not checked this pass. */
+int nm_recheck_route(const nm_map_t *,nm_pose_t,const uint8_t checked[NM_CELLS],
+                     nm_route_t *,nm_pose_t *target);
 /* Observe front, left, right at a cell centre; bit 0=front, 1=left, 2=right. */
 int nm_observe(nm_map_t *map, nm_pose_t pose, uint8_t walls);
 int nm_goal(const nm_map_t *map, uint8_t targets[NM_CELLS]);

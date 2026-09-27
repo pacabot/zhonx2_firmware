@@ -51,7 +51,7 @@ static void tick(int fresh)
         unsigned long pulses=(unsigned long)fraction[i]; fraction[i]-=pulses;
         if(pulses>remain[i]) pulses=remain[i];
         remain[i]-=pulses; total[i]+=pulses;
-        wheel[i]=(commanded[i]<0?-1:1)*pulses/(2.0*STEPS_PER_MM);
+        wheel[i]=(commanded[i]<0?-1.0:1.0)*pulses/(2.0*STEPS_PER_MM);
     }
     if(trace_path) {
         double yaw=(wheel[1]-wheel[0])/WHEELS_DISTANCE;
@@ -274,6 +274,56 @@ int main(void)
     unsigned peak=0;
     while(fw_motion_busy()) {tick(1);if(fw_motion_speed()>peak)peak=fw_motion_speed();}
     assert(peak>=990 && !fw_motion_fault());
+    /* Use an independently calibrated 5 cm post only after its matching 10 cm edge. */
+    setup();fw_motion_geometry(179000,92000,167000);
+    for(unsigned side=0;side<2;++side)for(unsigned f=0;f<2;++f)for(unsigned i=0;i<3;++i) {
+        fw_corner_point_t *p=&corners[side].point[f][i];p->mask=3;
+        p->raw_open_um[0]=f?-17000:35000;p->raw_close_um[0]=f?-19000:33000;
+        p->open_um[0]=f?-15000:37000;p->close_um[0]=f?-21000:31000;
+    }
+    assert(fw_corner_valid(&corners[0]) && fw_corner_valid(&corners[1]));
+    fw_motion_corner_profiles(&corners[0],&corners[1]);scan.raw=scan.filtered=0x0f;
+    assert(!fw_motion_straight_to(1,120,1));
+    while(fw_motion_travelled_um()<59500)tick(1);
+    scan.raw=scan.filtered=0x2f;for(unsigned i=0;i<10;++i)tick(1);
+    while((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM)<78000)tick(1);
+    scan.raw=scan.filtered=0x3f;for(unsigned i=0;i<10;++i)tick(1);
+    counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
+    trim=fw_motion_travelled_um()-counted;assert(trim< -2500 && trim> -5000);
+    fw_motion_stop();
+    setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+    assert(!fw_motion_straight_to(1,120,1));
+    while(fw_motion_travelled_um()<134000)tick(1);
+    scan.raw&=~SENSOR_F10_POS;tick(1);
+    counted=(int32_t)lround((total[0]+total[1])*500.0/(2.0*STEPS_PER_MM));
+    trim=fw_motion_travelled_um()-counted;assert(trim< -3000 && trim> -4500);
+    fw_motion_stop();
+    /* Position reference from the actual hysteresis edge; arbitrary initial
+     * longitudinal offsets, both approach and release directions. */
+    for(int offset=-12;offset<=12;offset+=6) {
+        setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+        path_x=path_y=path_heading=0;trace_path=1;
+        int near=83.5-offset<=92.0;
+        scan.raw=scan.filtered=0x3f & ~SENSOR_F10_POS;
+        if(near)scan.raw=scan.filtered=scan.raw & ~SENSOR_F5_POS;
+        assert(!fw_motion_center_wall());
+        while(fw_motion_busy() && now<5000) {
+            double range=83.5-offset-path_y;
+            if(range<=92.0)near=1;else if(range>=92.5)near=0;
+            scan.raw=scan.filtered=0x3f & ~SENSOR_F10_POS;
+            if(near)scan.raw=scan.filtered=scan.raw & ~SENSOR_F5_POS;
+            tick(1);
+        }
+        trace_path=0;
+        assert(!fw_motion_busy() && !fw_motion_fault() && fw_motion_centered());
+        assert(fabs(path_y+offset)<0.7); /* Sensor sampling and pulse quantization. */
+    }
+    setup();fw_motion_wall_profile(&walls);scan.raw=scan.filtered=0x3f & ~SENSOR_F10_POS;
+    path_x=path_y=path_heading=0;trace_path=1;
+    assert(!fw_motion_center_wall()); /* False F10 wall, no F5 edge: return to initial pose. */
+    while(fw_motion_busy() && now<5000)tick(1);
+    trace_path=0;assert(!fw_motion_fault() && !fw_motion_centered() && fabs(path_y)<0.1);
+    puts("motion: calibrated centring recovers +/-12 mm using on/off thresholds; false reference probe is undone");
     puts("motion: 1000 mm/s reachable; left/right arcs reach correct centre and heading, clear walls, stop on obstacles/stale scans");
     puts("motion: post offset removes longitudinal drift using the correct fixture and forward profile");
     puts("motion: steering changes wheel travel; appended cell crosses centre without stopped pulses");

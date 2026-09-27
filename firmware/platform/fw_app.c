@@ -325,7 +325,7 @@ static void map_message(nm_pose_t pose, const char *message)
     const unsigned scales[]={0,16,24};
     fw_ui_map_progress(0);
     /* Escape zooms only after motion has stopped. All four joystick directions
-     * pan; centre cycles result pages, a long centre press exits. */
+     * pan; centre cycles result pages, a long Escape/zoom press exits. */
     while((GPIOC->IDR&0x3f00)!=0x3f00)__WFI();
     for(;;) {
         uint32_t now=hal_os_get_systicks();
@@ -339,8 +339,8 @@ static void map_message(nm_pose_t pose, const char *message)
         if(keys) {
             uint32_t pressed=now;
             while(((~GPIOC->IDR)&0x3f00)==keys) {
-                if((keys&(1u<<12)) && hal_os_get_systicks()-pressed>=800) {
-                    while(!(GPIOC->IDR&(1u<<12)))__WFI();
+                if((keys&FW_ESCAPE_PIN) && hal_os_get_systicks()-pressed>=800) {
+                    while(!(GPIOC->IDR&FW_ESCAPE_PIN))__WFI();
                     fw_ui_map_view(16,0,0);return;
                 }
                 __WFI();
@@ -370,6 +370,8 @@ int fw_app_show_map(void)
  * interrupt-driven. Early stable observations can append the next cell in flight. */
 static unsigned run_speed_override;
 static int curve_run;
+static uint8_t rechecked[NM_CELLS];
+static unsigned confirmation_pass;
 
 static int plan_from(nm_pose_t pose,int timed,int *returning,int *certified,nm_route_t *route,const char **message)
 {
@@ -424,6 +426,15 @@ static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_
     if(nm_observe_auto(&maze,target,walls))return -1;
     int dx=(int)target->x-before.x,dy=(int)target->y-before.y;
     pose->x+=dx;pose->y+=dy;segment->x+=dx;segment->y+=dy;
+    if((dx || dy) && confirmation_pass) {
+        uint8_t shifted[NM_CELLS]={0};
+        for(unsigned y=0;y<nm_size(&maze);++y)for(unsigned x=0;x<nm_size(&maze);++x) {
+            int xx=(int)x+dx,yy=(int)y+dy;
+            if(xx>=0 && yy>=0 && xx<(int)nm_size(&maze) && yy<(int)nm_size(&maze))
+                shifted[yy*NM_SIDE+xx]=rechecked[y*NM_SIDE+x];
+        }
+        memcpy(rechecked,shifted,sizeof rechecked);
+    }
     return 0;
 }
 /* Explicit exploration-only correction. Ordinary observations keep rejecting
@@ -481,12 +492,74 @@ static int recover_front(nm_pose_t *pose,nm_pose_t segment,unsigned moving)
     if(fw_motion_fault())return -1;
     maze=corrected;*pose=back;fw_motion_init();return 0;
 }
+static int wait_position(nm_pose_t pose)
+{
+    uint32_t since=hal_os_get_systicks(),shown=since;
+    while(fw_motion_busy()) {
+        uint32_t now=hal_os_get_systicks();
+        if(fw_cancel_pressed() || now-since>5000) {fw_motion_stop();return -1;}
+        if(now-shown>=80) {fw_ui_maze(&maze,pose,"CENTERING",fw_motion_speed(),search_used(now),live_sensors());shown=now;}
+        __WFI();
+    }
+    return fw_motion_fault()?-1:0;
+}
+static int face(nm_pose_t *p,unsigned heading)
+{
+    int quarters=(heading+4-p->heading)%4;if(!quarters)return 0;
+    if(quarters==3)quarters=-1;
+    if(fw_motion_turn(quarters*90) || wait_position(*p))return -1;
+    p->heading=heading;return 0;
+}
+static int centre_pose(nm_pose_t *p)
+{
+    if(!fw_cal_valid(&measurements.wall))return 0;
+    unsigned heading=p->heading;
+    /* Centre the cross-axis first, then the travel axis. A missing wall is
+     * never used as a reference. Both thresholds include measured hysteresis. */
+    for(unsigned axis=0;axis<2;++axis)for(unsigned opposite=0;opposite<2;++opposite) {
+        unsigned d=(heading+(axis?0:1)+2*opposite)%4;
+        if(!(maze.cell[cell(*p)].walls&(1u<<d)))continue;
+        if(face(p,d))return -1;
+        int result=fw_motion_center_wall();
+        if(result<0 || (!result && wait_position(*p)))return -1;
+        if(!result && fw_motion_centered())break;
+    }
+    return face(p,heading);
+}
+static int choose_confirmation(nm_pose_t p,nm_route_t *route,nm_pose_t *target)
+{
+    if(!confirmation_pass)confirmation_pass=1;
+    while(confirmation_pass<=3) {
+        if(!nm_recheck_route(&maze,p,rechecked,route,target))return 0;
+        ++confirmation_pass;memset(rechecked,0,sizeof rechecked);
+    }
+    return -1;
+}
+static int choose_conflict(nm_pose_t p,uint8_t observed,nm_pose_t *target)
+{
+    if(!confirmation_pass)confirmation_pass=1;
+    const unsigned dirs[]={p.heading,(p.heading+3)%4,(p.heading+1)%4};
+    for(unsigned i=0;i<3;++i) {
+        unsigned bit=1u<<dirs[i];
+        if(nm_next(&maze,cell(p),dirs[i])>=0 && (maze.cell[cell(p)].known&bit) &&
+           !(rechecked[cell(p)]&bit) && !!(maze.cell[cell(p)].walls&bit)!=!!(observed&(1u<<i))) {
+            *target=p;target->heading=dirs[i];return 0;
+        }
+    }
+    return -1;
+}
+static void checked_front(nm_pose_t p)
+{
+    int c=cell(p),n=nm_next(&maze,c,p.heading);
+    rechecked[c]|=1u<<p.heading;
+    if(n>=0)rechecked[n]|=1u<<((p.heading+2)%4);
+}
 static int execute(int timed_run,int fresh)
 {
     if(!parameters_valid()) {hal_ui_display_prompt(app_context.ui,"Maze","INVALID SETTINGS");return -1;}
     if(timed_run && !fw_app_ready()) {hal_ui_display_prompt(app_context.ui,"Maze","LEARN A MAZE FIRST");return -1;}
     unsigned speed=timed_run?(run_speed_override?run_speed_override:(unsigned)fw_run_speed):(unsigned)fw_search_speed;
-    fw_motion_init();
+    fw_motion_init();confirmation_pass=0;memset(rechecked,0,sizeof rechecked);
     if(fresh) {learned=0;nm_init_size(&maze,fw_maze_size,1);fw_start_corner=fw_start_heading=0;
         search_ms=last_run_ms=0;has_map=1;search_clock_running=0;}
     fw_ui_map_view(16,0,0);fw_ui_map_progress(0);
@@ -495,7 +568,8 @@ static int execute(int timed_run,int fresh)
     radio_off();uint32_t started=hal_os_get_systicks();
     if(!timed_run) {search_base=search_ms;search_epoch=started;search_clock_running=1;}
     uint32_t stopped=started,ui_time=started,seen=0,mismatch_since=0;
-    unsigned moving=0,turn_heading=0,stable=0,recoveries=0;int in_window=0;uint8_t candidate=0;
+    unsigned moving=0,turn_heading=0,stable=0;int in_window=0;uint8_t candidate=0;
+    int checking=0,needs_center=0,initial_center=1;nm_pose_t check_target=pose;
     int state=0,turning=0,curving=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
     const char *message="STOPPED";nm_route_t route;nm_pose_t curve_end=pose;
     int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=curve_run?0:preview_distance(speed);
@@ -504,14 +578,14 @@ static int execute(int timed_run,int fresh)
         if(fw_cancel_pressed()) {message="USER STOP";break;}
         if(!timed_run && search_used(now)>=search_limit()) {message="TIME LIMIT";break;}
         if(fw_motion_fault()) {
-            if(!timed_run && state && !turning && fw_motion_fault()==2 && recoveries<4 &&
+            if(!timed_run && state && !turning && fw_motion_fault()==2 &&
                !recover_front(&pose,segment,moving)) {
-                ++recoveries;segment=pose;displayed_pose=pose;stopped=hal_os_get_systicks();
+                segment=pose;displayed_pose=pose;stopped=hal_os_get_systicks();
                 state=turning=previewed=returning=certified=mismatch=in_window=0;
-                moving=stable=0;seen=0;prepared=-1;continue;
+                moving=stable=0;seen=0;prepared=-1;needs_center=1;checking=0;continue;
             }
             fw_last_stop_code=(unsigned)fw_motion_fault();
-            message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":"EARLY OBSTACLE";break;
+            message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":fw_motion_fault()==4?"CENTER FAILED":"EARLY OBSTACLE";break;
         }
         if(now-ui_time>=80) {
             nm_pose_t visual=pose;
@@ -534,7 +608,7 @@ static int execute(int timed_run,int fresh)
             stable=value==candidate?stable+1:1;candidate=value;
         }
         if(state && fw_motion_busy()) {
-            if(!turning && !curving && !previewed && scan_ready && stable>=3 &&
+            if(!checking && !turning && !curving && !previewed && scan_ready && stable>=3 &&
                fw_motion_travelled_um()>=(int32_t)moving*pitch-preview && preview>0) {
                 nm_pose_t destination=segment;advance(&destination,moving);
                 if(!observe_pose(&destination,candidate,&pose,&segment)) {
@@ -553,11 +627,37 @@ static int execute(int timed_run,int fresh)
         }
         if(state) {
             if(curving) {pose=curve_end;stopped=now;stable=0;curving=0;}
-            else if(turning) {pose.heading=turn_heading;stopped=now;stable=0;}
-            else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;}
+            else if(turning) {pose.heading=turn_heading;stopped=now;stable=0;
+                if(checking && cell(pose)==cell(check_target) && pose.heading==check_target.heading)needs_center=1;}
+            else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;
+                if(!timed_run && (!previewed || prepared!=(int)pose.heading))needs_center=1;}
             displayed_pose=pose;moving=0;turning=0;state=0;
         }
-        if(!previewed) {
+        if(needs_center) {
+            uint32_t centre_started=hal_os_get_systicks();
+            if(centre_pose(&pose)) {message=fw_cancel_pressed()?"USER STOP":"CENTER FAILED";break;}
+            if(timed_run)started+=hal_os_get_systicks()-centre_started;
+            needs_center=0;previewed=0;stable=0;seen=0;stopped=hal_os_get_systicks();continue;
+        }
+        if(checking) {
+            if(cell(pose)==cell(check_target)) {
+                if(pose.heading!=check_target.heading)prepared=check_target.heading;
+                else {
+                    if(!scan_ready || stable<5 || now-stopped<60) {__WFI();continue;}
+                    int wall=!!(candidate&1);
+                    if(nm_revise_edge(&maze,cell(pose),pose.heading,wall)) {message="MAP CONFLICT";break;}
+                    checked_front(pose);checking=0;returning=certified=mismatch=0;
+                    /* Only the frontal remeasurement can revise a wall. Side
+                     * readings after a bad approach must not stop recovery. */
+                    prepared=plan_from(pose,0,&returning,&certified,&route,&message);previewed=1;
+                }
+            } else {
+                uint8_t goals[NM_CELLS]={0};goals[cell(check_target)]=1;
+                if(nm_route(&maze,pose,goals,0,&route)) {checking=0;prepared=-1;}
+                else prepared=route.direction[0];
+            }
+        }
+        if(!checking && !previewed) {
             if(!scan_ready || stable<3 || now-stopped<30) {__WFI();continue;}
             nm_pose_t target=pose;
             if(observe_pose(&target,candidate|(fw_motion_wall_arrival()?1:0),&pose,&segment)) {
@@ -565,17 +665,27 @@ static int execute(int timed_run,int fresh)
                 if(now-mismatch_since<150) {__WFI();continue;}
                 nm_map_t corrected=maze;
                 uint8_t walls=candidate|(fw_motion_wall_arrival()?1:0);
-                if(!timed_run && recoveries<4 && (walls&1) &&
+                if(!timed_run && (walls&1) &&
                    !missed_front(&corrected,pose) && !nm_observe(&corrected,pose,walls)) {
-                    maze=corrected;++recoveries;returning=certified=0;
+                    maze=corrected;returning=certified=0;
+                } else if(!timed_run) {
+                    if(choose_conflict(pose,walls,&check_target) && choose_confirmation(pose,&route,&check_target)) {
+                        message="CHECK LIMIT";fw_last_stop_code=3;break;
+                    }
+                    checking=1;needs_center=1;previewed=0;returning=certified=0;continue;
                 } else {message="MAP CONFLICT";fw_last_stop_code=3;break;}
             }
             pose=target;mismatch=0;
             prepared=plan_from(pose,timed_run,&returning,&certified,&route,&message);
         }
         previewed=0;displayed_pose=pose;
-        if(prepared<0)break;
+        if(prepared<0) {
+            if(timed_run)break;
+            if(choose_confirmation(pose,&route,&check_target)) {message="CHECK LIMIT";break;}
+            checking=1;needs_center=1;returning=certified=0;stable=0;continue;
+        }
         if(prepared==4) {result=0;break;}
+        if(initial_center) {initial_center=0;needs_center=1;continue;}
         turn_heading=(unsigned)prepared;
         if(turn_heading!=pose.heading) {
             int quarters=(turn_heading+4-pose.heading)%4;if(quarters==3)quarters=-1;
@@ -604,7 +714,7 @@ static int execute(int timed_run,int fresh)
              * faster than the calibrated observation window. */
             if(route.length && route.direction[0]==pose.heading) {
                 nm_pose_t end=pose;advance(&end,1);
-                while(cells<route.length && cells<16 && route.direction[cells]==pose.heading &&
+                while(!checking && cells<route.length && cells<16 && route.direction[cells]==pose.heading &&
                       maze.cell[cell(end)].visited && maze.cell[cell(end)].known==15) {
                     /* Leave the last straight edge for the tangent lead of an arc. */
                     if(curve_run && cells+1<route.length && route.direction[cells+1]!=pose.heading)break;
