@@ -34,7 +34,7 @@ static int idle_wait(uint32_t *activity)
     if(read_key() || fw_motion_busy()) {*activity=now;return 0;}
     if((uint32_t)(now-*activity)<30000)return 0;
     uint32_t started=now,drawn=now;
-    fw_ui_idle(0);
+    fw_ui_idle_start(now);fw_ui_idle(0);
     while(!read_key() && !fw_motion_busy()) {
         now=hal_os_get_systicks();
         /* Smooth idle animation, battery sampled without a status overlay. */

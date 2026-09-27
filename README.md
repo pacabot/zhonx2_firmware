@@ -176,8 +176,15 @@ les menus ne répètent plus les commandes de navigation.
 Après **30 secondes sans interaction au repos** dans les menus de sélection,
 la bibliothèque ou l'édition des réglages, une veille affiche **ZHONX II** en
 lettrage géométrique carré : chaque caractère se déplace et pivote indépendamment
-pour former le nom, reste aligné un instant, puis se disperse. Le cycle de dix
-secondes vise 30 images/seconde, avec interpolation progressive des mouvements,
+pour former le nom, reste aligné un instant, puis se disperse. Huit chorégraphies
+(alternance haut/bas, éventail, orbite, croisements par paires, onde, diagonale,
+rotations typographiques et éventail courbe) sont mélangées sans répétition dans
+chaque collection, ni répétition immédiate entre deux collections. Le sens,
+la symétrie et le tempo varient aussi. Le tirage est conservé entre deux réveils ;
+l'instant d'entrée en veille renouvelle la séquence pseudo-aléatoire sans écriture
+en flash. Chaque cycle de dix secondes commence et finit sur le nom aligné pour
+éviter les sauts entre animations. L'affichage vise 30 images/seconde avec
+interpolation progressive des mouvements,
 sans titre, jauge ni pourcentage superposé. Le premier appui réveille l'écran sans agir ; la sélection et la valeur
 en cours d'édition sont conservées. La veille n'est pas activée dans les procédures
 de déplacement, les calibrations, les tests matériels ou l'attente du top départ.

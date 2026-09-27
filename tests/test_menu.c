@@ -12,6 +12,7 @@ int fw_search_speed=220,fw_run_speed=260,fw_start_corner,fw_start_heading;
 static unsigned now,ready,explored,slow,loaded,preview;
 static unsigned idle_scenario,idle_frames,home_index;
 int fw_motion_busy(void) {return idle_scenario && now<10000;}
+void fw_ui_idle_start(unsigned seed) {assert(seed==now);}
 void fw_ui_idle(unsigned phase) {(void)phase;assert(idle_scenario && now>=39999);++idle_frames;fw_battery_sample(3000,now,0);}
 static jmp_buf finish;
 static fw_saved_maze_t saved;

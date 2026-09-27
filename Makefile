@@ -97,7 +97,7 @@ test:
 	 firmware/platform/fw_app.c firmware/core/fw_battery.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_start.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_navigation
 	$(BUILD)/test_navigation
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_ui.c \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include -DFW_IDLE_TEST tests/test_ui.c \
 	 firmware/core/fw_battery.c firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/platform/fw_idle.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c firmware/platform/fw_display.c \
 	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -lm -o $(BUILD)/test_ui
 	$(BUILD)/test_ui

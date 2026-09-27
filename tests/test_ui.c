@@ -77,26 +77,41 @@ int main(void)
     fw_ui_card("DELETE THIS MAZE?","Delete maze","Confirm",FW_ICON_REPORT,1,2);
     image("build/ui-confirm-delete.pgm");
     fw_battery_set_reference((fw_battery_reference_t){0});
+    fw_ui_idle_start(0x12345678);
     fw_ui_idle(0);image("build/ui-idle-0.pgm");memcpy(off,buffer,sizeof off);
     charge(3000);fw_ui_idle(0);
-    assert(!memcmp(off,buffer,sizeof off)); /* No percent/dashes/icon over the animation. */
-    unsigned min_y=64,max_y=0,min_x=128,max_x=0;
-    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<128;++x)if(ssd1306GetPixel(x,y)) {
-        if(y<min_y)min_y=y;if(y>max_y)max_y=y;
-        if(x<min_x)min_x=x;if(x>max_x)max_x=x;
+    assert(!memcmp(off,buffer,sizeof off)); /* No percentage over the animation. */
+    fw_ui_idle(600);assert(!memcmp(off,buffer,sizeof off));
+    fw_ui_idle(2000);image("build/ui-idle-2000.pgm");assert(memcmp(off,buffer,sizeof off));
+    fw_ui_idle(4699);unsigned char scattered[1024];memcpy(scattered,buffer,1024);
+    fw_ui_idle(4700);assert(!memcmp(scattered,buffer,1024)); /* Symmetric poses: no jump when reforming. */
+    fw_ui_idle(8000);image("build/ui-idle-assembled.pgm");assert(!memcmp(off,buffer,1024));
+    extern unsigned fw_idle_test_choice(void);
+    unsigned seen=0,previous=8;
+    for(unsigned cycle=0;cycle<24;++cycle) {
+        fw_ui_idle(cycle*10000+2000);
+        unsigned selected=fw_idle_test_choice();assert(selected<8 && selected!=previous);
+        assert(!(seen&(1u<<selected)));seen|=1u<<selected;previous=selected;
+        if(cycle%8==7) {assert(seen==255);seen=0;}
+        fw_ui_idle(cycle*10000+8000);assert(!memcmp(off,buffer,1024));
+        fw_ui_idle(cycle*10000+9999);assert(!memcmp(off,buffer,1024));
+        fw_ui_idle((cycle+1)*10000);assert(!memcmp(off,buffer,1024)); /* Seamless change of choreography. */
     }
-    assert(max_y-min_y>=50 && max_x-min_x>=105);
-    fw_ui_idle(1700);image("build/ui-idle-1700.pgm");assert(memcmp(off,buffer,sizeof off));
-    fw_ui_idle(9999);assert(!memcmp(off,buffer,sizeof off)); /* Seamless half-turn loop. */
-    fw_ui_idle(4000);image("build/ui-idle-assembled.pgm");memcpy(off,buffer,sizeof off);
-    fw_ui_idle(5200);assert(!memcmp(off,buffer,sizeof off)); /* Legible, motionless name hold. */
-    fw_ui_idle(10000+4000);assert(!memcmp(off,buffer,sizeof off));
+    previous=fw_idle_test_choice();fw_ui_idle_start(73241);fw_ui_idle(0);
+    assert(fw_idle_test_choice()!=previous); /* Bag survives wake-up, no immediate repeat. */
+    assert(!memcmp(off,buffer,1024));
     FILE *frames=fopen("build/ui-idle-frames.raw","wb");assert(frames);
-    for(unsigned frame=0;frame<300;++frame) {
-        fw_ui_idle(frame*10000/300);
+    for(unsigned frame=0;frame<2400;++frame) {
+        unsigned time=frame*10000/300;
+        fw_ui_idle(time);
+        if(frame%300==60 || frame%300==120 || frame%300==180) {
+            char path[80];snprintf(path,sizeof path,"build/ui-idle-variant-%u-%u.pgm",frame/300,frame%300);
+            image(path);
+        }
         assert(fwrite(buffer,1,sizeof buffer,frames)==sizeof buffer);
     }
     fclose(frames);
+    puts("Idle: eight shuffled choreographies, no consecutive repeats, seamless transitions, full-screen frames");
     charge(2700);fw_ui_card("HOME","Maze","",FW_ICON_MAZE,0,5);image("build/ui-battery-partial.pgm");
     puts("OLED: large icon cards, nine illustrated settings, blinking stored route");
     return 0;
