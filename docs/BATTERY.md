@@ -24,8 +24,8 @@ La tension cible de la ST-Link (~3,3 V) n'est pas celle du pack.
 Dans **Hardware → Battery**, lire le diagnostic :
 
 - Référence manuelle absente : estimation nominale disponible, sans blocage de la jauge.
-- ADC saturé (4090 à 4095) : affichage d’une borne, par exemple `85%+` ;
-  la tension réelle peut être supérieure à la plage mesurable.
+- ADC saturé (4090 à 4095) : le menu affiche uniquement le pourcentage.
+  Le diagnostic Battery indique `>=` : la tension réelle peut dépasser la plage mesurable.
 - `ADC INPUT LOW` : entrée proche de zéro (moins de 16), vérifier PA4 et son alimentation.
 - `NEEDS METER REF` : conversion nominale hors plage plausible ; vérifier la
   tension réelle, le câblage et les résistances, puis enregistrer la référence avec OK.
@@ -53,7 +53,8 @@ modification a été réalisée ; après changement de résistance, refaire l'é
   continue en arrière-plan sans superposition.
 - ADC absent, référence interne invalide ou conversion incohérente : `--%`,
   jamais interprété comme une batterie vide. Une saturation cohérente affiche
-  une borne de pourcentage avec `+`, et non un 100 % supposé.
+  le pourcentage calculé, sans symbole supplémentaire ; la borne est indiquée
+  dans le diagnostic Battery.
 
 Cette courbe n'est pas une caractérisation du pack du robot. Température,
 vieillissement, charge électrique et déséquilibre des cellules influencent le

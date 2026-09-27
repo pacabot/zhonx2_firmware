@@ -26,7 +26,7 @@ void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
     char value[8];ssd1306ClearRect(96,0,32,13);
-    if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%%s",b.percent,b.lower_bound && b.percent<100?"+":"");
+    if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%",b.percent);
     else snprintf(value,sizeof value,"--%%");
     fw_display_text(128-strlen(value)*8,0,value);
 }
