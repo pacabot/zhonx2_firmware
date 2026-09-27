@@ -137,10 +137,12 @@ de déplacement, les calibrations, les tests matériels ou l'attente du top dép
   le mouvement ; les sons sont limités à 120 ms et le réglage beeper est restauré.
 - **Update** : entrée dans le bootloader.
 
-L'icône batterie reste visible dans les menus et les écrans de calibration.
+Le pourcentage batterie reste visible dans les menus et les écrans de calibration,
+sans pictogramme.
 La jauge **LiPo 2S** utilise une tension filtrée et une courbe approximative de
 charge au repos. Sans étalonnage ou si la mesure ADC est invalide, elle affiche
-**--%** dans les menus (**--** sur les écrans de diagnostic). Pour l'étalonner : **Hardware → Battery → OK**, robot immobile, saisir la
+**--%**. L'écran **Hardware → Battery** précise la cause : absence
+d'étalonnage, ADC trop bas/saturé, tension incohérente ou attente au repos. Pour l'étalonner : **Hardware → Battery → OK**, robot immobile, saisir la
 tension du pack relevée au multimètre (pas la tension 3,3 V de la sonde), puis
 valider. Attendre au moins cinq secondes au repos avant d'enregistrer.
 La référence est sauvegardée avec les calibrations et conservée au flash normal.

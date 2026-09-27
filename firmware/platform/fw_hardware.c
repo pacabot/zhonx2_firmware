@@ -85,9 +85,14 @@ void fw_hardware_test(unsigned test)
                     if(b.calibrated && b.sample_valid) {
                         snprintf(s,sizeof s,"PACK: %u.%02u V",b.pack_mv/1000,b.pack_mv%1000/10);text(0,28,s);
                         if(b.soc_valid)snprintf(s,sizeof s,"SOC: ~%u%%",b.percent);
-                        else snprintf(s,sizeof s,"Wait at rest...");
+                        else snprintf(s,sizeof s,"Wait 5s at rest");
                         text(0,40,s);
-                    } else text(0,32,b.sample_valid?"Set meter voltage":"ADC INPUT INVALID");
+                    } else if(!b.sample_valid) {
+                        text(0,28,b.raw>=4090?"ADC SATURATED":b.raw<16?"ADC INPUT LOW":"VOLTAGE OUT OF RANGE");
+                        text(0,40,b.raw>=4090?"Check divider":b.raw<16?"Check PA4 input":"Check calibration");
+                    } else {
+                        text(0,28,"NOT CALIBRATED");text(0,40,"Set meter voltage");
+                    }
                     fw_ui_hint("OK: SET METER VOLTS");
                 }
                 fw_ui_menu_refresh();

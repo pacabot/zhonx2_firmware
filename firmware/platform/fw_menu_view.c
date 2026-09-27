@@ -3,10 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "fw_battery.h"
-static int battery_readout;
 void fw_ui_header(const char *title)
 {
-    battery_readout=0;
     ssd1306ClearRect(0,0,128,10);
     char clipped[25];snprintf(clipped,sizeof clipped,"%.24s",title);
     ssd1306DrawString(1,0,clipped,strlen(title)>15?&Font_3x6:&Font_5x8);
@@ -32,20 +30,11 @@ static void scroll(unsigned index,unsigned count)
 void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
-    unsigned left=battery_readout?80:98;
-    ssd1306ClearRect(left,0,128-left,10);
-    ssd1306DrawRect(106,0,20,10);ssd1306FillRect(126,3,2,4);
-    int valid=b.sample_valid && b.soc_valid;
-    if(valid && b.percent) {
-        unsigned width=(b.percent*16+99)/100;
-        ssd1306FillRect(108,2,width,6);
-    }
-    if(battery_readout) {
-        char value[8];
-        if(valid)snprintf(value,sizeof value,"%u%%",b.percent);
-        else snprintf(value,sizeof value,"--%%");
-        ssd1306DrawString(104-strlen(value)*6,1,value,&Font_5x8);
-    } else if(!valid)ssd1306DrawString(98,2,"--",&Font_3x6);
+    char value[8];
+    ssd1306ClearRect(104,0,24,10);
+    if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%",b.percent);
+    else snprintf(value,sizeof value,"--%%");
+    ssd1306DrawString(128-strlen(value)*6,1,value,&Font_5x8);
 }
 void fw_ui_menu_refresh(void) {fw_ui_battery();ssd1306Refresh();}
 /* Double-height 7x8 font: 7x16 glyphs, no hidden clipping or bitmap assets. */
@@ -112,7 +101,7 @@ static void icon(unsigned type)
 void fw_ui_card(const char *title,const char *first,const char *second,unsigned type,unsigned index,unsigned count)
 {
     (void)title; /* Category names are navigation state, not screen content. */
-    ssd1306ClearScreen();battery_readout=1;
+    ssd1306ClearScreen();
     icon(type);scroll(index,count);
     int instruction=!strncmp(second,"OK:",3) || !strncmp(second,"LEFT:",5);
     if(instruction) {large(33,24,first);fw_ui_hint(second);}
@@ -121,7 +110,7 @@ void fw_ui_card(const char *title,const char *first,const char *second,unsigned 
 }
 void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int blink)
 {
-    char s[24];ssd1306ClearScreen();battery_readout=1;scroll(index,count);
+    char s[24];ssd1306ClearScreen();scroll(index,count);
     for(unsigned c=0;c<NM_CELLS;++c) {
         unsigned x=(c%9)*6,y=9+(8-c/9)*6;
         for(unsigned d=0;d<4;++d) {
@@ -177,7 +166,7 @@ static void stroke(unsigned x,unsigned y,unsigned a,unsigned b,unsigned c,unsign
 void fw_ui_idle(unsigned phase)
 {
     unsigned x=6+(phase%5),y=20+((phase/5)%5);
-    ssd1306ClearScreen();battery_readout=1;
+    ssd1306ClearScreen();
     /* Z */
     stroke(x,y,0,0,14,0);stroke(x,y,14,0,0,22);stroke(x,y,0,22,14,22);
     x+=19; /* H */

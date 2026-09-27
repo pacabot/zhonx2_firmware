@@ -1,5 +1,6 @@
 #include "fw_menu.h"
 #include "fw_app.h"
+#include "fw_battery.h"
 #include "stm32f4xx.h"
 #include <assert.h>
 #include <setjmp.h>
@@ -11,7 +12,7 @@ int fw_search_speed=220,fw_run_speed=260,fw_start_corner,fw_start_heading;
 static unsigned now,ready,explored,slow,loaded,preview;
 static unsigned idle_scenario,idle_frames,home_index;
 int fw_motion_busy(void) {return idle_scenario && now<10000;}
-void fw_ui_idle(unsigned phase) {(void)phase;assert(idle_scenario && now>=39999);++idle_frames;}
+void fw_ui_idle(unsigned phase) {(void)phase;assert(idle_scenario && now>=39999);++idle_frames;fw_battery_sample(3000,now,0);}
 static jmp_buf finish;
 static fw_saved_maze_t saved;
 unsigned long hal_os_get_systicks(void) { return now; }
@@ -23,8 +24,8 @@ void fw_test_idle(void)
     ++now;
     if(idle_scenario) {
         test_gpioc.IDR=0xffff;
-        if(now>=43000)longjmp(finish,1);
-        if((now>=42000 && now<42100) || (now>=42500 && now<42550))test_gpioc.IDR&=~(1u<<10);
+        if(now>=47000)longjmp(finish,1);
+        if((now>=46000 && now<46100) || (now>=46500 && now<46550))test_gpioc.IDR&=~(1u<<10);
         return;
     }
     unsigned slot=now/120,phase=now%120;
@@ -76,7 +77,9 @@ int main(void)
     if(!setjmp(finish))fw_menu_run();
     assert(explored==1 && slow==1 && loaded==1 && preview);
     idle_scenario=1;now=0;test_gpioc.IDR=0xffff;
+    fw_battery_set_reference((fw_battery_reference_t){3000,8400});
     if(!setjmp(finish))fw_menu_run();
+    assert(fw_battery_status().soc_valid && fw_battery_status().percent==100);
     assert(idle_frames && home_index==1); /* Wake DOWN consumed; next DOWN acts. */
     assert(explored==1 && slow==1 && loaded==1);
     puts("idle: 30 seconds at rest, no sleep during motion, wake consumed, selection retained");

@@ -18,6 +18,21 @@ Il s'agit d'un étalonnage de gain à un point, supposant un pont linéaire sans
 Une seconde mesure à une autre tension permet de vérifier cette hypothèse.
 La tension cible de la ST-Link (~3,3 V) n'est pas celle du pack.
 
+## Pourquoi le pourcentage affiche `--%`
+
+Dans **Hardware → Battery**, lire le diagnostic :
+
+- `NOT CALIBRATED` : enregistrer une tension mesurée au multimètre avec OK.
+- `ADC SATURATED` : entrée proche du maximum (4090 à 4095), vérifier le diviseur.
+- `ADC INPUT LOW` : entrée proche de zéro (moins de 16), vérifier PA4 et son alimentation.
+- `VOLTAGE OUT OF RANGE` : conversion hors plage plausible, vérifier l'étalonnage.
+- `Wait 5s at rest` : attendre une mesure au repos après le démarrage ou un mouvement.
+
+Le schéma communiqué utilise R3 = 10 kΩ et R2 = 6,8 kΩ : à 8,4 V, PA4 reçoit
+théoriquement 3,40 V. Avec une référence ADC à 3,3 V, la mesure sature en haut de
+charge. R3 = 12 kΩ donnerait 3,04 V à 8,4 V. Le firmware ne suppose pas que cette
+modification a été réalisée ; après changement de résistance, refaire l'étalonnage.
+
 ## Estimation de charge
 
 - Destinée aux LiPo 2S classiques chargées à 4,20 V par cellule.
@@ -29,10 +44,10 @@ La tension cible de la ST-Link (~3,3 V) n'est pas celle du pack.
 - Courbe indicative : 8,40 V → 100 %, 8,00 V → 80 %, 7,80 V → 70 %,
   7,60 V → 40 %, 7,40 V → 15 %, 7,00 V → 5 %, 6,60 V → 0 %.
   Interpolation entre points et hystérésis d'affichage de deux points de pourcentage.
-- L'écran Battery indique la tension convertie et `SOC: ~…%`. L'icône présente
-  un remplissage continu, avec le pourcentage à côté dans les menus de sélection.
-  Sur les diagnostics, l'icône seule conserve la place du titre de la mesure.
-- ADC absent ou proche de la saturation : `--%` (ou `--` sur les diagnostics),
+- L'écran Battery indique la tension convertie et `SOC: ~…%`. Les menus,
+  diagnostics et la veille affichent uniquement le pourcentage en haut à droite,
+  sans pictogramme batterie.
+- ADC absent ou proche de la saturation : `--%`,
   jamais interprété comme une batterie vide.
 
 Cette courbe n'est pas une caractérisation du pack du robot. Température,
