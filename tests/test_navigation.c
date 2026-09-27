@@ -29,7 +29,7 @@ static nm_pose_t segment_start;
 static unsigned moving_cells,extensions;
 static int rotating,backing,recovered,confirm_missing;
 static int32_t fault_travel;
-static unsigned moves,turns,wall_arrivals,draws,saves,ack;
+static unsigned moves,turns,wall_arrivals,draws,saves,ack,curves;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
 static unsigned char saved_snapshot[16384];
@@ -94,7 +94,7 @@ int fw_motion_extend(unsigned cells,int accept) {
     wall_arrival=accept && !!(ground.cell[c].walls&(1u<<destination.heading));return 0;
 }
 void fw_ui_map_progress(int p) {(void)p;}
-void fw_ui_map_view(unsigned z,int x,int y) {(void)z;(void)x;(void)y;}
+void fw_ui_map_view(unsigned z,int x,int y) {assert(z==0 || z==16 || z==24);(void)x;(void)y;}
 void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
 void fw_motion_init(void) { busy=stopped=wall_arrival=backing=0; }
 int fw_motion_obstacle_backoff(uint32_t um)
@@ -128,6 +128,19 @@ int fw_motion_straight_to(unsigned cells,unsigned speed,int accept_wall)
     if(wall_arrival) ++wall_arrivals;
     segment_start=physical;move_started=now;moving_cells=cells;rotating=0;
     busy=1;deadline=now+1000*cells; return 0;
+}
+int fw_motion_curve(int degrees,unsigned speed,int accept)
+{
+    assert(!busy && (degrees==90 || degrees==-90) && speed<=FW_RUN_MAX_SPEED);
+    int c=physical.y*NM_SIDE+physical.x;
+    assert(!(ground.cell[c].walls&(1u<<physical.heading)));
+    c=nm_next(&ground,c,physical.heading);
+    unsigned heading=(physical.heading+degrees/90+4)%4;
+    assert(!(ground.cell[c].walls&(1u<<heading)));
+    c=nm_next(&ground,c,heading);assert(c>=0);
+    destination=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,heading};
+    wall_arrival=accept && !!(ground.cell[c].walls&(1u<<heading));
+    busy=rotating=1;deadline=now+1500;++curves;return 0;
 }
 int fw_motion_turn(int degrees)
 {
@@ -207,6 +220,10 @@ static void scenario(int obstacle)
         assert(!fw_app_run() && !strcmp(last_status,"GOAL FOUND"));
         assert(moves<exploration_moves && moves<=2); /* Known straights are grouped, even at 260 mm/s. */
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
+        assert(!fw_app_maze_load(0));physical=(nm_pose_t){0,0,NM_NORTH};
+        now=moves=turns=ack=extensions=curves=0;last_status[0]=0;test_gpioc.IDR=0xffff;
+        inject_obstacle=0;
+        assert(!fw_app_run_curves() && !strcmp(last_status,"GOAL FOUND") && curves>=1);
         /* The same early obstacle is fatal in a timed run: no map rewrite/backoff. */
         assert(!fw_app_maze_load(0));physical=(nm_pose_t){0,0,NM_NORTH};
         now=moves=turns=ack=extensions=0;last_status[0]=0;test_gpioc.IDR=0xffff;
@@ -280,5 +297,8 @@ int main(void)
 {
     scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);
     puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
-    calibration_snapshot(); return 0;
+    calibration_snapshot();
+    fw_run_speed=1000;assert(!fw_app_settings_save());
+    fw_run_speed=20;fw_app_init();assert(fw_run_speed==1000);
+    return 0;
 }

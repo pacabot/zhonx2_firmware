@@ -59,6 +59,7 @@ int fw_app_resume(void) {assert(0);return -1;}
 int fw_app_ready(void) {return ready;}
 int fw_app_run_slow(void) {assert(ready);++slow;return 0;}
 int fw_app_run(void) {assert(0);return 0;}
+int fw_app_run_curves(void) {assert(0);return 0;}
 unsigned fw_app_maze_count(void) {return ready;}
 const fw_saved_maze_t *fw_app_maze(unsigned i) {assert(i==0);return &saved;}
 int fw_app_maze_load(unsigned i) {assert(!i && ready);++loaded;return 0;}

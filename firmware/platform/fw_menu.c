@@ -84,12 +84,12 @@ static int confirm(const char *title)
 static void runs(void)
 {
     const card_t cards[]={{"Slow run","120 mm/s",FW_ICON_RUN},{"Fast run","",FW_ICON_RUN},
-        {"Curves","Unavailable",FW_ICON_RUN},{"New maze","Explore",FW_ICON_MAZE}};
+        {"Curves","Smooth turns",FW_ICON_RUN},{"New maze","Explore",FW_ICON_MAZE}};
     while(fw_app_ready()) {
         int n=choose("RUNS",cards,4);if(n<0) return;
         if(n==0) fw_app_run_slow();
         if(n==1) fw_app_run();
-        if(n==2) notice("Not yet","implemented");
+        if(n==2) fw_app_run_curves();
         if(n==3) { if(!fw_app_discover() && fw_app_ready()) continue;return; }
     }
 }
@@ -145,7 +145,7 @@ static void settings_menu(void)
         {"Fast run","Speed",FW_ICON_SETTINGS},{"Maze size","Cells",FW_ICON_SETTINGS}};
     int *const values[]={&fw_cal_nose_tenth_mm,&fw_cal_width_tenth_mm,&fw_cal_inner_mm,&fw_cal_pitch_mm,&fw_cal_post_mm,
         &fw_search_speed,&fw_run_speed,&fw_maze_size};
-    const int minimum[]={100,400,140,141,100,20,20,6},maximum[]={750,1400,190,210,250,300,300,16};
+    const int minimum[]={100,400,140,141,100,20,20,6},maximum[]={750,1400,190,210,250,300,FW_RUN_MAX_SPEED,16};
     for(;;) {
         int n=choose("SETTINGS",items,8);if(n<0)return;
         int old=*values[n],v=old;fw_ui_setting(n,v);
@@ -176,6 +176,7 @@ static void settings_menu(void)
                 __WFI();continue;
             }
             int step=n==1 || n==5 || n==6?10:1;
+            if(n==6 && (v>300 || (v==300 && k==KEY_UP)))step=50;
             if(k==KEY_UP && v<maximum[n]) {v+=step;if(v>maximum[n])v=maximum[n];}
             if(k==KEY_DOWN && v>minimum[n]) {v-=step;if(v<minimum[n])v=minimum[n];}
             if(k)fw_ui_setting(n,v);

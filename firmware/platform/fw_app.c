@@ -91,7 +91,7 @@ int fw_maze_size=9;
 static int parameters_valid(void)
 {
     return (fw_maze_size==6 || fw_maze_size==9 || fw_maze_size==16) && fw_start_corner>=0 && fw_start_corner<=3 && fw_start_heading>=0 && fw_start_heading<4 &&
-        fw_search_speed>=20 && fw_search_speed<=300 && fw_run_speed>=20 && fw_run_speed<=300;
+        fw_search_speed>=20 && fw_search_speed<=300 && fw_run_speed>=20 && fw_run_speed<=(int)FW_RUN_MAX_SPEED;
 }
 static int settings_valid(const robot_settings *s)
 {
@@ -153,7 +153,7 @@ static int load(void)
        !fw_library_valid(&current->library) || current->learned>1)return -1;
     if (!nm_valid(&s.map) ||
         !settings_valid(&s.settings) || s.corner>3 || s.heading>3 || s.search_speed<20 ||
-        s.search_speed>300 || s.run_speed<20 || s.run_speed>300 || s.has_map>1 ||
+        s.search_speed>300 || s.run_speed<20 || s.run_speed>FW_RUN_MAX_SPEED || s.has_map>1 ||
         s.search_ms>(nm_size(&s.map)==16?600000u:NM_SEARCH_MS)) return -1;
     if(current->maze_size!=6 && current->maze_size!=9 && current->maze_size!=16)return -1;
     fw_maze_size=current->maze_size;
@@ -322,7 +322,7 @@ static int wait_hand(nm_pose_t pose)
 static void map_message(nm_pose_t pose, const char *message)
 {
     unsigned page=0,level=0;int x=0,y=0;uint32_t drawn=0;
-    const unsigned scales[]={0,16,24,32};
+    const unsigned scales[]={0,16,24};
     fw_ui_map_progress(0);
     /* Escape zooms only after motion has stopped. All four joystick directions
      * pan; centre cycles result pages, a long centre press exits. */
@@ -346,7 +346,7 @@ static void map_message(nm_pose_t pose, const char *message)
                 __WFI();
             }
             if(hal_os_get_systicks()-pressed<20)continue;
-            if(keys&FW_ESCAPE_PIN) {level=(level+1)%4;page=0;}
+            if(keys&FW_ESCAPE_PIN) {level=(level+1)%3;page=0;}
             if(keys&(1u<<12))page=(page+1)%3;
             if(keys&FW_UP_PIN) {++y;page=0;}
             if(keys&FW_DOWN_PIN) {--y;page=0;}
@@ -369,6 +369,7 @@ int fw_app_show_map(void)
 /* Foreground planning; sensors, position observer and pulse generation remain
  * interrupt-driven. Early stable observations can append the next cell in flight. */
 static unsigned run_speed_override;
+static int curve_run;
 
 static int plan_from(nm_pose_t pose,int timed,int *returning,int *certified,nm_route_t *route,const char **message)
 {
@@ -495,9 +496,9 @@ static int execute(int timed_run,int fresh)
     if(!timed_run) {search_base=search_ms;search_epoch=started;search_clock_running=1;}
     uint32_t stopped=started,ui_time=started,seen=0,mismatch_since=0;
     unsigned moving=0,turn_heading=0,stable=0,recoveries=0;int in_window=0;uint8_t candidate=0;
-    int state=0,turning=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
-    const char *message="STOPPED";nm_route_t route;
-    int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=preview_distance(speed);
+    int state=0,turning=0,curving=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
+    const char *message="STOPPED";nm_route_t route;nm_pose_t curve_end=pose;
+    int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=curve_run?0:preview_distance(speed);
     for(;;) {
         uint32_t now=hal_os_get_systicks();
         if(fw_cancel_pressed()) {message="USER STOP";break;}
@@ -514,7 +515,7 @@ static int execute(int timed_run,int fresh)
         }
         if(now-ui_time>=80) {
             nm_pose_t visual=pose;
-            if(state && !turning) {
+            if(state && !turning && !curving) {
                 int32_t travel=fw_motion_travelled_um();if(travel<0)travel=0;
                 unsigned passed=(unsigned)(travel/pitch);if(passed>=moving)passed=moving-1;
                 visual=segment;advance(&visual,passed);
@@ -525,7 +526,7 @@ static int execute(int timed_run,int fresh)
                        fw_motion_speed(),timed_run?now-started:search_used(now),live_sensors());ui_time=now;
         }
         hal_sensor_snapshot scan;int scan_ready=hal_sensor_snapshot_read(&scan) && now-scan.timestamp<=50 && scan.sequence!=seen;
-        int window=state && !turning && preview>0 && fw_motion_travelled_um()>=(int32_t)moving*pitch-preview;
+        int window=state && !turning && !curving && preview>0 && fw_motion_travelled_um()>=(int32_t)moving*pitch-preview;
         if(window && !in_window)stable=0;
         in_window=window;
         if(scan_ready) {
@@ -533,7 +534,7 @@ static int execute(int timed_run,int fresh)
             stable=value==candidate?stable+1:1;candidate=value;
         }
         if(state && fw_motion_busy()) {
-            if(!turning && !previewed && scan_ready && stable>=3 &&
+            if(!turning && !curving && !previewed && scan_ready && stable>=3 &&
                fw_motion_travelled_um()>=(int32_t)moving*pitch-preview && preview>0) {
                 nm_pose_t destination=segment;advance(&destination,moving);
                 if(!observe_pose(&destination,candidate,&pose,&segment)) {
@@ -551,7 +552,8 @@ static int execute(int timed_run,int fresh)
             __WFI();continue;
         }
         if(state) {
-            if(turning) {pose.heading=turn_heading;stopped=now;stable=0;}
+            if(curving) {pose=curve_end;stopped=now;stable=0;curving=0;}
+            else if(turning) {pose.heading=turn_heading;stopped=now;stable=0;}
             else {pose=segment;advance(&pose,moving);stopped=previewed?now-40:now;}
             displayed_pose=pose;moving=0;turning=0;state=0;
         }
@@ -580,6 +582,23 @@ static int execute(int timed_run,int fresh)
             if(fw_motion_turn(quarters*90)) {message="TURN REJECTED";break;}
             turning=1;state=1;stable=0;
         } else {
+            /* A rounded corner consumes two orthogonal route edges. Never use
+             * sensor preview to choose an arc: all three cells must be known. */
+            if(curve_run && timed_run && route.length>=2 && route.direction[0]==pose.heading &&
+               ((route.direction[1]+4-pose.heading)%2)==1) {
+                nm_pose_t corner=pose;advance(&corner,1);
+                curve_end=corner;curve_end.heading=route.direction[1];advance(&curve_end,1);
+                unsigned exitbit=1u<<curve_end.heading;
+                if(maze.cell[cell(pose)].visited && maze.cell[cell(corner)].visited &&
+                   maze.cell[cell(corner)].known==15 && maze.cell[cell(curve_end)].visited &&
+                   (maze.cell[cell(curve_end)].known&exitbit)) {
+                    int degrees=(curve_end.heading+4-pose.heading)%4==1?90:-90;
+                    int accept=!!(maze.cell[cell(curve_end)].walls&exitbit);
+                    if(!fw_motion_curve(degrees,speed,accept)) {
+                        curving=state=1;stable=0;continue;
+                    }
+                }
+            }
             unsigned cells=1;
             /* Known stretches can be submitted as one command, including runs
              * faster than the calibrated observation window. */
@@ -587,6 +606,8 @@ static int execute(int timed_run,int fresh)
                 nm_pose_t end=pose;advance(&end,1);
                 while(cells<route.length && cells<16 && route.direction[cells]==pose.heading &&
                       maze.cell[cell(end)].visited && maze.cell[cell(end)].known==15) {
+                    /* Leave the last straight edge for the tangent lead of an arc. */
+                    if(curve_run && cells+1<route.length && route.direction[cells+1]!=pose.heading)break;
                     ++cells;advance(&end,1);
                 }
             }
@@ -616,6 +637,10 @@ int fw_app_resume(void)
     return execute(0,0);
 }
 int fw_app_run(void) { return execute(1,0); }
+int fw_app_run_curves(void)
+{
+    curve_run=1;int result=execute(1,0);curve_run=0;return result;
+}
 int fw_app_run_slow(void)
 {
     run_speed_override=120;

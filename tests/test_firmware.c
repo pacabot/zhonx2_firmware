@@ -357,29 +357,33 @@ static void wall_test(void)
     measured.geometry=(fw_cal_geometry_t){47000,94000,167000,179000};
     measured.side[0]=(fw_cal_side_t){84500,85500,0};
     measured.side[1]=(fw_cal_side_t){81500,83500,1000};
+    for(unsigned speed=200;speed<=1000;speed+=800)for(unsigned mismatch=0;mismatch<=1;++mismatch)
     for(int sign=-1;sign<=1;sign+=2) {
+        unsigned distance=speed*10;
         wall_control_reset(&a);
         double lateral=83500+sign*6000,heading=0,yaw_remainder=0;
-        int left=0,right=0;
-        for(unsigned tick=0;tick<2000;++tick) {
+        int left=0,right=0;uint8_t delayed[3]={0x3f,0x3f,0x3f};
+        for(unsigned tick=0;tick<20000000/distance;++tick) {
             if(lateral<=84500)left=1;else if(lateral>=85500)left=0;
             if(167000-lateral<=81500)right=1;else if(167000-lateral>=83500)right=0;
             uint8_t sensors=0x3f&~0x21;
             if(left)sensors&=~0x10;
             if(right)sensors&=~0x02;
+            uint8_t sensed=delayed[tick%3];delayed[tick%3]=sensors;
             int yaw=(int)yaw_remainder;yaw_remainder-=yaw;
-            int correction=wall_control_position(&a,sensors,&measured,2000,yaw);
+            int correction=wall_control_position(&a,sensed,&measured,distance,yaw);
             assert(abs(correction)<=120);
-            double change=2.0*correction*2000/83500;
-            yaw_remainder+=change;heading+=change;
+            double change=2.0*correction*distance/83500;
+            yaw_remainder+=change;heading+=change+(double)sign*mismatch*0.01*distance/83.5;
             if(tick==500)heading+=sign*8; /* Unmeasured brief yaw slip. */
-            lateral+=2000*heading/1000;
+            lateral+=distance*heading/1000;
             assert(lateral>47000 && lateral<120000);
         }
-        printf("binary observer sign %d: lateral %.1f um, heading %.1f mrad, estimate %ld / %ld\n",sign,lateral,heading,(long)a.lateral_um,(long)a.heading_mrad);
+        printf("binary observer %u mm/s mismatch %u%% sign %d: lateral %.1f um, heading %.1f mrad, estimate %ld / %ld bias %ld\n",speed,mismatch,sign,lateral,heading,(long)a.lateral_um,(long)a.heading_mrad,(long)a.yaw_bias_mrad_m);
         assert(abs((int)lateral-83500)<5000 && abs((int)heading)<50);
+        assert(abs(a.yaw_bias_mrad_m-(int)(sign*(int)mismatch*10000/83.5))<30);
     }
-    puts("control: binary hysteresis, asymmetric thresholds, closed-loop lateral recovery and injected yaw slip");
+    puts("control: 20 m at 200/1000 mm/s, delayed binary sensors, +/-1% wheel mismatch, initial offset and yaw slip");
 
 }
 static void interaction_test(void)

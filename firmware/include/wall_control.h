@@ -5,7 +5,10 @@
 typedef struct {
     int32_t filtered, previous, output;
     int32_t lateral_um, heading_mrad, innovation_q8;
-    uint8_t initialized, sensors;
+    int32_t yaw_bias_mrad_m, bias_fraction, reference_distance, reference_yaw;
+    int32_t optical_distance,optical_yaw,optical_position;
+    int64_t optical_integral;
+    uint8_t initialized, sensors, reference_side,optical_side;
 } wall_control_t;
 void wall_control_reset(wall_control_t *c);
 /* Active-low legacy sensor bits. Output is differential speed in permille.

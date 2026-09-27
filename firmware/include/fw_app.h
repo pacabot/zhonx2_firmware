@@ -9,6 +9,7 @@ int fw_app_discover(void);
 int fw_app_resume(void);
 int fw_app_run(void);
 int fw_app_run_slow(void);
+int fw_app_run_curves(void);
 int fw_app_ready(void);
 unsigned fw_app_maze_count(void);
 const fw_saved_maze_t *fw_app_maze(unsigned index);

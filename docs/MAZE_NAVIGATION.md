@@ -13,11 +13,40 @@
   F10 est en haut à gauche, F5 en haut à droite. Sur les côtés, 10 cm en haut
   (bande longue), 5 cm plus bas (bande courte).
 - À la fin, même en cas d'erreur : vue générale initiale, Escape pour changer le
-  zoom (vue générale / 16 / 24 / 32 pixels), flèches pour déplacer la carte,
+  zoom (vue générale / 16 / 24 pixels), flèches pour déplacer la carte,
   centre du joystick pour alterner carte / temps / résultat, centre maintenu
   0,8 seconde pour quitter. Pendant un mouvement, Escape reste un arrêt immédiat.
 - Après un apprentissage certifié, sauvegarde automatique puis accès aux runs.
   La bibliothèque conserve jusqu'à huit cartes avec leur chemin optimal clignotant.
+
+## Runs et vitesse
+
+**Settings → Fast run** permet désormais 20 à 1 000 mm/s. Le réglage enregistré
+reste inchangé lors de la mise à jour. Au-dessus de 300 mm/s, les pas du menu
+sont de 50 mm/s. L'accélération et le freinage restent limités à 800 mm/s² :
+la vitesse choisie est un plafond, atteint seulement sur une ligne assez longue.
+À 1 000 mm/s, même la roue accélérée par la correction reste sous le plafond
+matériel de 100 000 impulsions/s.
+
+**Curves** exécute maintenant des arcs de 90° sur la carte apprise : approche
+d'une demi-cellule, arc de rayon égal à une demi-cellule, sortie d'une demi-cellule.
+Les trois phases s'enchaînent dans la commande moteur sans arrêt au virage.
+La vitesse de l'ensemble est limitée à 220 mm/s ; les lignes droites utilisent
+le réglage Fast run. Les deux roues avancent, avec des vitesses proportionnelles
+aux rayons intérieur/extérieur et une synchronisation de leur progression.
+La calibration de rotation fournit la différence de trajet des roues, à la
+vitesse de rotation équivalente. La géométrie mesurée vérifie le dégagement.
+
+L'arc nécessite des cellules visitées, un angle entièrement connu et des
+calibrations mur/rotation valides. Les demi-tours, angles sans assez de place
+pour l'approche/sortie ou sans profils valides utilisent un pivot. Des virages
+rapprochés peuvent donc encore inclure des pivots et des arrêts intermédiaires.
+Les capteurs périmés, Escape et les obstacles frontaux arrêtent aussi un arc.
+Ce premier mode courbe ne relance pas automatiquement un run interrompu.
+
+Les tests intègrent les déplacements des deux roues pour vérifier les arcs
+gauche/droite, le centre d'arrivée, le cap et les murs. La tenue mécanique à
+haute vitesse et en courbe reste à valider sur le robot.
 
 ## Formats et départ automatique
 
@@ -59,6 +88,18 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   ±20 mrad, retour amorti en cap, variation limitée de la correction. Le choix
   se fait parmi les murs 10 cm présents et les seuils les plus proches du centre.
   Sans seuil proche, les mesures restent des contraintes de position.
+- Sur un long couloir, deux déclenchements dans le même sens du même capteur
+  latéral fournissent un cycle complet de suivi. Le firmware estime progressivement
+  le biais de rotation permanent des roues à partir de ces cycles et le corrige
+  dans l'observateur. L'apprentissage est borné, exclut les transitions de porte,
+  les changements de capteur et les demi-cycles ; il est réinitialisé avec la
+  commande suivante. Deux positions optiques successives recalculent aussi le
+  cap à partir du trajet et de la différence de pas. Les bornes latérales sont
+  projetées pendant le retard du filtrage et le gain de cap est réduit à haute
+  vitesse. Ce mécanisme vise les petites dissymétries persistantes,
+  pas une perte d'adhérence importante. Tests : couloirs simulés de 20 m,
+  200/1 000 mm/s, retard de trois scans, dissymétrie ±1 %, décalage initial et
+  perturbation de cap.
 - Un état binaire constant ne fournit pas une distance. Le suivi recherche les
   changements d'état autour du seuil réel, au lieu de considérer toute une
   demi-cellule comme parfaitement centrée. La position suivie peut différer du

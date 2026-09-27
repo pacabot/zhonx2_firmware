@@ -53,9 +53,9 @@ int main(void)
         assert(!!ssd1306GetPixel(1,y)==((y-7)%3==0));
     }
     image("build/ui-maze-inactive.pgm");
-    for(unsigned heading=0;heading<4;++heading)for(unsigned level=0;level<4;++level) {
+    for(unsigned heading=0;heading<4;++heading)for(unsigned level=0;level<3;++level) {
         map.start_heading=heading;
-        fw_ui_map_view((unsigned[]){0,16,24,32}[level],level-1,1-level);
+        fw_ui_map_view((unsigned[]){0,16,24}[level],level-1,1-level);
         fw_ui_maze(&map,(nm_pose_t){2,2,NM_NORTH},"EXPLORATION",220,72000,0);
     }
     fw_ui_map_view(16,0,0);map.start_heading=0;

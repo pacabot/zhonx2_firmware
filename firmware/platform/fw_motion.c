@@ -13,6 +13,11 @@ static volatile int active, fault;
 static int straight, allow_wall, wall_arrival;
 static int32_t obstacle_travel;
 static int calibration, travel_sign;
+static unsigned curve_phase,curve_speed;
+static int curve_direction,curve_accept;
+static float curve_ratio[2];
+static uint32_t curve_budget[2];
+static int32_t curve_completed_um;
 static uint32_t travel_ticks,previous_count[2];
 static volatile uint32_t goal_um;
 static volatile int32_t longitudinal_um;
@@ -100,6 +105,7 @@ void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 int32_t fw_motion_travelled_um(void)
 {
     if(fault==2)return obstacle_travel;
+    if(calibration==4)return curve_completed_um+raw_distance_um();
     if(straight && !calibration)return raw_distance_um()+longitudinal_um;
     uint32_t remaining=fw_motion_remaining();
     return travel_sign*(int32_t)lroundf((float)(travel_ticks-remaining)*1000.0f/TICKS_PER_MM);
@@ -123,7 +129,7 @@ uint32_t fw_motion_remaining(void)
 }
 void fw_motion_stop(void)
 {
-    active=0;
+    active=0;curve_phase=0;
     hal_step_motor_pair_release();
     hal_step_motor_disable();
     velocity=0;
@@ -180,7 +186,7 @@ int fw_motion_straight(unsigned cells, unsigned speed)
 }
 int fw_motion_straight_to(unsigned cells, unsigned speed, int accept_wall)
 {
-    if (!cells || cells>16 || speed<20 || speed>300) return -1;
+    if (!cells || cells>16 || speed<20 || speed>FW_RUN_MAX_SPEED) return -1;
     long pulses=lroundf((float)cells*(float)cell_pitch_um*0.001f*TICKS_PER_MM);
     return start(pulses,pulses,speed,1,accept_wall,0);
 }
@@ -196,6 +202,71 @@ int fw_motion_extend(unsigned cells,int accept_wall)
     hal_step_motor_pair_extend((unsigned long)lroundf(extra*1.25f*TICKS_PER_MM/1000.0f));
     allow_wall=accept_wall;started=hal_os_get_systicks();
     __set_PRIMASK(mask);return 0;
+}
+static void curve_segment(unsigned phase)
+{
+    if(phase==1)curve_completed_um=0;
+    else curve_completed_um+=raw_distance_um();
+    float radius=cell_pitch_um*0.0005f;
+    float distance[2]={radius,radius};
+    if(phase==2) {
+        /* Equivalent in-place wheel speed gives the calibrated yaw scale. */
+        unsigned spin=(unsigned)(curve_speed*(float)WHEELS_DISTANCE/(2.0f*radius));
+        if(spin<40)spin=40;
+        if(spin>120)spin=120;
+        float quarter=fw_rotation_quarter(&rotation_profile,spin,curve_direction<0)*0.001f;
+        float arc=radius*(float)M_PI/2.0f;
+        distance[0]=arc-curve_direction*quarter;
+        distance[1]=arc+curve_direction*quarter;
+    }
+    float mean=(distance[0]+distance[1])/2.0f;
+    for(unsigned i=0;i<2;++i) {
+        curve_budget[i]=((uint32_t)lroundf(distance[i]*TICKS_PER_MM)+1u)&~1u;
+        curve_ratio[i]=distance[i]/mean;
+    }
+    hal_step_motor_pair_start(curve_budget[0],curve_budget[1]);
+    curve_phase=phase;
+}
+int fw_motion_curve(int degrees,unsigned speed,int accept)
+{
+    if(active || fault || (degrees!=90 && degrees!=-90) || speed<20 || speed>FW_RUN_MAX_SPEED ||
+       !fw_cal_valid(&wall_profile) || !fw_rotation_valid(&rotation_profile))return -1;
+    float r=cell_pitch_um*0.0005f,half=wall_profile.geometry.width_um*0.0005f;
+    float nose=wall_profile.geometry.nose_um*0.001f,inside=wall_profile.geometry.inner_um*0.0005f;
+    /* Swept square/rectangle must clear the outside walls and inside post. */
+    if(sqrtf((r+half)*(r+half)+nose*nose)-r>inside-3.0f ||
+       sqrtf((r+nose)*(r+nose)+half*half)-r>inside-3.0f || r-half<15.0f)return -1;
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    curve_speed=speed>FW_CURVE_MAX_SPEED?FW_CURVE_MAX_SPEED:speed;
+    curve_direction=degrees>0?1:-1;curve_accept=accept;
+    long pulses=lroundf(r*TICKS_PER_MM);
+    int result=start(pulses,pulses,curve_speed,0,0,4);
+    if(!result)curve_segment(1);
+    __set_PRIMASK(mask);return result;
+}
+static void curve_tick(const hal_sensor_snapshot *scan)
+{
+    unsigned long remaining[2]={hal_step_motor_pair_remaining(0),hal_step_motor_pair_remaining(1)};
+    if(!remaining[0] && !remaining[1]) {
+        if(curve_phase==3) {active=0;curve_phase=0;velocity=0;hal_step_motor_pair_rate(0,0);return;}
+        curve_segment(curve_phase+1);
+        remaining[0]=curve_budget[0];remaining[1]=curve_budget[1];
+    }
+    float left=((float)remaining[0]/curve_ratio[0]+(float)remaining[1]/curve_ratio[1])/(2.0f*TICKS_PER_MM);
+    if(!(scan->raw&SENSOR_F5_POS)) {
+        if(curve_phase==3 && curve_accept && left<=front_allowance_um*0.001f+5.0f)wall_arrival=1;
+        else {obstacle_travel=0;fault=2;fw_motion_stop();return;}
+    }
+    float target=curve_phase==3?fminf(cruise,sqrtf(end_speed*end_speed+2*max_accel*left)):cruise;
+    float change=target-velocity,step=max_accel*0.001f;
+    velocity+=fmaxf(-step,fminf(step,change));
+    /* Synchronize fractional progress, preserving the inner/outer radius ratio. */
+    float progress0=(curve_budget[0]-remaining[0])/curve_ratio[0];
+    float progress1=(curve_budget[1]-remaining[1])/curve_ratio[1];
+    float trim=fmaxf(-0.04f,fminf(0.04f,(progress0-progress1)*0.002f));
+    unsigned long base=(unsigned long)(velocity*TICKS_PER_MM);
+    hal_step_motor_pair_rate((unsigned long)(base*curve_ratio[0]*(1-trim)),
+                             (unsigned long)(base*curve_ratio[1]*(1+trim)));
 }
 static int turn(int degrees,int calibrating)
 {
@@ -239,6 +310,7 @@ void fw_motion_tick(uint32_t now)
     if (!hal_sensor_snapshot_read(&scan) || now-scan.timestamp>50 || now-started>60000) {
         fault=1; fw_motion_stop(); return;
     }
+    if(curve_phase) {curve_tick(&scan);return;}
     uint32_t remaining=fw_motion_remaining();
     if (!remaining) {
         active=0; velocity=0; hal_step_motor_pair_rate(0,0); return;

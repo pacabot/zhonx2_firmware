@@ -11,7 +11,8 @@ static hal_sensor_snapshot scan;
 static unsigned long remain[2], rates[2], total[2];
 static long commanded[2];
 static double fraction[2];
-static int disabled;
+static int disabled,trace_path;
+static double path_x,path_y,path_heading;
 unsigned long hal_os_get_systicks(void) { return now; }
 int hal_sensor_snapshot_read(hal_sensor_snapshot *s) { *s=scan; return scan.sequence>=3; }
 void hal_step_motor_pair_release(void) { remain[0]=remain[1]=rates[0]=rates[1]=0; }
@@ -44,11 +45,27 @@ static void setup(void)
 }
 static void tick(int fresh)
 {
+    double wheel[2]={0,0};
     for(unsigned i=0;i<2;++i) {
         fraction[i]+=(double)rates[i]/1000.;
         unsigned long pulses=(unsigned long)fraction[i]; fraction[i]-=pulses;
         if(pulses>remain[i]) pulses=remain[i];
         remain[i]-=pulses; total[i]+=pulses;
+        wheel[i]=(commanded[i]<0?-1:1)*pulses/(2.0*STEPS_PER_MM);
+    }
+    if(trace_path) {
+        double yaw=(wheel[1]-wheel[0])/WHEELS_DISTANCE;
+        path_x+=(wheel[0]+wheel[1])*0.5*sin(path_heading+yaw/2);
+        path_y+=(wheel[0]+wheel[1])*0.5*cos(path_heading+yaw/2);
+        path_heading+=yaw;
+        /* Closed outside walls of the standard 167 mm L-shaped corridor. */
+        for(int a=-1;a<=1;a+=2)for(int b=-1;b<=1;b+=2) {
+            double x=path_x+a*47*cos(path_heading)+b*47*sin(path_heading);
+            double y=path_y-a*47*sin(path_heading)+b*47*cos(path_heading);
+            assert(fabs(x)<262.5 && y<262.5 && y> -83.5);
+            if(path_heading>=0) {assert(x> -83.5);if(y<83.5)assert(x<83.5);}
+            else {assert(x<83.5);if(y<83.5)assert(x> -83.5);}
+        }
     }
     ++now;
     if(fresh && now%10==0) { scan.timestamp=now; ++scan.sequence; }
@@ -119,7 +136,7 @@ int main(void)
     setup(); assert(!fw_motion_straight_to(1,220,0));
     while(fw_motion_remaining()>20.f*2.f*(float)STEPS_PER_MM) tick(1);
     scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
-    setup(); assert(fw_motion_straight(0,100)); assert(fw_motion_straight(1,301));
+    setup(); assert(fw_motion_straight(0,100)); assert(fw_motion_straight(1,FW_RUN_MAX_SPEED+1));
     assert(fw_motion_turn(30));
     now=UINT32_MAX-30; scan.timestamp=now;
     assert(!fw_motion_straight(1,100));
@@ -224,6 +241,40 @@ int main(void)
     assert(trim< -2500 && trim> -5000);
     while(fw_motion_busy())tick(1);
     assert(abs(fw_motion_travelled_um()-179000)<400);
+    /* Full differential-drive integration, both arc directions and speeds. */
+    for(int dir=-1;dir<=1;dir+=2)for(unsigned speed=120;speed<=1000;speed+=440) {
+        setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);
+        for(unsigned i=0;i<3;++i)profile.point[i]=(fw_rotation_point_t){.speed=40+40*i,
+            .quarter_um={65581,65581}}; /* pi * 83.5 / 4, micrometres */
+        fw_motion_rotation_profile(&profile);
+        path_x=path_y=path_heading=0;trace_path=1;
+        assert(!fw_motion_curve(dir*90,speed,0));
+        int32_t last_distance=0;
+        while(fw_motion_busy() && now<10000) {
+            tick(1);
+            if(fw_motion_busy())assert(rates[0] || rates[1]);
+            int32_t distance=fw_motion_travelled_um();
+            assert(distance>=last_distance && distance<321000);last_distance=distance;
+        }
+        assert(abs(last_distance-319586)<100);
+        trace_path=0;
+        assert(!fw_motion_busy() && !fw_motion_fault());
+        assert(fabs(path_x-dir*179)<1 && fabs(path_y-179)<1);
+        assert(fabs(path_heading-dir*M_PI/2)<0.01);
+    }
+    setup();assert(fw_motion_curve(90,220,0)); /* Missing profiles: pivot fallback. */
+    fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
+    assert(fw_motion_curve(180,220,0));assert(!fw_motion_curve(90,220,0));
+    for(unsigned i=0;i<100;++i)tick(1);
+    scan.raw&=~SENSOR_F5_POS;tick(1);assert(fw_motion_fault()==2 && disabled);
+    setup();fw_motion_geometry(179000,92000,167000);fw_motion_wall_profile(&walls);fw_motion_rotation_profile(&profile);
+    assert(!fw_motion_curve(-90,220,0));for(unsigned i=0;i<60;++i)tick(0);
+    assert(fw_motion_fault()==1 && disabled);
+    setup();assert(!fw_motion_straight(8,FW_RUN_MAX_SPEED));
+    unsigned peak=0;
+    while(fw_motion_busy()) {tick(1);if(fw_motion_speed()>peak)peak=fw_motion_speed();}
+    assert(peak>=990 && !fw_motion_fault());
+    puts("motion: 1000 mm/s reachable; left/right arcs reach correct centre and heading, clear walls, stop on obstacles/stale scans");
     puts("motion: post offset removes longitudinal drift using the correct fixture and forward profile");
     puts("motion: steering changes wheel travel; appended cell crosses centre without stopped pulses");
     puts("motion: measured CW/CCW budgets, spin sign, free traverse and bounds");

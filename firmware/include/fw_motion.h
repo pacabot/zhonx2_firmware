@@ -2,6 +2,8 @@
 #define FW_MOTION_H
 #include <stdint.h>
 #include "fw_cal_extra.h"
+#define FW_RUN_MAX_SPEED 1000u
+#define FW_CURVE_MAX_SPEED 220u
 void fw_motion_init(void);
 /* Bench only: each wheel -1, 0, +1, bounded to 20 mm at 20 mm/s. */
 int fw_motion_test_wheels(int right, int left);
@@ -21,6 +23,9 @@ void fw_motion_corner_profiles(const fw_corner_data_t *left,const fw_corner_data
 int32_t fw_motion_lateral_um(void);
 int32_t fw_motion_heading_mrad(void);
 int fw_motion_turn(int clockwise_degrees);
+/* Centre -> half-cell lead -> 90-degree arc -> half-cell tail -> centre.
+ * Two known orthogonal edges, both wheels forward. Caller checks the map. */
+int fw_motion_curve(int clockwise_degrees,unsigned speed_mm_s,int allow_front_wall);
 /* Deliberate contact/sensing moves: bounded, slow, no wall steering or F5 stop.
  * Only the calibration menu may use these; stale sensors still stop the robot. */
 int fw_motion_calibration_move(int32_t distance_um, unsigned speed_mm_s);
