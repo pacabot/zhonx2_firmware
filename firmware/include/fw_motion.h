@@ -10,6 +10,10 @@ int fw_motion_straight(unsigned cells, unsigned speed_mm_s);
 /* Allow a front-wall arrival only in the last 30 mm of the final cell. */
 int fw_motion_straight_to(unsigned cells, unsigned speed_mm_s, int allow_front_wall);
 int fw_motion_wall_arrival(void);
+/* Exploration recovery only, after a confirmed F5 obstacle. Reverse at 80 mm/s,
+ * at most one cell and never farther than the interrupted forward travel.
+ * Zero distance acknowledges an obstacle detected at the starting centre. */
+int fw_motion_obstacle_backoff(uint32_t distance_um);
 /* Append a proven open cell while moving; no pulse or controller reset. */
 int fw_motion_extend(unsigned cells,int allow_front_wall);
 unsigned fw_motion_speed(void);

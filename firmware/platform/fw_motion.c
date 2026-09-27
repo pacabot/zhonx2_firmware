@@ -11,6 +11,7 @@
 #define TICKS_PER_MM (2.0f * (float)STEPS_PER_MM)
 static volatile int active, fault;
 static int straight, allow_wall, wall_arrival;
+static int32_t obstacle_travel;
 static int calibration, travel_sign;
 static uint32_t travel_ticks,previous_count[2];
 static volatile uint32_t goal_um;
@@ -98,6 +99,7 @@ void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 }
 int32_t fw_motion_travelled_um(void)
 {
+    if(fault==2)return obstacle_travel;
     if(straight && !calibration)return raw_distance_um()+longitudinal_um;
     uint32_t remaining=fw_motion_remaining();
     return travel_sign*(int32_t)lroundf((float)(travel_ticks-remaining)*1000.0f/TICKS_PER_MM);
@@ -148,6 +150,22 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     hal_step_motor_wakeup(); hal_step_motor_enable();
     active=1;
     __set_PRIMASK(mask);
+    return 0;
+}
+int fw_motion_obstacle_backoff(uint32_t um)
+{
+    hal_sensor_snapshot scan;
+    if(active || fault!=2 || !straight || um>cell_pitch_um ||
+       obstacle_travel<0 || um>(uint32_t)obstacle_travel ||
+       !hal_sensor_snapshot_read(&scan) ||
+       (uint32_t)(hal_os_get_systicks()-scan.timestamp)>50 ||
+       (scan.raw&SENSOR_F5_POS) || (scan.filtered&SENSOR_F5_POS))return -1;
+    fault=0;
+    if(!um) {wall_arrival=0;return 0;}
+    long pulses=lroundf(um*0.001f*TICKS_PER_MM);
+    /* Independent reverse mode: paired wheels, no front arrival/side observer.
+     * The normal freshness watchdog remains active throughout the retreat. */
+    if(start(-pulses,-pulses,80,0,0,3)) {fault=2;return -1;}
     return 0;
 }
 int fw_motion_test_wheels(int right,int left)
@@ -243,7 +261,7 @@ void fw_motion_tick(uint32_t now)
             }
         } else if (!front_calibrated && allow_wall && (float)remaining/TICKS_PER_MM<=30.0f) {
             hal_step_motor_pair_rate(0,0); active=0; velocity=0; wall_arrival=1;
-        } else { fault=2; fw_motion_stop(); }
+        } else { obstacle_travel=fw_motion_travelled_um(); fault=2; fw_motion_stop(); }
         if (!active) return;
     }
     previous_raw=scan.raw;

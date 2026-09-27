@@ -288,7 +288,7 @@ static void advance(nm_pose_t *p, unsigned count)
 }
 static uint8_t observation(uint8_t s)
 {
-    return (!(s&SENSOR_F10_POS)) | (!(s&SENSOR_L10_POS)<<1) | (!(s&SENSOR_R10_POS)<<2);
+    return ((s&(SENSOR_F10_POS|SENSOR_F5_POS))!=(SENSOR_F10_POS|SENSOR_F5_POS)) | (!(s&SENSOR_L10_POS)<<1) | (!(s&SENSOR_R10_POS)<<2);
 }
 static void radio_off(void)
 {
@@ -404,8 +404,9 @@ static int32_t preview_distance(unsigned speed)
     if(!fw_cal_valid(&measurements.wall))return 0;
     const fw_cal_geometry_t *g=&measurements.wall.geometry;
     /* F10 must already have triggered even with filter latency and placement
-     * uncertainty. Two further identical scans confirm the observation. */
-    int32_t window=(int32_t)measurements.wall.front[1].on_um-(int32_t)g->inner_um/2-(int32_t)speed*40-5000;
+     * uncertainty (20 mm, plus the measured repeatability). Three further
+     * identical scans confirm an opening; F5 also vetoes a false F10 opening. */
+    int32_t window=(int32_t)measurements.wall.front[1].on_um-(int32_t)g->inner_um/2-(int32_t)speed*40-20000-(int32_t)measurements.wall.front[1].spread_um;
     for(unsigned side=0;side<2;++side)for(unsigned opening=0;opening<2;++opening) {
         int32_t offset;
         if(fw_corner_offset(&measurements.corner[opening?1-side:side],opening?1:0,speed,1,opening,&offset))return 0;
@@ -424,6 +425,61 @@ static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_
     pose->x+=dx;pose->y+=dy;segment->x+=dx;segment->y+=dy;
     return 0;
 }
+/* Explicit exploration-only correction. Ordinary observations keep rejecting
+ * contradictions. Never close an edge whose far cell has already been visited:
+ * that may be an obstacle in a known passage, not a newly discovered maze wall. */
+static int missed_front(nm_map_t *map,nm_pose_t p)
+{
+    int c=cell(p),n=nm_next(map,c,p.heading);
+    unsigned bit=1u<<p.heading,opposite=1u<<((p.heading+2)%4);
+    if(c<0 || c>=NM_CELLS || p.x>=map->side || p.y>=map->side ||
+       (map->cell[c].walls&bit) || (n>=0 && map->cell[n].visited))return -1;
+    map->cell[c].known&=~bit;
+    if(n>=0)map->cell[n].known&=~opposite;
+    return nm_edge(map,c,p.heading,1);
+}
+static int recover_front(nm_pose_t *pose,nm_pose_t segment,unsigned moving)
+{
+    if(!fw_cal_valid(&measurements.wall))return -1;
+    int32_t pitch=(int32_t)fw_cal_pitch_mm*1000;
+    int32_t travel=fw_motion_travelled_um();
+    int32_t allowance=(int32_t)measurements.wall.front[0].on_um-
+                      (int32_t)measurements.wall.geometry.inner_um/2;
+    if(allowance<0 || travel<0 || travel>(int32_t)moving*pitch)return -1;
+    unsigned wall_cell=(unsigned)(travel+allowance+pitch/2)/pitch;
+    int32_t residual=travel+allowance-(int32_t)wall_cell*pitch;
+    if(wall_cell>moving || residual< -15000 || residual>15000)return -1;
+    nm_pose_t wall=segment,back=segment;
+    advance(&wall,wall_cell);advance(&back,(unsigned)(travel/pitch));
+    nm_map_t corrected=maze;
+    if(missed_front(&corrected,wall))return -1;
+    /* A single raw sample stops pulses, but cannot rewrite the map. */
+    uint32_t since=hal_os_get_systicks(),seen=0;unsigned stable=0;
+    while(stable<3) {
+        hal_sensor_snapshot scan;uint32_t now=hal_os_get_systicks();
+        if(fw_cancel_pressed() || now-since>200 || !hal_sensor_snapshot_read(&scan) ||
+           now-scan.timestamp>50)return -1;
+        if(scan.sequence!=seen) {
+            seen=scan.sequence;
+            stable=((scan.raw|scan.filtered)&SENSOR_F5_POS)?0:stable+1;
+        }
+        __WFI();
+    }
+    if(fw_motion_obstacle_backoff((uint32_t)(travel%pitch)))return -1;
+    since=hal_os_get_systicks();uint32_t shown=since-80;
+    while(fw_motion_busy()) {
+        if(fw_cancel_pressed() || hal_os_get_systicks()-since>5000) {fw_motion_stop();return -1;}
+        uint32_t now=hal_os_get_systicks();
+        if(now-shown>=80) {
+            fw_ui_map_progress(0);
+            fw_ui_maze(&maze,back,"RECOVERING",fw_motion_speed(),search_used(now),live_sensors());
+            shown=now;
+        }
+        __WFI();
+    }
+    if(fw_motion_fault())return -1;
+    maze=corrected;*pose=back;fw_motion_init();return 0;
+}
 static int execute(int timed_run,int fresh)
 {
     if(!parameters_valid()) {hal_ui_display_prompt(app_context.ui,"Maze","INVALID SETTINGS");return -1;}
@@ -438,7 +494,7 @@ static int execute(int timed_run,int fresh)
     radio_off();uint32_t started=hal_os_get_systicks();
     if(!timed_run) {search_base=search_ms;search_epoch=started;search_clock_running=1;}
     uint32_t stopped=started,ui_time=started,seen=0,mismatch_since=0;
-    unsigned moving=0,turn_heading=0,stable=0;int in_window=0;uint8_t candidate=0;
+    unsigned moving=0,turn_heading=0,stable=0,recoveries=0;int in_window=0;uint8_t candidate=0;
     int state=0,turning=0,returning=0,certified=0,result=-1,previewed=0,prepared=-1,mismatch=0;
     const char *message="STOPPED";nm_route_t route;
     int32_t pitch=(int32_t)fw_cal_pitch_mm*1000,preview=preview_distance(speed);
@@ -446,8 +502,16 @@ static int execute(int timed_run,int fresh)
         uint32_t now=hal_os_get_systicks();
         if(fw_cancel_pressed()) {message="USER STOP";break;}
         if(!timed_run && search_used(now)>=search_limit()) {message="TIME LIMIT";break;}
-        if(fw_motion_fault()) {fw_last_stop_code=(unsigned)fw_motion_fault();
-            message=fw_motion_fault()==2?"EARLY OBSTACLE":"SENSOR OR TIMEOUT";break;}
+        if(fw_motion_fault()) {
+            if(!timed_run && state && !turning && fw_motion_fault()==2 && recoveries<4 &&
+               !recover_front(&pose,segment,moving)) {
+                ++recoveries;segment=pose;displayed_pose=pose;stopped=hal_os_get_systicks();
+                state=turning=previewed=returning=certified=mismatch=in_window=0;
+                moving=stable=0;seen=0;prepared=-1;continue;
+            }
+            fw_last_stop_code=(unsigned)fw_motion_fault();
+            message=fw_cancel_pressed()?"USER STOP":fw_motion_fault()==1?"SENSOR OR TIMEOUT":"EARLY OBSTACLE";break;
+        }
         if(now-ui_time>=80) {
             nm_pose_t visual=pose;
             if(state && !turning) {
@@ -465,11 +529,11 @@ static int execute(int timed_run,int fresh)
         if(window && !in_window)stable=0;
         in_window=window;
         if(scan_ready) {
-            seen=scan.sequence;uint8_t value=observation(scan.filtered);
+            seen=scan.sequence;uint8_t value=observation(scan.filtered & (scan.raw | (uint8_t)~(SENSOR_F10_POS|SENSOR_F5_POS)));
             stable=value==candidate?stable+1:1;candidate=value;
         }
         if(state && fw_motion_busy()) {
-            if(!turning && !previewed && scan_ready && stable>=2 &&
+            if(!turning && !previewed && scan_ready && stable>=3 &&
                fw_motion_travelled_um()>=(int32_t)moving*pitch-preview && preview>0) {
                 nm_pose_t destination=segment;advance(&destination,moving);
                 if(!observe_pose(&destination,candidate,&pose,&segment)) {
@@ -492,12 +556,17 @@ static int execute(int timed_run,int fresh)
             displayed_pose=pose;moving=0;turning=0;state=0;
         }
         if(!previewed) {
-            if(!scan_ready || stable<2 || now-stopped<30) {__WFI();continue;}
+            if(!scan_ready || stable<3 || now-stopped<30) {__WFI();continue;}
             nm_pose_t target=pose;
             if(observe_pose(&target,candidate|(fw_motion_wall_arrival()?1:0),&pose,&segment)) {
                 if(!mismatch) {mismatch=1;mismatch_since=now;}
                 if(now-mismatch_since<150) {__WFI();continue;}
-                message="MAP CONFLICT";fw_last_stop_code=3;break;
+                nm_map_t corrected=maze;
+                uint8_t walls=candidate|(fw_motion_wall_arrival()?1:0);
+                if(!timed_run && recoveries<4 && (walls&1) &&
+                   !missed_front(&corrected,pose) && !nm_observe(&corrected,pose,walls)) {
+                    maze=corrected;++recoveries;returning=certified=0;
+                } else {message="MAP CONFLICT";fw_last_stop_code=3;break;}
             }
             pose=target;mismatch=0;
             prepared=plan_from(pose,timed_run,&returning,&certified,&route,&message);

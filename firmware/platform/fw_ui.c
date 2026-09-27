@@ -20,7 +20,12 @@ static void line(int x,int y,int xx,int yy,int dashed)
 static void rotate(int *x,int *y,unsigned heading)
 {int a=*x,b=*y;switch(heading%4){case 1:*x=-b;*y=a;break;case 2:*x=-a;*y=-b;break;case 3:*x=b;*y=-a;break;default:break;}}
 static void band(int x,int y,unsigned w,unsigned h,int active)
-{if(active)ssd1306FillRect(x,y,w,h);else ssd1306DrawRect(x,y,w,h);}
+{
+    if(active) {ssd1306FillRect(x,y,w,h);return;}
+    /* Inactive telemeters: a one-pixel dotted centreline. */
+    if(w>=h)for(unsigned i=0;i<w;i+=3)ssd1306DrawPixel(x+i,y+h/2);
+    else for(unsigned i=0;i<h;i+=3)ssd1306DrawPixel(x+w/2,y+i);
+}
 void fw_ui_maze(const nm_map_t *m,nm_pose_t p,const char *status,unsigned speed,uint32_t ms,uint8_t sensors)
 {
     (void)speed;(void)ms;

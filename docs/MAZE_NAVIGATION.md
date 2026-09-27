@@ -8,7 +8,8 @@
   coin ni cap à saisir. La direction initiale correspond au haut de l'écran.
 - Le départ avec la main devant F10 puis son retrait est conservé.
 - Exploration : carte plein écran, zoom 16 pixels/cellule, cadrage suivant le robot.
-  Pointillés : murs encore inconnus. Les bandes pleines indiquent une détection.
+  Pointillés dans la carte : murs encore inconnus. Sur le pourtour, les bandes
+  pleines indiquent une détection ; sans détection, un pointillé fin de 1 pixel.
   F10 est en haut à gauche, F5 en haut à droite. Sur les côtés, 10 cm en haut
   (bande longue), 5 cm plus bas (bande courte).
 - À la fin, même en cas d'erreur : vue générale initiale, Escape pour changer le
@@ -72,7 +73,8 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   les procédures de calibration gardent leurs rotations de référence intactes.
 - L'observation de la cellule suivante commence uniquement dans une fenêtre
   calculée à partir du seuil frontal, des offsets latéraux, du filtrage, de la
-  vitesse et d'une marge de placement. Deux scans distincts stables **dans cette
+  vitesse et d'une marge frontale de 20 mm, augmentée de la dispersion mesurée.
+  Trois scans distincts stables **dans cette
   fenêtre** sont nécessaires. Si la décision est tout droit, le budget moteur
   est prolongé avant le centre, sans arrêter les timers ni réinitialiser le
   contrôleur. Les portions déjà connues sont regroupées en une commande.
@@ -84,6 +86,34 @@ les erreurs observables aux murs et poteaux ; un dérapage arbitraire dans une
 zone sans référence n'est pas mesurable. Les essais logiciels vérifient les
 signes, limites, transitions, arrêts et corrections dans un modèle. La stabilité
 mécanique et l'adhérence doivent être vérifiées sur le robot avant une course rapide.
+
+## Mur frontal détecté tardivement
+
+L'absence de mur exige que F10 **et** F5 soient libres, en brut et en filtré.
+La fenêtre anticipée est plus tardive pour éviter de décider juste au seuil F10.
+La prolongation tout droit reste possible sans arrêt au centre.
+
+En **exploration uniquement**, un arrêt F5 peut être récupéré si :
+
+- la calibration des murs est valide et la position d'arrêt correspond à un
+  seuil F5 de mur de cellule, avec une tolérance de ±15 mm ;
+- trois scans distincts confirment F5 en brut et en filtré, sous 200 ms ;
+- la cellule de l'autre côté du mur n'a pas déjà été visitée ;
+- moins de quatre corrections ont été effectuées pendant cette exploration.
+
+Le robot recule à 80 mm/s vers le dernier centre dépassé, sur le trajet qu'il
+vient de parcourir (au maximum une cellule). À la fin du recul, les deux faces
+du mur sont corrigées dans la carte, puis le trajet est recalculé. La position
+est mémorisée dès l'arrêt des moteurs ; l'attente de confirmation n'ajoute pas
+une distance fictive. Escape et le contrôle de fraîcheur des capteurs restent
+actifs. Si le mur apparaît alors que le robot est déjà arrêté au centre, seule
+la carte est corrigée après confirmation et vérification des côtés.
+
+Une position incohérente, une détection non confirmée, un passage déjà visité
+ou une calibration absente maintiennent l'arrêt. Pendant un **run**, il n'y a
+ni recul automatique ni correction de carte : l'obstacle arrête le parcours.
+Ces comportements sont testés en simulation ; leur précision dépend encore
+du glissement et des mesures physiques du robot.
 
 ## Sauvegardes
 

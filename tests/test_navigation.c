@@ -27,7 +27,8 @@ static nm_pose_t physical,destination;
 static uint32_t now,deadline,move_started;
 static nm_pose_t segment_start;
 static unsigned moving_cells,extensions;
-static int rotating;
+static int rotating,backing,recovered,confirm_missing;
+static int32_t fault_travel;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
@@ -57,7 +58,10 @@ int fw_store_save(const fw_flash_t *f,uint32_t schema,const void *data,size_t si
 int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
 {
     nm_pose_t sensed=physical;
-    if(busy && !rotating) {
+    if(stopped==2 && inject_obstacle==2) {
+        sensed=segment_start;sensed.y+=2;
+    }
+    if(busy && !rotating && !backing) {
         sensed=segment_start;
         unsigned steps=((now-move_started)*179+39000)/179000;
         if(steps>moving_cells)steps=moving_cells;
@@ -70,15 +74,21 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
     if(wall & 1u<<physical.heading) bits &= ~SENSOR_F10_POS;
     if(wall & 1u<<((physical.heading+3)%4)) bits &= ~SENSOR_L10_POS;
     if(wall & 1u<<((physical.heading+1)%4)) bits &= ~SENSOR_R10_POS;
+    if(inject_obstacle==2 && !recovered && sensed.x==0 && sensed.y==2 && physical.heading==NM_NORTH)
+        bits|=SENSOR_F10_POS; /* F10 misses the wall throughout the preview. */
+    if(inject_obstacle==4 && busy && !rotating && sensed.x==0 && sensed.y==2 &&
+       physical.heading==NM_NORTH && (now-move_started)*179<336000)
+        bits|=SENSOR_F10_POS; /* Late trigger, 22 mm before centre: old preview was too early. */
+    if(stopped==2 && inject_obstacle==2 && !confirm_missing)bits&=~SENSOR_F5_POS;
     if(now<300) bits &= ~SENSOR_F10_POS; /* The user's hand at the start. */
     *s=(hal_sensor_snapshot){now,now/10+5,bits,bits}; return 1;
 }
 unsigned fw_motion_speed(void) {return 120;}
-int32_t fw_motion_travelled_um(void) {return rotating?0:(int32_t)(now-move_started)*179;}
+int32_t fw_motion_travelled_um(void) {return stopped==2?fault_travel:rotating?0:(int32_t)(now-move_started)*179;}
 int fw_motion_extend(unsigned cells,int accept) {
     assert(busy && !rotating && cells==1);++extensions;++moving_cells;
     int c=destination.y*NM_SIDE+destination.x;
-    assert(!(ground.cell[c].walls&(1u<<destination.heading)));
+    assert((inject_obstacle==2 && !recovered) || !(ground.cell[c].walls&(1u<<destination.heading)));
     c=nm_next(&ground,c,destination.heading);assert(c>=0);
     destination.x=c%NM_SIDE;destination.y=c/NM_SIDE;deadline+=1000;
     wall_arrival=accept && !!(ground.cell[c].walls&(1u<<destination.heading));return 0;
@@ -86,7 +96,15 @@ int fw_motion_extend(unsigned cells,int accept) {
 void fw_ui_map_progress(int p) {(void)p;}
 void fw_ui_map_view(unsigned z,int x,int y) {(void)z;(void)x;(void)y;}
 void fw_ui_result(const char *s,uint32_t a,uint32_t b,unsigned p) {(void)s;(void)a;(void)b;(void)p;}
-void fw_motion_init(void) { busy=stopped=wall_arrival=0; }
+void fw_motion_init(void) { busy=stopped=wall_arrival=backing=0; }
+int fw_motion_obstacle_backoff(uint32_t um)
+{
+    assert(stopped==2 && inject_obstacle==2 && !recovered);
+    assert(um>160000 && um<179000); /* Return from just before centre 2 to centre 1. */
+    destination=segment_start;destination.y+=1;
+    busy=backing=1;rotating=0;stopped=0;deadline=now+1000;recovered=1;
+    return 0;
+}
 void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 { applied_pitch=pitch;(void)front;(void)inner; }
 void fw_motion_corner_profiles(const fw_corner_data_t *l,const fw_corner_data_t *r) {(void)l;(void)r;}
@@ -127,11 +145,13 @@ void fw_ui_maze(const nm_map_t *m,nm_pose_t pose,const char *status,unsigned spe
 void fw_test_idle(void)
 {
     now+=10; assert(now<200000);
-    if(busy && !rotating && inject_obstacle && moves==1 && now-move_started>=500) {busy=0;stopped=2;}
+    if(busy && !rotating && !backing && (inject_obstacle==1 || inject_obstacle==2) && !recovered && moves==1 &&
+       now-move_started>=(inject_obstacle==2?1950u:500u)) {
+        fault_travel=(int32_t)(now-move_started)*179;busy=0;stopped=2;
+    }
     if(busy && now>=deadline) {
         busy=0;
-        if(inject_obstacle && moves==1 && !rotating) stopped=2;
-        else physical=destination;
+        physical=destination;backing=0;
     }
     if(!strcmp(last_status,"OPTIMAL PATH") || !strcmp(last_status,"EARLY OBSTACLE") || !strcmp(last_status,"GOAL FOUND")) {
         if(ack++<90) test_gpioc.IDR &= ~(1u<<12);
@@ -151,7 +171,7 @@ static void scenario(int obstacle)
     edge(0,NM_NORTH);edge(16,NM_NORTH);edge(32,NM_EAST);edge(33,NM_EAST);
     edge(34,NM_EAST);edge(34,NM_NORTH);edge(35,NM_NORTH);edge(50,NM_EAST);
     now=moves=turns=wall_arrivals=draws=saves=ack=extensions=0; saved_size=0;
-    busy=stopped=0; inject_obstacle=obstacle; last_status[0]=0;
+    busy=stopped=backing=recovered=0;confirm_missing=obstacle==3; inject_obstacle=obstacle==3?2:obstacle; last_status[0]=0;
     physical=(nm_pose_t){0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
@@ -170,7 +190,9 @@ static void scenario(int obstacle)
     saves=0;
     int result=fw_app_discover();
     assert(saves==1);
-    if(!obstacle) {
+    if(obstacle==0 || obstacle==2 || obstacle==4) {
+        if(obstacle==2)assert(recovered);
+        else assert(!recovered);
         assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
         assert(physical.x==0 && physical.y==0 && physical.heading==0 && !strcmp(last_status,"OPTIMAL PATH"));
         assert(fw_app_ready() && fw_app_maze_count()==1);
@@ -185,6 +207,12 @@ static void scenario(int obstacle)
         assert(!fw_app_run() && !strcmp(last_status,"GOAL FOUND"));
         assert(moves<exploration_moves && moves<=2); /* Known straights are grouped, even at 260 mm/s. */
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
+        /* The same early obstacle is fatal in a timed run: no map rewrite/backoff. */
+        assert(!fw_app_maze_load(0));physical=(nm_pose_t){0,0,NM_NORTH};
+        now=moves=turns=ack=extensions=0;last_status[0]=0;test_gpioc.IDR=0xffff;
+        inject_obstacle=1;recovered=0;
+        assert(fw_app_run()==-1 && fw_last_stop_code==2 && !recovered);
+        assert(!strcmp(last_status,"EARLY OBSTACLE"));
     } else {
         assert(result==-1 && fw_last_stop_code==2 && moves==1);
         assert(!fw_app_ready() && !fw_app_maze_count());
@@ -250,6 +278,7 @@ static void calibration_snapshot(void)
 }
 int main(void)
 {
-    scenario(0);scenario(1);puts("navigation: early obstacle remains an explicit stop");
+    scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);
+    puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
     calibration_snapshot(); return 0;
 }

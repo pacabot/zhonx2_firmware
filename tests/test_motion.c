@@ -77,9 +77,32 @@ int main(void)
     scan.raw &= ~SENSOR_F5_POS;
     tick(1); assert(fw_motion_fault()==2 && !fw_motion_busy() && disabled);
     assert(fw_motion_straight(1,100));
+    int32_t stopped_at=fw_motion_travelled_um();
+    for(int i=0;i<30;++i)tick(1);
+    assert(fw_motion_travelled_um()==stopped_at);
+    assert(fw_motion_obstacle_backoff(stopped_at+1));
+    assert(fw_motion_obstacle_backoff(1000)); /* Raw alone is insufficient. */
+    scan.filtered&=~SENSOR_F5_POS;
+    assert(!fw_motion_obstacle_backoff(stopped_at));
+    assert(commanded[0]<0 && commanded[0]==commanded[1]);
+    while(fw_motion_busy())tick(1);
+    assert(!fw_motion_fault() && abs(fw_motion_travelled_um()+stopped_at)<50);
+    assert(fw_motion_obstacle_backoff(0)); /* No arbitrary fault clearing. */
     setup(); assert(!fw_motion_straight(1,100));
     for(int i=0;i<60;++i) tick(0);
     assert(fw_motion_fault()==1 && !fw_motion_busy() && disabled);
+    assert(fw_motion_obstacle_backoff(0));
+    /* Retreat freshness watchdog and zero-distance acknowledgement. */
+    setup();assert(!fw_motion_straight_to(1,220,0));
+    while(fw_motion_travelled_um()<100000)tick(1);
+    scan.raw=scan.filtered=0x3f & ~SENSOR_F5_POS;tick(1);
+    assert(!fw_motion_obstacle_backoff(100000));
+    for(int i=0;i<60;++i)tick(0);
+    assert(fw_motion_fault()==1 && disabled && !fw_motion_busy());
+    setup();assert(!fw_motion_straight_to(1,220,0));
+    scan.raw=scan.filtered=0x3f & ~SENSOR_F5_POS;tick(1);
+    assert(fw_motion_fault()==2 && fw_motion_travelled_um()==0);
+    assert(!fw_motion_obstacle_backoff(0) && !fw_motion_busy() && !fw_motion_fault());
     /* Ordinary final-cell wall detection must allow the next turn. */
     setup(); assert(!fw_motion_straight_to(1,220,1));
     while(fw_motion_remaining()>25.f*2.f*(float)STEPS_PER_MM) tick(1);
