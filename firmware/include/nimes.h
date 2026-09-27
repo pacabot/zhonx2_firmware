@@ -23,6 +23,7 @@ int nm_neighbour(int cell, unsigned direction);
 int nm_edge(nm_map_t *map, int cell, unsigned direction, int wall);
 /* Explicit confirmed revision only; ordinary observations remain strict. */
 int nm_revise_edge(nm_map_t *,int cell,unsigned direction,int wall);
+int nm_revise_front_auto(nm_map_t *,nm_pose_t *,int wall);
 /* Nearest reachable visited cell with an internal wall not checked this pass. */
 int nm_recheck_route(const nm_map_t *,nm_pose_t,const uint8_t checked[NM_CELLS],
                      nm_route_t *,nm_pose_t *target);

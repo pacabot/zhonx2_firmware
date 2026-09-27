@@ -161,8 +161,8 @@ de la carte puis relance immédiatement le calcul et l'exploration. Une lecture
 latérale isolée ne suffit pas à effacer un mur.
 
 Au maximum **trois passes** des murs internes accessibles sont effectuées ; un
-même mur n'est vérifié qu'une fois par passe. Les limites extérieures restent
-fermées. Si les trois passes ne permettent pas de retrouver un passage, l'écran
+même mur n'est vérifié qu'une fois par passe. Les limites extérieures établies restent
+fermées ; une ouverture confirmée sur un bord provisoire décale la carte relative. Si les trois passes ne permettent pas de retrouver un passage, l'écran
 indique `CHECK LIMIT`. Annulation, capteurs périmés et limite de temps restent
 actifs. La garantie qu'un labyrinthe a une solution déclenche cette recherche,
 mais ne remplace jamais une mesure par une ouverture inventée. Les runs gardent

@@ -427,6 +427,14 @@ static void recheck_test(void)
     assert(!nm_revise_edge(&map,c,NM_NORTH,0));
     assert(!(map.cell[c].walls&1) && !(map.cell[c+NM_SIDE].walls&4) && nm_valid(&map));
     assert(nm_revise_edge(&map,0,NM_SOUTH,0)); /* Never open the exterior. */
+    nm_init_size(&map,9,1);p=(nm_pose_t){4,8,NM_NORTH};
+    assert(!nm_edge(&map,(p.y*NM_SIDE+p.x),NM_NORTH,1));
+    map.cell[(p.y*NM_SIDE+p.x)].visited=1;uint8_t checked[NM_CELLS]={0};
+    assert(!nm_recheck_route(&map,p,checked,&route,&target));
+    assert(target.heading==NM_NORTH && !route.length);
+    assert(!nm_revise_front_auto(&map,&p,0) && p.y==7 && nm_valid(&map));
+    assert(nm_next(&map,(p.y*NM_SIDE+p.x),NM_NORTH)>=0 && !(map.cell[(p.y*NM_SIDE+p.x)].walls&1));
+    puts("recheck: provisional border opens by rebasing without losing observations");
     puts("recheck: every internal wall once per pass, reciprocal confirmed reopening, exterior protected");
 }
 int main(void)

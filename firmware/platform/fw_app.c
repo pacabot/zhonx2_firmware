@@ -420,12 +420,8 @@ static int32_t preview_distance(unsigned speed)
     if(window<0)return 0;
     return window>40000?40000:window;
 }
-static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_t *segment)
+static void rebase_checks(int dx,int dy)
 {
-    nm_pose_t before=*target;
-    if(nm_observe_auto(&maze,target,walls))return -1;
-    int dx=(int)target->x-before.x,dy=(int)target->y-before.y;
-    pose->x+=dx;pose->y+=dy;segment->x+=dx;segment->y+=dy;
     if((dx || dy) && confirmation_pass) {
         uint8_t shifted[NM_CELLS]={0};
         for(unsigned y=0;y<nm_size(&maze);++y)for(unsigned x=0;x<nm_size(&maze);++x) {
@@ -435,6 +431,14 @@ static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_
         }
         memcpy(rechecked,shifted,sizeof rechecked);
     }
+}
+static int observe_pose(nm_pose_t *target,uint8_t walls,nm_pose_t *pose,nm_pose_t *segment)
+{
+    nm_pose_t before=*target;
+    if(nm_observe_auto(&maze,target,walls))return -1;
+    int dx=(int)target->x-before.x,dy=(int)target->y-before.y;
+    pose->x+=dx;pose->y+=dy;segment->x+=dx;segment->y+=dy;
+    rebase_checks(dx,dy);
     return 0;
 }
 /* Explicit exploration-only correction. Ordinary observations keep rejecting
@@ -541,7 +545,7 @@ static int choose_conflict(nm_pose_t p,uint8_t observed,nm_pose_t *target)
     const unsigned dirs[]={p.heading,(p.heading+3)%4,(p.heading+1)%4};
     for(unsigned i=0;i<3;++i) {
         unsigned bit=1u<<dirs[i];
-        if(nm_next(&maze,cell(p),dirs[i])>=0 && (maze.cell[cell(p)].known&bit) &&
+        if((nm_next(&maze,cell(p),dirs[i])>=0 || !(maze.axes&(dirs[i]%2?1:2))) && (maze.cell[cell(p)].known&bit) &&
            !(rechecked[cell(p)]&bit) && !!(maze.cell[cell(p)].walls&bit)!=!!(observed&(1u<<i))) {
             *target=p;target->heading=dirs[i];return 0;
         }
@@ -645,7 +649,10 @@ static int execute(int timed_run,int fresh)
                 else {
                     if(!scan_ready || stable<5 || now-stopped<60) {__WFI();continue;}
                     int wall=!!(candidate&1);
-                    if(nm_revise_edge(&maze,cell(pose),pose.heading,wall)) {message="MAP CONFLICT";break;}
+                    nm_pose_t before=pose;
+                    if(nm_revise_front_auto(&maze,&pose,wall)) {message="MAP CONFLICT";break;}
+                    int dx=(int)pose.x-before.x,dy=(int)pose.y-before.y;
+                    segment.x+=dx;segment.y+=dy;rebase_checks(dx,dy);
                     checked_front(pose);checking=0;returning=certified=mismatch=0;
                     /* Only the frontal remeasurement can revise a wall. Side
                      * readings after a bad approach must not stop recovery. */

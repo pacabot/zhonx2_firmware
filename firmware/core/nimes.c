@@ -66,13 +66,13 @@ int nm_recheck_route(const nm_map_t *m,nm_pose_t p,const uint8_t checked[NM_CELL
     uint8_t goals[NM_CELLS]={0};
     for(int c=0;c<NM_CELLS;++c)if(m->cell[c].visited)
         for(unsigned d=0;d<4;++d)
-            if(nm_next(m,c,d)>=0 && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d)))goals[c]=1;
+            if((nm_next(m,c,d)>=0 || !(m->axes&(d%2?1:2))) && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d)))goals[c]=1;
     if(nm_route(m,p,goals,0,route))return -1;
     int c=p.y*NM_SIDE+p.x;
     for(unsigned i=0;i<route->length;++i)c=nm_next(m,c,route->direction[i]);
     for(unsigned i=0;i<4;++i) {
         unsigned d=(p.heading+i)%4;
-        if(nm_next(m,c,d)>=0 && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d))) {
+        if((nm_next(m,c,d)>=0 || !(m->axes&(d%2?1:2))) && (m->cell[c].walls&(1u<<d)) && !(checked[c]&(1u<<d))) {
             *target=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,d};return 0;
         }
     }
@@ -283,5 +283,18 @@ int nm_observe_auto(nm_map_t *m,nm_pose_t *pose,uint8_t walls)
         if(shift(&copy,&p,dx,dy))return -1;
     }
     if(nm_observe(&copy,p,walls) || anchor(&copy,&p))return -1;
+    *m=copy;*pose=p;return 0;
+}
+
+int nm_revise_front_auto(nm_map_t *m,nm_pose_t *pose,int wall)
+{
+    nm_map_t copy=*m;nm_pose_t p=*pose;unsigned d=p.heading;
+    if(d>3 || p.x>=copy.side || p.y>=copy.side)return -1;
+    if(!wall && nm_next(&copy,p.y*NM_SIDE+p.x,d)<0) {
+        if(copy.axes&(d%2?1:2))return -1;
+        int dx=d==1?-1:d==3?1:0,dy=d==0?-1:d==2?1:0;
+        if(shift(&copy,&p,dx,dy))return -1;
+    }
+    if(nm_revise_edge(&copy,p.y*NM_SIDE+p.x,d,wall) || anchor(&copy,&p))return -1;
     *m=copy;*pose=p;return 0;
 }
