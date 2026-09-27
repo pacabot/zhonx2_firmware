@@ -4,7 +4,7 @@
 
 La mesure passe par le pont diviseur de la carte, PA4 / ADC1 canal 4.
 Les anciens seuils ADC ne suffisent pas à connaître son rapport réel.
-La jauge affiche donc `?` tant qu'une référence n'a pas été enregistrée.
+La jauge affiche donc `--%` dans les menus tant qu'une référence n'a pas été enregistrée.
 
 1. Robot immobile, relever la tension du pack au multimètre.
 2. Ouvrir **Hardware → Battery**. Vérifier que l'ADC n'est ni nul ni saturé.
@@ -25,12 +25,15 @@ La tension cible de la ST-Link (~3,3 V) n'est pas celle du pack.
   sans mouvement détecté. Ce délai réduit les transitoires ; il ne garantit pas
   une relaxation électrochimique complète.
 - Pendant les mouvements, conservation du dernier pourcentage au repos ; après
-  le démarrage, `?` jusqu'à la première estimation valide.
+  le démarrage, `--%` jusqu'à la première estimation valide.
 - Courbe indicative : 8,40 V → 100 %, 8,00 V → 80 %, 7,80 V → 70 %,
   7,60 V → 40 %, 7,40 V → 15 %, 7,00 V → 5 %, 6,60 V → 0 %.
   Interpolation entre points et hystérésis d'affichage de deux points de pourcentage.
-- L'écran Battery indique la tension convertie et `SOC: ~…%` ; l'icône a cinq barres.
-- ADC absent ou proche de la saturation : `?`, jamais interprété comme une batterie vide.
+- L'écran Battery indique la tension convertie et `SOC: ~…%`. L'icône présente
+  un remplissage continu, avec le pourcentage à côté dans les menus de sélection.
+  Sur les diagnostics, l'icône seule conserve la place du titre de la mesure.
+- ADC absent ou proche de la saturation : `--%` (ou `--` sur les diagnostics),
+  jamais interprété comme une batterie vide.
 
 Cette courbe n'est pas une caractérisation du pack du robot. Température,
 vieillissement, charge électrique et déséquilibre des cellules influencent le

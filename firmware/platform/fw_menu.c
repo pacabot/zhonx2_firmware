@@ -2,6 +2,7 @@
 #include "fw_app.h"
 #include "fw_hardware.h"
 #include "fw_battery.h"
+#include "fw_motion.h"
 #include <stdio.h>
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
@@ -26,6 +27,23 @@ static unsigned key(void)
     while(read_key()) __WFI();
     return k;
 }
+/* Menu-only screensaver. The wake-up key is consumed, never an action. */
+static int idle_wait(uint32_t *activity)
+{
+    uint32_t now=hal_os_get_systicks();
+    if(read_key() || fw_motion_busy()) {*activity=now;return 0;}
+    if((uint32_t)(now-*activity)<30000)return 0;
+    unsigned phase=0;uint32_t drawn=now;
+    fw_ui_idle(phase++);
+    while(!read_key() && !fw_motion_busy()) {
+        now=hal_os_get_systicks();
+        if((uint32_t)(now-drawn)>=2000) {fw_ui_idle(phase++);drawn=now;}
+        __WFI();
+    }
+    while(read_key())__WFI();
+    *activity=hal_os_get_systicks();
+    return 1;
+}
 static int choose(const char *title,const card_t *items,unsigned count)
 {
     /* Consume the action that closed a child screen; one press means one Back. */
@@ -38,8 +56,9 @@ static int choose(const char *title,const card_t *items,unsigned count)
         }
     }
     fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
-    uint32_t refresh=hal_os_get_systicks();
+    uint32_t refresh=hal_os_get_systicks(),activity=refresh;
     for(;;) {
+        if(idle_wait(&activity))fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
         if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
         unsigned k=key();if(k==KEY_BACK) return -1;if(k==KEY_OK) return (int)i;
         if(k==KEY_UP || k==KEY_DOWN) {
@@ -57,7 +76,8 @@ static void notice(const char *first,const char *second)
 }
 static int confirm(const char *title)
 {
-    const card_t c[]={{"Cancel","",FW_ICON_REPORT},{"Confirm","",FW_ICON_REPORT}};
+    const char *action=!strcmp(title,"DELETE THIS MAZE?")?"Delete maze":"Bootloader";
+    const card_t c[]={{action,"Cancel",FW_ICON_REPORT},{action,"Confirm",FW_ICON_REPORT}};
     return choose(title,c,2)==1;
 }
 static void runs(void)
@@ -75,8 +95,10 @@ static void runs(void)
 static void library_menu(int deleting)
 {
     unsigned i=0,last_blink=2;
+    uint32_t activity=hal_os_get_systicks();
     if(!fw_app_maze_count()) {notice("No learned","maze saved");return;}
     while(fw_app_maze_count()) {
+        if(idle_wait(&activity))last_blink=2;
         if(i>=fw_app_maze_count()) i=0;
         unsigned blink=(hal_os_get_systicks()/500)%2;
         if(blink!=last_blink) {fw_ui_library(fw_app_maze(i),i,fw_app_maze_count(),blink);last_blink=blink;}
@@ -87,7 +109,7 @@ static void library_menu(int deleting)
             if(deleting && confirm("DELETE THIS MAZE?")) {
                 if(fw_app_maze_delete(i)) notice("Save failed","Kept maze");
             }
-            last_blink=2;
+            last_blink=2;activity=hal_os_get_systicks();
         }
         __WFI();
     }
@@ -126,8 +148,9 @@ static void settings_menu(void)
     for(;;) {
         int n=choose("SETTINGS",items,9);if(n<0)return;
         int old=*values[n],v=old;fw_ui_setting(n,v);
-        uint32_t refresh=hal_os_get_systicks();
+        uint32_t refresh=hal_os_get_systicks(),activity=refresh;
         for(;;) {
+            if(idle_wait(&activity))fw_ui_setting(n,v);
             if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
             unsigned k=key();if(k==KEY_BACK)break;
             if(k==KEY_OK) {
@@ -158,9 +181,11 @@ void fw_menu_battery_setup(void)
     fw_battery_reference_t ref=fw_battery_reference();
     unsigned mv=ref.pack_mv?ref.pack_mv:8400;
     while(read_key())__WFI();
+    uint32_t activity=hal_os_get_systicks();
     for(;;) {
+        (void)idle_wait(&activity);
         char value[16];snprintf(value,sizeof value,"%u.%02u V",mv/1000,(mv%1000)/10);
-        fw_ui_card("METER VOLTAGE / 2S",value,"",FW_ICON_SETTINGS,0,1);
+        fw_ui_card("METER VOLTAGE / 2S","Meter volts",value,FW_ICON_SETTINGS,0,1);
         fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
         unsigned k=key();
         if(k==KEY_BACK)return;

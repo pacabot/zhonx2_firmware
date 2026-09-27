@@ -6,6 +6,7 @@ enum { FW_ICON_MAZE, FW_ICON_CALIBRATE, FW_ICON_SETTINGS, FW_ICON_RUN, FW_ICON_R
 void fw_menu_run(void);
 void fw_ui_menu_refresh(void);
 void fw_ui_battery(void);
+void fw_ui_idle(unsigned phase);
 void fw_ui_header(const char *title);
 void fw_ui_hint(const char *text);
 void fw_menu_battery_setup(void);

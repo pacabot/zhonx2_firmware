@@ -3,12 +3,14 @@
 #include <stdio.h>
 #include <string.h>
 #include "fw_battery.h"
+static int battery_readout;
 void fw_ui_header(const char *title)
 {
-    ssd1306ClearRect(0,0,128,9);
-    char clipped[28];snprintf(clipped,sizeof clipped,"%.27s",title);
-    ssd1306DrawString(1,0,clipped,strlen(title)>17?&Font_3x6:&Font_5x8);
-    ssd1306DrawLine(0,8,127,8);
+    battery_readout=0;
+    ssd1306ClearRect(0,0,128,10);
+    char clipped[25];snprintf(clipped,sizeof clipped,"%.24s",title);
+    ssd1306DrawString(1,0,clipped,strlen(title)>15?&Font_3x6:&Font_5x8);
+    ssd1306DrawLine(0,10,127,10);
 }
 static void hint(unsigned x,unsigned width,const char *text)
 {
@@ -30,12 +32,20 @@ static void scroll(unsigned index,unsigned count)
 void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
-    ssd1306ClearRect(110,0,18,8);
-    ssd1306DrawRect(111,0,14,8);ssd1306FillRect(125,2,2,4);
-    if(b.sample_valid && b.soc_valid) {
-        unsigned bars=(b.percent+19)/20;
-        for(unsigned i=0;i<bars;++i)ssd1306FillRect(113+i*2,2,1,4);
-    } else ssd1306DrawString(116,1,"?",&Font_3x6);
+    unsigned left=battery_readout?80:98;
+    ssd1306ClearRect(left,0,128-left,10);
+    ssd1306DrawRect(106,0,20,10);ssd1306FillRect(126,3,2,4);
+    int valid=b.sample_valid && b.soc_valid;
+    if(valid && b.percent) {
+        unsigned width=(b.percent*16+99)/100;
+        ssd1306FillRect(108,2,width,6);
+    }
+    if(battery_readout) {
+        char value[8];
+        if(valid)snprintf(value,sizeof value,"%u%%",b.percent);
+        else snprintf(value,sizeof value,"--%%");
+        ssd1306DrawString(104-strlen(value)*6,1,value,&Font_5x8);
+    } else if(!valid)ssd1306DrawString(98,2,"--",&Font_3x6);
 }
 void fw_ui_menu_refresh(void) {fw_ui_battery();ssd1306Refresh();}
 /* Double-height 7x8 font: 7x16 glyphs, no hidden clipping or bitmap assets. */
@@ -56,7 +66,7 @@ static void small(unsigned x,unsigned y,const char *s) {
 }
 static void icon(unsigned type)
 {
-    unsigned x=2,y=25;
+    unsigned x=2,y=21;
     if(type==FW_ICON_MAZE) {
         ssd1306DrawRect(x,y,26,26); ssd1306DrawLine(x+8,y,x+8,y+17);
         ssd1306DrawLine(x+8,y+9,x+20,y+9); ssd1306DrawLine(x+17,y+9,x+17,y+26);
@@ -101,16 +111,17 @@ static void icon(unsigned type)
 }
 void fw_ui_card(const char *title,const char *first,const char *second,unsigned type,unsigned index,unsigned count)
 {
-    ssd1306ClearScreen();fw_ui_header(title);
+    (void)title; /* Category names are navigation state, not screen content. */
+    ssd1306ClearScreen();battery_readout=1;
     icon(type);scroll(index,count);
     int instruction=!strncmp(second,"OK:",3) || !strncmp(second,"LEFT:",5);
-    if(instruction) {large(33,27,first);fw_ui_hint(second);}
-    else {large(33,*second?21:30,first);if(*second)large(33,41,second);}
+    if(instruction) {large(33,24,first);fw_ui_hint(second);}
+    else {large(33,*second?15:25,first);if(*second)large(33,36,second);}
     fw_ui_menu_refresh();
 }
 void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int blink)
 {
-    char s[24];ssd1306ClearScreen();fw_ui_header("MAZE LIBRARY");scroll(index,count);
+    char s[24];ssd1306ClearScreen();battery_readout=1;scroll(index,count);
     for(unsigned c=0;c<NM_CELLS;++c) {
         unsigned x=(c%9)*6,y=9+(8-c/9)*6;
         for(unsigned d=0;d<4;++d) {
@@ -153,4 +164,35 @@ void fw_ui_setting(unsigned index,int value)
     else snprintf(s,sizeof s,"%d",value);
     large(59,20,s);small(59,40,index<5?"MM":index<7?"MM/S":"START");
     fw_ui_hint("UP/DN: EDIT  OK: SAVE");fw_ui_menu_refresh();
+}
+
+/* Original geometric lettering, drawn as strokes on the 128x64 OLED.
+ * Slight movement keeps the wordmark from remaining on the same pixels. */
+static void stroke(unsigned x,unsigned y,unsigned a,unsigned b,unsigned c,unsigned d)
+{
+    ssd1306DrawLine(x+a,y+b,x+c,y+d);
+    ssd1306DrawLine(x+a+1,y+b,x+c+1,y+d);
+    ssd1306DrawLine(x+a,y+b+1,x+c,y+d+1);
+}
+void fw_ui_idle(unsigned phase)
+{
+    unsigned x=6+(phase%5),y=20+((phase/5)%5);
+    ssd1306ClearScreen();battery_readout=1;
+    /* Z */
+    stroke(x,y,0,0,14,0);stroke(x,y,14,0,0,22);stroke(x,y,0,22,14,22);
+    x+=19; /* H */
+    stroke(x,y,0,0,0,22);stroke(x,y,14,0,14,22);stroke(x,y,0,11,14,11);
+    x+=19; /* Chamfered O */
+    stroke(x,y,3,0,11,0);stroke(x,y,11,0,14,3);stroke(x,y,14,3,14,19);
+    stroke(x,y,14,19,11,22);stroke(x,y,11,22,3,22);stroke(x,y,3,22,0,19);
+    stroke(x,y,0,19,0,3);stroke(x,y,0,3,3,0);
+    x+=19; /* N */
+    stroke(x,y,0,22,0,0);stroke(x,y,0,0,14,22);stroke(x,y,14,22,14,0);
+    x+=19; /* X */
+    stroke(x,y,0,0,14,22);stroke(x,y,14,0,0,22);
+    x+=23; /* Roman numeral II */
+    stroke(x,y,0,0,0,22);stroke(x,y,7,0,7,22);
+    ssd1306DrawLine(6+phase%5,y+29,111+phase%5,y+29);
+    ssd1306DrawLine(111+phase%5,y+29,115+phase%5,y+25);
+    fw_ui_menu_refresh();
 }

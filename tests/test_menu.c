@@ -9,6 +9,9 @@ GPIO_TypeDef test_gpioc;
 int fw_cal_nose_tenth_mm=470,fw_cal_width_tenth_mm=940,fw_cal_inner_mm=167,fw_cal_pitch_mm=179,fw_cal_post_mm=173;
 int fw_search_speed=220,fw_run_speed=260,fw_start_corner,fw_start_heading;
 static unsigned now,ready,explored,slow,loaded,preview;
+static unsigned idle_scenario,idle_frames,home_index;
+int fw_motion_busy(void) {return idle_scenario && now<10000;}
+void fw_ui_idle(unsigned phase) {(void)phase;assert(idle_scenario && now>=39999);++idle_frames;}
 static jmp_buf finish;
 static fw_saved_maze_t saved;
 unsigned long hal_os_get_systicks(void) { return now; }
@@ -18,6 +21,12 @@ static const unsigned events[]={12,12,12,8,10,12,12,8,8,13};
 void fw_test_idle(void)
 {
     ++now;
+    if(idle_scenario) {
+        test_gpioc.IDR=0xffff;
+        if(now>=43000)longjmp(finish,1);
+        if((now>=42000 && now<42100) || (now>=42500 && now<42550))test_gpioc.IDR&=~(1u<<10);
+        return;
+    }
     unsigned slot=now/120,phase=now%120;
     if(slot>=sizeof events/sizeof events[0]+1)longjmp(finish,1);
     test_gpioc.IDR=0xffff;
@@ -26,7 +35,8 @@ void fw_test_idle(void)
 }
 void fw_ui_card(const char *title,const char *a,const char *b,unsigned icon,unsigned i,unsigned n)
 {
-    (void)b;(void)icon;(void)i;
+    (void)b;(void)icon;
+    if(!strcmp(title,"ZHONX II"))home_index=i;
     if(!strcmp(title,"MAZE"))assert(n==(ready?5u:4u));
     if(!strcmp(title,"RUNS"))assert(ready);
     assert(strlen(a)<=11);
@@ -65,5 +75,10 @@ int main(void)
     test_gpioc.IDR=0xffff;
     if(!setjmp(finish))fw_menu_run();
     assert(explored==1 && slow==1 && loaded==1 && preview);
+    idle_scenario=1;now=0;test_gpioc.IDR=0xffff;
+    if(!setjmp(finish))fw_menu_run();
+    assert(idle_frames && home_index==1); /* Wake DOWN consumed; next DOWN acts. */
+    assert(explored==1 && slow==1 && loaded==1);
+    puts("idle: 30 seconds at rest, no sleep during motion, wake consumed, selection retained");
     puts("menu: joystick press/left/escape, gated runs, completed learning and direct library loading");
 }

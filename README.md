@@ -108,10 +108,18 @@ transactionnelles, le solveur Nîmes 9×9 et le pilotage asynchrone. Voir
 
 L'interface utilise une carte avec icône par écran et des caractères de 16 pixels
 pour l'action choisie. Haut/bas fait défiler ; droite ou appui central valide ;
-gauche du joystick revient ; Escape peut arrêter les mouvements. Le titre est
-séparé par une ligne et un ascenseur à droite indique la position dans la liste.
+gauche du joystick revient ; Escape peut arrêter les mouvements. Les menus de
+sélection affichent directement leur action, sans titre de catégorie en haut.
+Un ascenseur à droite indique la position dans la liste.
 Les consignes propres à une action apparaissent dans un cartouche inversé ;
 les menus ne répètent plus les commandes de navigation.
+
+Après **30 secondes sans interaction au repos** dans les menus de sélection,
+la bibliothèque ou l'édition des réglages, une veille affiche **ZHONX II** en
+lettrage géométrique dessiné pour l'OLED, légèrement déplacé toutes les deux
+secondes. Le premier appui réveille l'écran sans agir ; la sélection et la valeur
+en cours d'édition sont conservées. La veille n'est pas activée dans les procédures
+de déplacement, les calibrations, les tests matériels ou l'attente du top départ.
 
 - **Maze** : nouvelle exploration, bibliothèque, reprise ; runs proposés uniquement
   pour un apprentissage validé. Jusqu'à **8 labyrinthes**, avec aperçu du chemin
@@ -129,7 +137,7 @@ les menus ne répètent plus les commandes de navigation.
 L'icône batterie reste visible dans les menus et les écrans de calibration.
 La jauge **LiPo 2S** utilise une tension filtrée et une courbe approximative de
 charge au repos. Sans étalonnage ou si la mesure ADC est invalide, elle affiche
-**?**. Pour l'étalonner : **Hardware → Battery → OK**, robot immobile, saisir la
+**--%** dans les menus (**--** sur les écrans de diagnostic). Pour l'étalonner : **Hardware → Battery → OK**, robot immobile, saisir la
 tension du pack relevée au multimètre (pas la tension 3,3 V de la sonde), puis
 valider. Attendre au moins cinq secondes au repos avant d'enregistrer.
 La référence est sauvegardée avec les calibrations et conservée au flash normal.
