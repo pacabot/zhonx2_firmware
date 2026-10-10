@@ -50,34 +50,35 @@ Les motifs Z/O composés prennent la priorité sur leurs deux virages N ;
 ## Exploration puis trois runs
 
 Après un apprentissage certifié et le retour au départ, le labyrinthe est
-sauvegardé, puis le robot se recentre **au départ uniquement**. Une temporisation
-annulable de trois secondes (`ALIGN IN 3/2/1`) précède tout mouvement. Sur chaque
-axe disposant d’un mur connu et confirmé par F10 brut et filtré, il effectue un
-talonnage à 30 mm/s, borné à la distance centre–nez plus 20 mm. Il recule ensuite
-à 80 mm/s de la distance nez–centre calibrée. Les rotations utilisent leurs
-profils mesurés. Les coefficients de calibration ne sont pas réécrits.
-Il s'oriente ensuite vers le premier passage du chemin retenu.
+sauvegardé. Aucun appui contre les murs du départ n'a lieu avant les runs : le
+robot part de la position où il est revenu, ou de celle où on l'a posé. Il
+s'oriente seulement, hors chronomètre et à 120 mm/s, vers le premier passage du
+chemin retenu ; s'il doit pivoter, une temporisation annulable de trois secondes
+(`ALIGN IN 3/2/1`) précède la rotation.
 
 Le menu **Runs** permet de choisir librement **Run 1**, **Run 2** ou **Run 3**.
-Chaque écran propose une vitesse :
-120 mm/s, 300 mm/s, puis la valeur par défaut Fast run des Settings. Haut/bas
+Chaque écran propose une vitesse : la vitesse d'exploration des Settings
+(Explore), 300 mm/s, puis la valeur par défaut Fast run des Settings. Haut/bas
 ajuste la vitesse entre 20 et 1 500 mm/s ; OK arme le départ par la main devant
 F10 puis son retrait. Ces modifications restent temporaires : elles ne changent
 pas les Settings et ne sont pas enregistrées en flash.
 
 Après chaque arrivée, le temps est mémorisé en RAM, le robot revient par les
-passages connus à 120 mm/s, se replace au départ et charge directement le réglage du run suivant (1 → 2 → 3).
+passages connus à la vitesse d'exploration, se replace au départ et charge directement le réglage du run suivant (1 → 2 → 3).
 Après le troisième, le choix des runs réapparaît. Le lancement attend toujours
 OK puis le top départ par la main ; Retour permet de choisir un autre run.
-Le retour et le recentrage sont hors chronomètre. Une erreur ou une annulation
+Le retour et l'orientation au départ sont hors chronomètre. Une erreur ou une annulation
 ne passe jamais au suivant.
 Lorsqu'une carte est chargée depuis la bibliothèque, l'écran demande de placer
-le robot dans sa cellule de départ avant OK ; le recentrage précède l'armement.
+le robot dans sa cellule de départ, centré et aligné, avant OK ; l'orientation
+vers le premier passage précède l'armement.
 
 ## Trajectoires et accélération des runs
 
 **Run 1** parcourt les lignes droites groupées, puis s’arrête pour pivoter à
 chaque changement de direction. Aucune courbe, à l’aller comme au retour.
+Ses pivots tournent à la vitesse du run (roues bornées à 120–300 mm/s, loi
+d'accélération des runs) ; ceux du retour à la vitesse d'exploration.
 **Run 2 et Run 3** utilisent un parcours complet préparé avant mouvement. Les
 lignes droites et virages de 90° sont raccordés par des courbes de Bézier de
 cinquième degré, à courbure nulle aux deux extrémités. Deux virages consécutifs
@@ -161,12 +162,22 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   latéral fournissent un cycle complet de suivi. Le firmware estime progressivement
   le biais de rotation permanent des roues à partir de ces cycles et le corrige
   dans l'observateur. L'apprentissage est borné, exclut les transitions de porte,
-  les changements de capteur et les demi-cycles ; il est réinitialisé avec la
-  début d’une nouvelle session de mouvement ; il est conservé entre les segments
-  et les virages d’un même run. Deux positions optiques successives recalculent aussi le
-  cap à partir du trajet et de la différence de pas. Les bornes latérales sont
-  projetées pendant le retard du filtrage et le gain de cap est réduit à haute
-  vitesse. Ce mécanisme vise les petites dissymétries persistantes,
+  les changements de capteur et les demi-cycles ; au début de chaque session de
+  mouvement il repart de la valeur mesurée par la calibration `Wall follow`
+  (zéro sans calibration) ; il est conservé entre les segments et les virages
+  d’un même run. Deux positions optiques successives recalculent aussi le
+  cap à partir du trajet et de la différence de pas. Après une remise à zéro
+  (départ, sortie de courbe, porte, changement de seuil suivi), la position
+  estimée sert d'ancre provisoire : le premier croisement corrige déjà le cap,
+  de 30 mrad au plus et seulement après 100 mm, au lieu d'attendre un second
+  croisement. Avec un biais calibré par `Wall follow`, le premier croisement
+  après un départ, un pivot ou une sortie de courbe reprend plutôt le cap des
+  pas depuis la remise à zéro : rester d'un même côté était un décalage (l'erreur
+  longitudinale de la ligne précédente), pas une erreur de cap ; seule la part
+  qu'une erreur de biais de 20 mrad/m expliquerait reste à l'observateur. Sans
+  calibration, rien ne change. Les bornes latérales sont projetées pendant le retard du filtrage ;
+  le gain de cap est constant, la réponse étant spatiale avec des moteurs pas à
+  pas. Ce mécanisme vise les petites dissymétries persistantes,
   pas une perte d'adhérence importante. Tests : couloirs simulés de 20 m,
   200/1 000/1 500 mm/s, retard de deux à trois scans, dissymétrie ±1 %, décalage initial et
   perturbation de cap.
@@ -174,15 +185,19 @@ jour transactionnellement : une contradiction n'écrase pas les murs acquis.
   changements d'état autour du seuil réel, au lieu de considérer toute une
   demi-cellule comme parfaitement centrée. La position suivie peut différer du
   centre de quelques millimètres selon le montage des capteurs.
-- La durée et la distance d’une détection 5 cm persistante augmentent doucement
-  la consigne de correction (20 à 30 mrad), selon la plage latérale calibrée et
-  sa dispersion. Une porte ou un arrêt remet ce cumul à zéro. Il n’y a plus de
+- La distance parcourue d'un même côté du seuil suivi, quel que soit ce côté,
+  augmente doucement la consigne de retour (20 à 30 mrad), selon la plage
+  latérale calibrée et sa dispersion : un état binaire constant ne distingue pas
+  un décalage d'une erreur de cap, y rester révèle l'un ou l'autre. Un
+  croisement, une porte ou un arrêt remet ce cumul à zéro. Il n’y a plus de
   plafond à 80 mm/s, de recherche séparée de seuil, ni d’arrêt `SIDE ALIGN FAILED`
   à l’entrée d’un virage. La commande différentielle corrige pendant la marche ;
   les protections frontales et de fraîcheur des capteurs restent actives.
 - En sortie de courbe, le résidu de cap est corrigé dès le premier tick, sans
   attendre le prochain scan IR. Sur la première demi-cellule, la correction peut
-  varier de 16 ‰ par scan (8 ‰ ensuite), et une paire de poteaux corrige le cap
+  varier de 16 ‰ par scan (8 ‰ ensuite) jusqu'à 220 mm/s, et proportionnellement
+  au trajet du scan au-delà (une limite par scan rendait la boucle 7 fois plus
+  lente par millimètre à 1 500 mm/s), et une paire de poteaux corrige le cap
   avec davantage de poids. Le cap est aussi corrigé à 1 kHz entre deux scans,
   sans ajouter deux fois la correction déjà intégrée par l’observateur.
 - Sur un mur 10 cm confirmé en brut et en filtré, deux lectures brutes cohérentes
@@ -232,14 +247,37 @@ mécanique et l'adhérence doivent être vérifiées sur le robot avant une cour
 Le recalage se fait pendant les lignes droites : estimation latérale et du cap
 avec les seuils tout ou rien calibrés, références longitudinales aux poteaux et
 aux fronts F10/F5. Il n'y a plus de recherche de seuil par avance/recul ni de
-rotation vers les murs aux centres ou avant une confirmation. La préparation
-au départ entre deux runs est la seule étape de recentrage dédiée.
+rotation vers les murs aux centres ou avant une confirmation, ni d'appui contre
+les murs du départ avant les runs.
 Les rotations nécessaires au trajet et à la vérification frontale restent présentes.
 
-Quand les deux calibrations de portes sont disponibles, la vitesse effective
-d'exploration est plafonnée à leur domaine mesuré (220 mm/s), même si Settings
-indique 300. Cela permet l'anticipation et les corrections aux poteaux ; les
-runs conservent leur vitesse configurée. Une ligne droite décidée dans la fenêtre
+La vitesse d'exploration se règle de 20 à 1 500 mm/s (pas de 10 jusqu'à 300,
+puis de 50), comme Fast run. Les décalages de portes ne sont mesurés que
+jusqu'à 220 mm/s : au-delà, la fenêtre d'observation reste celle de 220 mm/s,
+raccourcie à la distance de freinage depuis 220 mm/s à l'accélération de la
+ligne droite (22,5 mm à 220 mm/s, 13 mm à 600, 6,5 mm à 1 500). Une
+cellule inconnue est engagée seule, le robot freine vers son centre et traverse
+donc la fenêtre à 220 mm/s au plus (à un pas de rampe près) : l'anticipation et
+les corrections aux poteaux restent actives. Si les trois scans concordants
+n'ont pas eu lieu dans la fenêtre, le robot s'arrête au centre et observe à
+l'arrêt, comme avant.
+
+Les lignes droites d'exploration (et `MOVE` d'Ariane, Run lent) suivent la loi
+d'accélération des runs, `600 + 2 × vitesse` : 1 040 mm/s² à 220, 1 800 à 600,
+3 600 à 1 500 (800 fixes auparavant). Estimations (fenêtre de 19,5 mm de la
+calibration du 27 septembre) :
+
+| Vitesse réglée | Cellule inconnue | 5 cellules connues |
+|---|---|---|
+| 220 mm/s | 0,81 s (0,82 avant) | 4,21 s (4,25) |
+| 300 mm/s | 0,61 s | 3,17 s |
+| 600 mm/s | 0,43 s | 1,78 s |
+| 1 000 mm/s | 0,38 s | 1,25 s |
+| 1 500 mm/s | 0,34 s | 0,99 s |
+
+Avec 800 mm/s² fixes, une cellule inconnue ne descendait pas sous 0,60 s,
+quelle que soit la vitesse réglée.
+Une ligne droite décidée dans la fenêtre
 d'observation est prolongée sans arrêt du contrôleur. Les changements de direction
 et les mesures encore incertaines peuvent demander un arrêt.
 

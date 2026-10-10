@@ -4,6 +4,7 @@
 #include <string.h>
 #include "fw_battery.h"
 #include "fw_display.h"
+#include "fw_link.h"
 #define large fw_display_large
 void fw_ui_header(const char *title)
 {
@@ -22,9 +23,22 @@ static void hint(unsigned x,unsigned width,const char *text)
 }
 void fw_ui_hint(const char *text) {hint(0,123,text);}
 #define scroll fw_display_scroll
+/* Bluetooth rune, 7x11 at x 86: outline when connected, filled box when an
+ * Ariane session runs. Nothing when no phone or Mac is connected. */
+static void bluetooth_icon(void)
+{
+    ssd1306ClearRect(84,0,11,13);
+    if(!fw_link_connected())return;
+    const unsigned x=86,y=1;
+    ssd1306DrawLine(x+3,y,x+3,y+10);
+    ssd1306DrawLine(x+3,y,x+6,y+3);ssd1306DrawLine(x+6,y+3,x,y+8);
+    ssd1306DrawLine(x+3,y+10,x+6,y+7);ssd1306DrawLine(x+6,y+7,x,y+2);
+    if(fw_link_session())ssd1306InvertArea(84,0,11,13);
+}
 void fw_ui_battery(void)
 {
     fw_battery_poll();fw_battery_status_t b=fw_battery_status();
+    bluetooth_icon();
     char value[8];ssd1306ClearRect(96,0,32,13);
     if(b.sample_valid && b.soc_valid)snprintf(value,sizeof value,"%u%%",b.percent);
     else snprintf(value,sizeof value,"--%%");
@@ -116,7 +130,7 @@ void fw_ui_library(const fw_saved_maze_t *m,unsigned index,unsigned count,int bl
 void fw_ui_setting(unsigned index,int value)
 {
     static const char *const names[]={"Axle-nose","Width","Cell clear","Cell pitch","Post center",
-        "Explore","Fast run","Maze size"};
+        "Explore","Fast run","Maze size","Sound"};
     char s[24];ssd1306ClearScreen();fw_ui_header(names[index]);
     ssd1306DrawRect(5,14,40,39);ssd1306DrawRect(17,25,16,16);
     ssd1306FillRect(15,31,2,6);ssd1306FillRect(33,31,2,6);
@@ -125,12 +139,23 @@ void fw_ui_setting(unsigned index,int value)
     else if(index==4) {ssd1306FillRect(3,49,5,5);ssd1306DrawLine(12,16,12,51);ssd1306DrawLine(9,16,15,16);ssd1306DrawLine(9,51,15,51);}
     else if(index<4) {ssd1306DrawLine(index==2?7:5,21,index==2?43:45,21);ssd1306DrawLine(7,18,7,24);ssd1306DrawLine(43,18,43,24);}
     else if(index<7) {ssd1306DrawLine(25,40,25,18);ssd1306DrawLine(20,23,25,18);ssd1306DrawLine(25,18,30,23);}
-    else {ssd1306ClearRect(4,14,43,39);
+    else if(index==7) {ssd1306ClearRect(4,14,43,39);
         for(unsigned j=0;j<=3;++j) {ssd1306DrawLine(5+j*12,16,5+j*12,52);ssd1306DrawLine(5,16+j*12,41,16+j*12);}}
+    else {
+        /* Loudspeaker and three bars, filled up to the volume level. */
+        ssd1306ClearRect(4,15,43,38);
+        ssd1306FillRect(7,29,5,8);
+        for(unsigned i=0;i<6;++i)ssd1306DrawLine(12+i,29-i,12+i,36+i);
+        for(int level=1;level<=3;++level) {
+            unsigned h=4+level*6,x=20+level*6;
+            if(level<=value)ssd1306FillRect(x,33-h/2,3,h);else ssd1306DrawRect(x,33-h/2,3,h);
+        }
+    }
     if(index<2) snprintf(s,sizeof s,"%d.%d",value/10,value%10);
     else if(index==7) snprintf(s,sizeof s,"%dx%d",value,value);
+    else if(index==8) snprintf(s,sizeof s,"%s",(const char *const[]){"OFF","LOW","MED","HIGH"}[value&3]);
     else snprintf(s,sizeof s,"%d",value);
-    large(index==7?49:59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":"CELLS");
+    large(index==7?49:59,20,s);fw_display_text(59,38,index<5?"MM":index<7?"MM/S":index==7?"CELLS":"VOLUME");
     fw_ui_hint("UP/DN  OK:SAVE");fw_ui_menu_refresh();
 }
 

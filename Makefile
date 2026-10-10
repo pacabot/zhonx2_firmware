@@ -14,12 +14,14 @@ SOURCES += pacabot/src/app/menu_colin.c pacabot/src/app/bezier_curves.c \
  pacabot/src/app/solverMaze/solverMaze.c pacabot/src/app/solverMaze/run.c \
  pacabot/src/app/solverMaze/user_interface.c
 SOURCES += $(wildcard firmware/core/*.c firmware/platform/*.c)
+# Ariane Link modules shared verbatim with ZHONX III (scripts/link/sync.sh).
+SOURCES += $(wildcard firmware/link/*.c)
 OBJECTS := $(addprefix $(BUILD)/,$(SOURCES:.c=.o))
 DEPS := $(OBJECTS:.o=.d)
 
 CPUFLAGS := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 DEFINES := -DSTM32F405RG -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_DRIVER -D__FPU_USED
-INCLUDES := -Ifirmware/include -I. -Icmsis -Icmsis_boot -Icmsis_lib/include -Ipacabot -Ipacabot/include \
+INCLUDES := -Ifirmware/include -Ifirmware/include/middleware/link -I. -Icmsis -Icmsis_boot -Icmsis_lib/include -Ipacabot -Ipacabot/include \
  -Ipacabot/include/app -Ipacabot/include/config -Ipacabot/include/oled \
  -Ipacabot/include/hal -Ipacabot/include/drivers -Ipacabot/include/util -Ipacabot/src
 CFLAGS := $(CPUFLAGS) $(DEFINES) $(INCLUDES) -std=gnu11 $(OPT) $(DEBUG_FLAGS) -fcommon \
@@ -80,7 +82,7 @@ test:
 	 -Ifirmware/include tests/test_battery.c firmware/core/fw_battery.c -o $(BUILD)/test_battery
 	$(BUILD)/test_battery
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_menu.c firmware/core/fw_battery.c firmware/platform/fw_menu.c firmware/core/fw_calibration.c -o $(BUILD)/test_menu
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_menu.c tests/mocks/link_stubs.c firmware/core/fw_battery.c firmware/platform/fw_menu.c firmware/core/fw_calibration.c -o $(BUILD)/test_menu
 	$(BUILD)/test_menu
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Ifirmware/include tests/test_calibration.c firmware/core/fw_calibration.c -o $(BUILD)/test_calibration
@@ -88,29 +90,45 @@ test:
 	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Ifirmware/include tests/test_calibration_extra.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_calibration_extra
 	$(BUILD)/test_calibration_extra
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Ifirmware/include tests/test_calibration_follow.c firmware/core/fw_cal_follow.c firmware/core/wall_control.c firmware/core/fw_calibration.c -lm -o $(BUILD)/test_calibration_follow
+	$(BUILD)/test_calibration_follow
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_motion.c \
 	 firmware/platform/fw_motion.c firmware/core/fw_path.c firmware/core/nimes.c firmware/core/wall_control.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_motion
 	$(BUILD)/test_motion
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_navigation.c \
-	 firmware/platform/fw_app.c firmware/core/fw_battery.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_start.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c -o $(BUILD)/test_navigation
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_navigation.c tests/mocks/link_stubs.c \
+	 firmware/platform/fw_app.c firmware/core/fw_battery.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_start.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c firmware/core/fw_cal_follow.c -lm -o $(BUILD)/test_navigation
 	$(BUILD)/test_navigation
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include -DFW_IDLE_TEST tests/test_ui.c \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include -DFW_IDLE_TEST tests/test_ui.c tests/mocks/link_stubs.c \
 	 firmware/core/fw_battery.c firmware/platform/fw_ui.c firmware/platform/fw_menu_view.c firmware/platform/fw_idle.c firmware/core/fw_library.c firmware/core/nimes.c firmware/core/fw_text.c firmware/platform/fw_display.c \
 	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -lm -o $(BUILD)/test_ui
 	$(BUILD)/test_ui
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_calibration_ui.c \
-	 firmware/platform/fw_calibration_ui.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c firmware/core/fw_text.c firmware/platform/fw_display.c \
-	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_calibration_ui
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_calibration_ui.c tests/mocks/link_stubs.c \
+	 firmware/platform/fw_calibration_ui.c firmware/core/fw_calibration.c firmware/core/fw_cal_extra.c firmware/core/fw_cal_follow.c firmware/core/fw_text.c firmware/platform/fw_display.c \
+	 pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -lm -o $(BUILD)/test_calibration_ui
 	$(BUILD)/test_calibration_ui
 	cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
-	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_hardware.c \
+	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_hardware.c tests/mocks/link_stubs.c \
 	 firmware/core/fw_battery.c firmware/platform/fw_hardware.c firmware/core/fw_text.c firmware/platform/fw_display.c pacabot/src/oled/ssd1306.c pacabot/src/oled/smallfonts.c -o $(BUILD)/test_hardware
 	$(BUILD)/test_hardware
 	cc -std=gnu11 -O1 -g -fcommon -Wall -Wextra -Werror -fsanitize=address,undefined \
 	 -Itests/mocks -Ifirmware/include -Ipacabot/include tests/test_sound.c firmware/platform/fw_sound.c -o $(BUILD)/test_sound
 	$(BUILD)/test_sound
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Ifirmware/include tests/test_hm18.c firmware/core/fw_hm18.c -o $(BUILD)/test_hm18
+	$(BUILD)/test_hm18
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+	 -Ifirmware/include tests/test_ariane.c firmware/core/fw_ariane.c -o $(BUILD)/test_ariane
+	$(BUILD)/test_ariane
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -DLINK_HOST \
+	 -Ifirmware/include -Ifirmware/include/middleware/link tests/test_link_frame.c firmware/link/link_frame.c -o $(BUILD)/test_link_frame
+	$(BUILD)/test_link_frame tests/link/vectors.json
+	cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -DLINK_HOST \
+	 -Ifirmware/include -Ifirmware/include/middleware/link tests/test_link.c firmware/link/link_frame.c firmware/link/link_ring.c \
+	 firmware/link/link_line.c firmware/link/link_led.c firmware/link/link_params.c -lm -o $(BUILD)/test_link
+	$(BUILD)/test_link
 	python3 -m unittest discover -s tests -p 'test_*.py'

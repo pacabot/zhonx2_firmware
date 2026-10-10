@@ -39,9 +39,9 @@ def decode(data):
         delta = (b['sequence']-chosen['sequence']) & 0xffffffff
         if 0 < delta < 0x80000000: chosen = b
     report['selected_bank'] = chosen['bank']
-    if chosen['schema'] not in (3, 4, 5, 6, 7) or chosen['size'] < BASE_SIZE+WALL_SIZE:
+    if chosen['schema'] not in (3, 4, 5, 6, 7, 8) or chosen['size'] < BASE_SIZE+WALL_SIZE:
         report['error'] = 'Snapshot has no supported calibration payload'; return report
-    base = 1120 if chosen['schema'] == 7 else BASE_SIZE
+    base = 1120 if chosen['schema'] in (7, 8) else BASE_SIZE
     off = chosen['offset']+32+base
     def ints(n, signed=False):
         nonlocal off
@@ -77,11 +77,17 @@ def decode(data):
                     raw_close_mm=[x/1000 for x in v[2:4]], open_mm=[x/1000 for x in v[4:6]],
                     close_mm=[x/1000 for x in v[6:]], spread_mm=[x/1000 for x in spread]))
         report['corners'].append(corner)
-    if chosen['schema'] in (6, 7):
-        if chosen['size'] != (12492 if chosen['schema'] == 7 else 4708):
+    if chosen['schema'] in (6, 7, 8):
+        if chosen['size'] != {6: 4708, 7: 12492, 8: 12532}[chosen['schema']]:
             raise ValueError('Unexpected battery snapshot size')
-        raw, mv = struct.unpack_from('<II', data, chosen['offset']+32+(12480 if chosen['schema'] == 7 else 4700))
+        raw, mv = struct.unpack_from('<II', data, chosen['offset']+32+(4700 if chosen['schema'] == 6 else 12480))
         report['battery_reference'] = dict(raw=raw, pack_mv=mv)
+    if chosen['schema'] == 8:
+        f = struct.unpack_from('<6Ii3I', data, chosen['offset']+32+12492)
+        track = rotation['profiles'][2]['effective_track_mm'][0] if rotation['valid'] else 83.5
+        report['follow'] = dict(valid=f[0] == 1, cells=f[1], geometry=geometry(f[2:6]),
+            yaw_bias_mrad_m=f[6], spread_mrad_m=f[7], passes=f[8], crossings=f[9],
+            wheel_difference_percent=round(f[6]*track/1e4, 3), drift_mm_per_m=f[6]/2)
     report['assessment'] = assess(report)
     return report
 
@@ -126,6 +132,10 @@ def assess(report):
                     note('error', f'Corner {side}, {p["speed"]}: offset/spread outside firmware bounds')
                 if p['open_mm'][channel]+0.2<p['raw_open_mm'][channel] or p['close_mm'][channel]-0.2>p['raw_close_mm'][channel]:
                     note('warning', f'Corner {side}, {p["speed"]}: inspect unexpected raw/filtered transition order')
+    follow = report.get('follow')
+    if follow is not None:
+        if not follow['valid']: note('warning', 'No saved wall follow (wheel bias) calibration')
+        else: note('info', f'Wheel bias {follow["yaw_bias_mrad_m"]} mrad/m ({follow["wheel_difference_percent"]:+.2f} % diameter), spread {follow["spread_mrad_m"]} mrad/m over {follow["passes"]} passes')
     if 'battery_reference' in report and not report['battery_reference']['raw']:
         note('warning', 'No saved battery voltage reference')
     note('info', 'CRC and numerical checks do not validate physical accuracy or absence of wheel slip')

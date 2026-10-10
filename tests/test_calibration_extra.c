@@ -121,16 +121,24 @@ int main(void)
     fw_rotation_data_t rotation={0};
     int result=fw_rotation_run(&io,&geometry,&rotation);
     if(result) fprintf(stderr,"rotation result %d at spin %u angle %.3f\n",result,r.spins,remainder(r.angle,2*PI));
-    assert(!result && fw_rotation_valid(&rotation));
-    for(unsigned v=0;v<FW_CAL_SPEEDS;++v) for(unsigned dir=0;dir<2;++dir) {
-        double target=actual_track(rotation.point[v].speed,dir,1)*PI/4;
-        assert(fabs(rotation.point[v].quarter_um[dir]-target)<700);
-        assert(rotation.point[v].quarter_checks[dir]>=4);
+    assert(!result && fw_rotation_valid(&rotation) && fw_rotation_single(&rotation));
+    /* Only 120 mm/s is measured; the slower slots repeat that profile. */
+    for(unsigned dir=0;dir<2;++dir) {
+        const fw_rotation_point_t *p=&rotation.point[FW_CAL_SPEEDS-1];
+        double target=actual_track(p->speed,dir,1)*PI/4;
+        assert(p->speed==120 && fabs(p->quarter_um[dir]-target)<700);
+        assert(p->quarter_checks[dir]>=4);
+        for(unsigned v=0;v+1<FW_CAL_SPEEDS;++v) {
+            assert(rotation.point[v].speed==40+40*v && rotation.point[v].quarter_um[dir]==p->quarter_um[dir]);
+            assert(rotation.point[v].quarter_checks[dir]==p->quarter_checks[dir]);
+        }
         printf("rotation: %u mm/s %s quarter %.2f mm (true %.2f), optical error %u mdeg\n",
-          rotation.point[v].speed,dir?"CCW":"CW",rotation.point[v].quarter_um[dir]/1000.,target/1000.,rotation.point[v].quarter_error_mdeg[dir]);
+          p->speed,dir?"CCW":"CW",p->quarter_um[dir]/1000.,target/1000.,p->quarter_error_mdeg[dir]);
     }
     assert(r.x==83500 && r.y==83500);
-    assert(fw_rotation_quarter(&rotation,60,0)>rotation.point[0].quarter_um[0]);
+    assert(r.spins<50 && r.turns<=8);
+    assert(fw_rotation_quarter(&rotation,60,0)==rotation.point[0].quarter_um[0]);
+    assert(fw_rotation_quarter(&rotation,120,1)==rotation.point[2].quarter_um[1]);
     assert(!fw_rotation_quarter(&rotation,121,0));
     fw_rotation_data_t previous=rotation;
     r=initial(-1); r.blind=1;
@@ -153,7 +161,18 @@ int main(void)
                 assert(p->close_um[s]<p->raw_close_um[s]);
                 assert(facing?p->raw_open_um[s]<0:p->raw_open_um[s]>0);
             }
+            /* 40 and 220 measured; 120 is their interpolation, on the same line
+             * fw_corner_offset() uses between neighbouring slots. */
+            if(v==1) {
+                const fw_corner_point_t *a=&corner.point[facing][0],*b=&corner.point[facing][2];
+                for(unsigned s=0;s<2;++s)
+                    assert(p->raw_open_um[s]==a->raw_open_um[s]+(b->raw_open_um[s]-a->raw_open_um[s])*80/180);
+            }
+            assert(fw_corner_interpolated(&corner,facing));
         }
+        /* One two-wall reference per orientation plus front reseats: 18 turns
+         * instead of 56 with a reference before each of the 18 repeats. */
+        assert(r.turns==18 && r.moves<80);
         int32_t offset;
         assert(!fw_corner_offset(&corner,1,160,1,1,&offset) && offset<0);
         assert(fw_corner_offset(&corner,1,260,1,1,&offset));
@@ -164,7 +183,7 @@ int main(void)
         assert(r.x==83500 && r.y==83500);
         if(!side) {left_moves=r.moves;left_turns=r.turns;}
         else assert(r.moves==left_moves && r.turns==left_turns);
-        printf("corner: %s fixture, 3 speeds, both orientations, raw and filtered offsets, signed forward reference\n",side?"right":"left");
+        printf("corner: %s fixture, 40+220 measured and 120 interpolated, both orientations, raw and filtered offsets, signed forward reference\n",side?"right":"left");
     }
     puts("extra calibration: stopped-turn refinement, directional tracks, missing optical reference and cancellation");
     return 0;

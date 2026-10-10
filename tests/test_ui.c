@@ -13,6 +13,10 @@ static void charge(unsigned raw) {
     for(unsigned i=0;i<7;++i) {now+=1000;fw_battery_poll();}
 }
 int HAL_Delay(unsigned long ms) { (void)ms;return 0; }
+/* 0 no phone, 1 connected, 2 Ariane session (banner rune). */
+static int bluetooth;
+int fw_link_connected(void) {return bluetooth>0;}
+int fw_link_session(void) {return bluetooth>1;}
 static void image(const char *file)
 {
     FILE *f=fopen(file,"wb");assert(f);fputs("P5\n128 64\n255\n",f);
@@ -72,9 +76,10 @@ int main(void)
         char file[60];fw_ui_card("CALIBRATION",cal_names[i],"Calibrate",cal_icons[i],i,7);
         snprintf(file,sizeof file,"build/ui-calibration-icon-%u.pgm",i);image(file);
     }
-    const int values[]={470,940,167,179,173,220,260,16};
-    for(unsigned i=0;i<8;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
+    const int values[]={470,940,167,179,173,220,260,16,2};
+    for(unsigned i=0;i<9;++i) {char file[60];snprintf(file,sizeof file,"build/ui-setting-%u.pgm",i);
         fw_ui_setting(i,values[i]);image(file);}
+    fw_ui_setting(8,0);image("build/ui-setting-8-off.pgm");
     fw_saved_maze_t saved={.map=map,.route={.direction={0,0,1,1},.length=4},.id=7};
     fw_ui_library(&saved,0,2,0);image("build/ui-library-off.pgm");
     unsigned char off[1024];memcpy(off,buffer,sizeof off);
@@ -89,6 +94,12 @@ int main(void)
     image("build/ui-hardware-menu.pgm");
     unsigned char before_battery[1024];memcpy(before_battery,buffer,sizeof buffer);
     charge(3000);fw_ui_menu_refresh();image("build/ui-battery-full.pgm");
+    bluetooth=1;fw_ui_menu_refresh();image("build/ui-banner-bluetooth.pgm");
+    assert(ssd1306GetPixel(89,1) && ssd1306GetPixel(89,11) && !ssd1306GetPixel(84,12));
+    bluetooth=2;fw_ui_menu_refresh();image("build/ui-banner-ariane.pgm");
+    assert(ssd1306GetPixel(84,12) && !ssd1306GetPixel(89,5));
+    bluetooth=0;fw_ui_menu_refresh();
+    for(unsigned y=0;y<13;++y)for(unsigned x=84;x<95;++x)assert(!ssd1306GetPixel(x,y));
     charge(2357);fw_ui_menu_refresh();image("build/ui-battery-empty.pgm");
     for(unsigned y=0;y<64;++y)for(unsigned x=0;x<96;++x)
         assert(ssd1306GetPixel(x,y)==!!(before_battery[x+(y/8)*128]&(1u<<(y%8))));
@@ -137,6 +148,6 @@ int main(void)
     fclose(frames);
     puts("Idle: eight shuffled choreographies, no consecutive repeats, seamless transitions, full-screen frames");
     charge(2700);fw_ui_card("HOME","Maze","",FW_ICON_MAZE,0,5);image("build/ui-battery-partial.pgm");
-    puts("OLED: large icon cards, eight illustrated settings, blinking stored route");
+    puts("OLED: large icon cards, nine illustrated settings, Bluetooth banner rune, blinking stored route");
     return 0;
 }

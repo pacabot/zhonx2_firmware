@@ -28,16 +28,37 @@ static nm_pose_t physical,destination;
 static uint32_t now,deadline,move_started;
 static nm_pose_t segment_start;
 static unsigned moving_cells,extensions,maximum_requested_speed,viewing,alignments,path_calls,victories,failures;
+static unsigned path_speed_first,path_speed_last;
 void fw_sound_play(int success) {if(success)++victories;else ++failures;}
+/* Ariane hooks: each CELL of a new cell must follow the crossing of its entry
+ * edge (dated there, as ZHONX III), except the first one, at the start. */
+static struct {unsigned cells,dated,undated,decisions,straight_decisions;nm_pose_t first,last_entered,last_cell;int has_cell;} ariane;
+void fw_link_entered(nm_pose_t c) {ariane.last_entered=c;}
+void fw_link_cell(const nm_map_t *m,nm_pose_t p,uint8_t seen)
+{
+    (void)m;assert(seen<8);
+    if(ariane.has_cell && ariane.last_cell.x==p.x && ariane.last_cell.y==p.y)return;
+    if(!ariane.cells++)ariane.first=p;
+    else if(ariane.last_entered.x==p.x && ariane.last_entered.y==p.y)++ariane.dated;
+    else ++ariane.undated;
+    ariane.last_cell=p;ariane.has_cell=1;
+}
+void fw_link_decision(const nm_map_t *m,unsigned from,nm_pose_t target)
+{
+    (void)m;assert(from<4 && target.heading<4 && target.x<NM_SIDE && target.y<NM_SIDE);
+    ++ariane.decisions;if(from==target.heading)++ariane.straight_decisions;
+}
 static unsigned trial_mode;
 static int rotating,backing,recovered,confirm_missing,path_dx,path_dy,pathing,path_fail;
 static int32_t fault_travel;
+static nm_route_t path_route;static nm_pose_t path_from;static uint32_t path_started;
 static unsigned moves,turns,wall_arrivals,draws,saves,ack,curves;
 static int busy,wall_arrival,stopped,inject_obstacle;
 static char last_status[32];
 static unsigned char saved_snapshot[16384];
 static size_t saved_size;
 static uint32_t saved_schema,applied_pitch;
+static int32_t applied_bias;static int applied_calibrated;
 static int save_failure,hidden_door_cleared,hide_after_recovery;
 unsigned long hal_os_get_systicks(void) { return now; }
 void NVIC_SystemReset(void) { assert(0); }
@@ -126,6 +147,7 @@ void fw_motion_geometry(uint32_t pitch,uint32_t front,uint32_t inner)
 void fw_motion_corner_profiles(const fw_corner_data_t *l,const fw_corner_data_t *r) {(void)l;(void)r;}
 void fw_motion_wall_profile(const fw_cal_data_t *d) { (void)d; }
 void fw_motion_rotation_profile(const fw_rotation_data_t *d) { (void)d; }
+void fw_motion_follow_bias(int32_t bias,int calibrated) { applied_bias=bias;applied_calibrated=calibrated; }
 void fw_motion_stop(void) { busy=0; }
 int fw_motion_busy(void) { return busy; }
 int fw_motion_fault(void) { return stopped; }
@@ -171,12 +193,31 @@ int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,un
         c=nm_next(&ground,c,d);assert(c>=0);
     }
     destination=(nm_pose_t){c%NM_SIDE,c/NM_SIDE,route->direction[route->length-1]};
+    path_route=*route;path_from=physical;path_started=now;
+    if(!path_calls)path_speed_first=speed;
+    path_speed_last=speed;
     busy=rotating=pathing=1;deadline=now+route->length*100;wall_arrival=0;++path_calls;return 0;
 }
-nm_pose_t fw_motion_path_pose(void) {nm_pose_t p=busy?physical:destination;p.x-=path_dx;p.y-=path_dy;return p;}
-int fw_motion_turn(int degrees)
+/* 100 ms per cell; like the real path pose, the cell changes at its entry edge. */
+nm_pose_t fw_motion_path_pose(void)
+{
+    nm_pose_t p=destination;
+    if(busy && pathing) {
+        unsigned k=(now-path_started+50)/100;p=path_from;
+        for(unsigned i=0;i<k && i<path_route.length;++i) {
+            p.heading=path_route.direction[i];int c=nm_next(&ground,p.y*NM_SIDE+p.x,p.heading);p.x=c%NM_SIDE;p.y=c/NM_SIDE;
+        }
+    } else if(busy)p=physical;
+    p.x-=path_dx;p.y-=path_dy;return p;
+}
+static unsigned turn_speed_min,turn_speed_max;
+unsigned fw_motion_turn_speed(unsigned travel) {return travel<120?120:travel>300?300:travel;}
+uint32_t fw_motion_brake_um(unsigned v,unsigned cruise) {return v>40?(v*v-1600)*500/(600+2*(cruise<20?20:cruise>1500?1500:cruise)):0;}
+int fw_motion_turn(int degrees,unsigned travel)
 {
     assert(!busy && now>=400); assert(degrees==90 || degrees==-90 || degrees==180);
+    if(!turn_speed_min || travel<turn_speed_min)turn_speed_min=travel;
+    if(travel>turn_speed_max)turn_speed_max=travel;
     ++turns; destination=physical;rotating=1;
     destination.heading=(physical.heading+degrees/90+4)%4;
     busy=1;wall_arrival=0;deadline=now+100;return 0;
@@ -234,7 +275,7 @@ static void scenario(int obstacle)
     physical=(nm_pose_t){obstacle==9?5:0,0,NM_NORTH}; test_gpioc.IDR=0xffff;
     zhonxSettings=(robot_settings){.initial_speed=5000,.default_accel=4,.rotate_accel=4,
       .correction_p=1600,.correction_i=4000,.max_correction=3000,.max_speed_distance=1000,.emergency_decel=50};
-    fw_app_init();fw_search_speed=obstacle==8?300:220;maximum_requested_speed=0;
+    fw_app_init();fw_search_speed=obstacle==8?600:220;maximum_requested_speed=0;
     fw_cal_data_t calibration={.valid=1,.repetitions=3,.geometry={47000,94000,167000,179000},
         .front={{92000,92500,400},{132000,132500,200}},.side={{84500,85500,0},{81500,83500,1000}}};
     assert(!fw_app_calibration_commit(&calibration));
@@ -250,15 +291,16 @@ static void scenario(int obstacle)
                 .open_um={0,facing?-26000:50000},.close_um={0,facing?-35000:40000}};
         assert(!fw_app_corner_commit(&corner));
     }
-    saves=0;alignments=0;
+    saves=0;alignments=0;memset(&ariane,0,sizeof ariane);turn_speed_min=turn_speed_max=0;
     int result=fw_app_discover();
     assert(saves==1);
-    if(obstacle==8)assert(maximum_requested_speed==220 && extensions>0);
+    /* Above 220 mm/s the exploration keeps its speed and its in-flight observation. */
+    if(obstacle==8)assert(maximum_requested_speed==600 && extensions>0);
     if(obstacle==9) {
         assert(!result && !strcmp(last_status,"OPTIMAL PATH"));
         assert(physical.x==5 && physical.y==0 && physical.heading==fw_app_maze(0)->route.direction[0]);
         assert(fw_app_ready() && fw_app_maze_count()==1);
-        assert(alignments>=2 && fw_app_at_start());
+        assert(!alignments && fw_app_at_start()); /* No wall contact before the runs. */
         fw_app_init();assert(fw_app_ready() && fw_app_maze_count()==1);
         return;
     }
@@ -266,17 +308,29 @@ static void scenario(int obstacle)
         if(obstacle==2 || obstacle==7)assert(recovered);
         else assert(!recovered);
         assert(!result && moves>=4 && extensions>=1 && turns>=4 && wall_arrivals>=2 && draws>=10);
+        assert(turn_speed_max==(unsigned)fw_search_speed); /* Pivots at the exploration speed. */
         assert(physical.x==0 && physical.y==0 && physical.heading==0 && !strcmp(last_status,"OPTIMAL PATH"));
         assert(fw_app_ready() && fw_app_maze_count()==1);
+        /* First CELL at the start cell, every later arrival dated at its entry edge. */
+        nm_pose_t origin=nm_origin(&fw_app_maze(0)->map);
+        assert(ariane.cells>=4 && ariane.decisions>=4 && ariane.straight_decisions>=1);
+        assert(ariane.first.x==origin.x && ariane.first.y==origin.y);
+        if(obstacle!=2 && obstacle!=7)assert(ariane.undated==0 && ariane.dated==ariane.cells-1);
         if(obstacle==0) {
             viewing=1;ack=0;assert(!fw_app_show_map());viewing=0;
             assert(ack>=190 && ack<200 && !(test_gpioc.IDR&FW_ESCAPE_PIN));
             test_gpioc.IDR=0xffff;
             for(unsigned trial=1;trial<=3;++trial) {
-                now=0;path_calls=0;trial_mode=trial;
+                now=0;path_calls=0;trial_mode=trial;memset(&ariane,0,sizeof ariane);turn_speed_min=turn_speed_max=0;
                 assert(!fw_app_trial(trial,trial*200));
+                /* The run at its speed, the return (paths and pivots) at the exploration speed. */
+                assert(path_speed_first==trial*200 && path_speed_last==(unsigned)fw_search_speed);
+                /* Run 1 pivots at 200; every return pivot at 220 (runs 2/3 start aligned). */
+                assert(turn_speed_min==(trial==1?200u:(unsigned)fw_search_speed) && turn_speed_max==(unsigned)fw_search_speed);
+                /* Runs: one CELL per segment end, out and back, each after a DECISION. */
+                assert(ariane.cells>=2 && ariane.decisions>=ariane.cells && !ariane.undated);
                 assert(path_calls==(trial==1?4u:2u) && physical.x==0 && physical.y==0 && physical.heading==0);
-                assert(fw_app_at_start() && fw_run_speed==260 && saves==1);
+                assert(fw_app_at_start() && fw_run_speed==260 && saves==1 && !alignments);
             }
             trial_mode=0;now=0;path_calls=0;path_fail=1;unsigned old_failures=failures;
             assert(fw_app_trial(1,300)==-1 && fw_last_stop_code==2);
@@ -289,8 +343,9 @@ static void scenario(int obstacle)
         assert(fw_app_maze_count()==1);
         assert(!fw_app_maze_load(0));
         unsigned exploration_moves=moves;
-        now=moves=turns=ack=extensions=0;last_status[0]=0;test_gpioc.IDR=0xffff;
+        now=moves=turns=ack=extensions=0;last_status[0]=0;test_gpioc.IDR=0xffff;turn_speed_min=turn_speed_max=0;
         assert(!fw_app_run() && !strcmp(last_status,"GOAL FOUND"));
+        assert(!turns || (turn_speed_min==260 && turn_speed_max==260));
         assert(moves<exploration_moves && moves<=2); /* Known straights are grouped, even at 260 mm/s. */
         printf("navigation: %u moves, %u turns, %u wall arrivals; goal and return OK\n",moves,turns,wall_arrivals);
         assert(!fw_app_maze_load(0));physical=(nm_pose_t){0,0,NM_NORTH};
@@ -318,8 +373,26 @@ static void calibration_snapshot(void)
       .front={{76000,80000,0},{130000,136000,0}},.side={{78500,79500,0},{88500,89500,0}}};
     assert(fw_cal_valid(&d));
     fw_motion_init(); assert(!fw_app_calibration_commit(&d));
-    assert(saved_schema==7 && applied_pitch==179000);
+    assert(saved_schema==8 && applied_pitch==179000);
     fw_app_init(); assert(!memcmp(fw_app_calibration(),&d,sizeof d));
+    /* Follow bias: schema 8, preloaded at boot, rolled back on a failed save. */
+    fw_follow_data_t f={.valid=1,.cells=5,.geometry=d.geometry,.yaw_bias_mrad_m=-42,.spread_mrad_m=9,.passes=14,.crossings=100};
+    assert(fw_follow_valid(&f) && !fw_app_follow()->valid && !applied_bias);
+    assert(!fw_app_follow_commit(&f) && saved_schema==8 && applied_bias==-42 && applied_calibrated);
+    fw_app_init();assert(!memcmp(fw_app_follow(),&f,sizeof f) && applied_bias==-42);
+    fw_follow_data_t other=f;other.geometry.nose_um=41000;
+    assert(fw_app_follow_commit(&other)); /* Measured with another geometry. */
+    other=f;other.yaw_bias_mrad_m=10;save_failure=1;assert(fw_app_follow_commit(&other));save_failure=0;
+    assert(!memcmp(fw_app_follow(),&f,sizeof f) && applied_bias==-42);
+    /* Schema 7 is the prefix of 8: calibrations kept, no follow bias yet. */
+    saved_schema=7;saved_size=SNAPSHOT_V7_SIZE;fw_app_init();
+    assert(!memcmp(fw_app_calibration(),&d,sizeof d) && !fw_app_follow()->valid && !applied_bias && !applied_calibrated);
+    assert(!fw_app_settings_save() && saved_schema==8 && saved_size==sizeof(snapshot_t));
+    /* An invalid follow block is a corrupt snapshot, as for the others. */
+    snapshot_t corrupt;memcpy(&corrupt,saved_snapshot,sizeof corrupt);corrupt.follow=f;corrupt.follow.spread_mrad_m=1000;
+    memcpy(saved_snapshot,&corrupt,sizeof corrupt);fw_app_init();assert(!fw_app_calibration()->valid);
+    corrupt.follow=f;memcpy(saved_snapshot,&corrupt,sizeof corrupt);fw_app_init();
+    assert(!memcmp(fw_app_follow(),&f,sizeof f) && applied_bias==-42);
     fw_cal_data_t changed=d; changed.front[0].on_um=75000;
     save_failure=1; assert(fw_app_calibration_commit(&changed)); save_failure=0;
     assert(!memcmp(fw_app_calibration(),&d,sizeof d));
@@ -344,7 +417,7 @@ static void calibration_snapshot(void)
         else assert(!fw_app_calibration()->valid);
         assert(fw_battery_reference().raw==(schema==6?3000u:0u));
         assert(applied_pitch==179000);
-        assert(!fw_app_settings_save() && saved_schema==7);
+        assert(!fw_app_settings_save() && saved_schema==8);
         fw_app_init();if(schema>=3)assert(!memcmp(fw_app_calibration(),&d,sizeof d));
     }
     assert(!fw_app_calibration_commit(&d));
@@ -366,15 +439,15 @@ static void calibration_snapshot(void)
     assert(!fw_app_corner_commit(&corner));
     rotation.geometry.nose_um=47000; rotation.geometry.width_um=94000;
     assert(!fw_app_rotation_commit(&rotation));
-    fw_app_init(); assert(!fw_app_calibration()->valid && !fw_app_corner(0)->valid);
-    puts("snapshot: schema 2/3 migration, complete profiles reboot, save rollback, dependent calibration invalidation");
+    fw_app_init(); assert(!fw_app_calibration()->valid && !fw_app_corner(0)->valid && !fw_app_follow()->valid && !applied_bias);
+    puts("snapshot: schema 2..7 migration, follow bias in schema 8, complete profiles reboot, save rollback, dependent calibration invalidation");
 }
 int main(void)
 {
     scenario(0);scenario(1);scenario(2);scenario(3);scenario(4);scenario(5);scenario(6);scenario(7);scenario(8);scenario(9);
-    puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop");
+    puts("navigation: missed front wall recovered; unconfirmed/mislocated obstacles and run obstacles stop; Ariane CELL dated at entry edges, DECISION per segment");
     calibration_snapshot();
-    fw_run_speed=1500;assert(!fw_app_settings_save());
-    fw_run_speed=20;fw_app_init();assert(fw_run_speed==1500);
+    fw_run_speed=1500;fw_search_speed=900;assert(!fw_app_settings_save());
+    fw_run_speed=fw_search_speed=20;fw_app_init();assert(fw_run_speed==1500 && fw_search_speed==900);
     return 0;
 }

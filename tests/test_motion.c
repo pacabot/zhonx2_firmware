@@ -87,7 +87,7 @@ int main(void)
         if (speed==220) { assert(elapsed<1250); printf("178 mm at 220 mm/s: %u ms\n",elapsed); }
         assert(total[0]==total[1] && abs(fw_motion_travelled_um()-CELL_LENGTH*1000)<400);
     }
-    setup(); assert(!fw_motion_turn(90)); assert(commanded[0]<0 && commanded[1]>0);
+    setup(); assert(!fw_motion_turn(90,120)); assert(commanded[0]<0 && commanded[1]>0);
     assert(labs(commanded[0])==lroundf((float)M_PI/4.f*(float)WHEELS_DISTANCE*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy() && now<10000) tick(1);
     assert(!fw_motion_busy() && !fw_motion_fault());
@@ -128,7 +128,7 @@ int main(void)
     scan.raw &= ~SENSOR_F5_POS;
     tick(1); assert(!fw_motion_fault() && !fw_motion_busy() && fw_motion_wall_arrival());
     assert(!rates[0] && !rates[1]);
-    assert(!fw_motion_turn(90));
+    assert(!fw_motion_turn(90,220));
     while(fw_motion_busy()) tick(1);
     assert(!fw_motion_fault() && !fw_motion_wall_arrival());
     /* An early obstacle, or a wall across a known passage, must still fault. */
@@ -139,7 +139,7 @@ int main(void)
     while(fw_motion_remaining()>20.f*2.f*(float)STEPS_PER_MM) tick(1);
     scan.raw &= ~SENSOR_F5_POS; tick(1); assert(fw_motion_fault()==2);
     setup(); assert(fw_motion_straight(0,100)); assert(fw_motion_straight(1,FW_RUN_MAX_SPEED+1));
-    assert(fw_motion_turn(30));
+    assert(fw_motion_turn(30,220));
     now=UINT32_MAX-30; scan.timestamp=now;
     assert(!fw_motion_straight(1,100));
     for(int i=0;i<100;++i) tick(1);
@@ -173,15 +173,52 @@ int main(void)
     for(unsigned i=0;i<3;++i) profile.point[i]=(fw_rotation_point_t){
         .speed=40+40*i,.quarter_um={66000+100*i,65000+100*i}};
     fw_motion_rotation_profile(&profile);
-    assert(!fw_motion_turn(90));
+    assert(!fw_motion_turn(90,220));
     assert(commanded[0]==-lroundf(66.2f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy()) tick(1);
-    assert(!fw_motion_turn(-180));
+    assert(!fw_motion_turn(-180,220));
     assert(commanded[0]==lroundf(130.4f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy()) tick(1);
     assert(!fw_motion_calibration_turn(-90));
     assert(commanded[0]==lroundf(65.1f*2.f*(float)STEPS_PER_MM));
     while(fw_motion_busy()) tick(1);
+    /* Fast exploration: straights ramp as runs (600 + 2 x speed). Within the
+     * braking distance from 220 mm/s of a straight's end, the robot is no
+     * faster than 220 (observation window) and stays there >= 3 scans. */
+    assert(fw_motion_brake_um(40,220)==0 && fw_motion_brake_um(220,220)==22500 && fw_motion_brake_um(220,1500)==6500);
+    for(unsigned cruise=400;cruise<=1500;cruise+=1100) {
+        setup(); assert(!fw_motion_straight(4,cruise));
+        unsigned fastest=0,inside=0,elapsed=0;
+        while(fw_motion_busy()) {
+            tick(1);++elapsed;if(fw_motion_speed()>fastest)fastest=fw_motion_speed();
+            if(fw_motion_remaining()<=fw_motion_brake_um(220,cruise)*2.f*(float)STEPS_PER_MM/1000.f) {
+                /* The 1 kHz ramp trails its envelope by up to two steps. */
+                assert(fw_motion_speed()<=220+(600+2*cruise)*2/1000);++inside;
+            }
+        }
+        assert(!fw_motion_fault() && inside>=40 && fastest>(cruise<1000?cruise-2:1100));
+        printf("4 cells at %u mm/s (%u mm/s^2): %u ms, %u ms in the window\n",cruise,600+2*cruise,elapsed,inside);
+    }
+    fw_motion_rotation_profile(&profile);
+    /* In-place turns follow the travel speed: same measured wheel budget,
+     * faster wheels and ramps, capped at 300 mm/s per wheel. */
+    assert(fw_motion_turn_speed(20)==120 && fw_motion_turn_speed(220)==220 && fw_motion_turn_speed(1500)==300);
+    for(unsigned degrees=90;degrees<=180;degrees+=90) {
+        static const unsigned travel[]={120,220,300,1500};
+        unsigned previous=100000;
+        for(unsigned i=0;i<4;++i) {
+            assert(!fw_motion_turn((int)degrees,travel[i]));
+            assert(commanded[0]==-lroundf(66.2f*(degrees/90)*2.f*(float)STEPS_PER_MM));
+            unsigned elapsed=0;unsigned long peak=0;
+            while(fw_motion_busy()) {tick(1);++elapsed;if(rates[1]>peak)peak=rates[1];}
+            assert(!fw_motion_fault() && !remain[0] && !remain[1]);
+            assert(peak<=fw_motion_turn_speed(travel[i])*2.0*STEPS_PER_MM*1.05);
+            if(travel[i]<=300)assert(elapsed<previous);
+            else assert(elapsed==previous);
+            previous=elapsed;
+            if(travel[i]<=300)printf("%u-degree turn at %u mm/s: %u ms\n",degrees,travel[i],elapsed);
+        }
+    }
     for(int dir=-1;dir<=1;dir+=2) {
         assert(!fw_motion_calibration_spin(dir*67000,80));
         while(fw_motion_busy()) tick(1);
@@ -490,6 +527,31 @@ int main(void)
     assert(!fw_motion_center_wall()); /* False F10 wall, no F5 edge: return to initial pose. */
     while(fw_motion_busy() && now<5000)tick(1);
     trace_path=0;assert(!fw_motion_fault() && !fw_motion_centered() && fabs(path_y)<0.1);
+    /* Follow calibration recorder: one sample per scan of a straight, the
+     * follower's own delay and sensors; the preloaded bias survives init. */
+    setup();fw_motion_follow_bias(-37,1);fw_motion_init();assert(fw_motion_yaw_bias()==-37);
+    fw_motion_wall_profile(&walls);assert(fw_motion_yaw_bias()==-37);
+    scan.raw=scan.filtered=0x3f&~(SENSOR_L10_POS|SENSOR_R10_POS|SENSOR_L5_POS);
+    fw_motion_follow_record(1);assert(!fw_motion_straight_to(2,600,0));
+    unsigned samples=0;int32_t travel=-1;fw_follow_sample_t sample;
+    while(fw_motion_busy() && now<10000) {
+        tick(1);
+        while(fw_motion_follow_sample(&sample)>0) {
+            assert(sample.travel_um>=travel && sample.sensors==scan.raw);
+            assert(sample.lag_um<=3u*6000u+100u);
+            travel=sample.travel_um;++samples;
+        }
+    }
+    /* The last scan comes a few millimetres before the end of the move. */
+    assert(!fw_motion_fault() && samples>=40 && travel<358000 && travel>354000);
+    /* Left 5 cm near: the follower steers right, the step yaw records it. */
+    assert(sample.yaw_urad>0);
+    fw_motion_follow_record(0);assert(!fw_motion_follow_sample(&sample));
+    fw_motion_follow_record(1);assert(!fw_motion_straight_to(4,1500,0));
+    for(unsigned i=0;i<500;++i)tick(1); /* Nobody drains: overflow is reported. */
+    assert(fw_motion_follow_sample(&sample)==-1);
+    fw_motion_stop();fw_motion_follow_record(0);fw_motion_follow_bias(0,0);
+    puts("motion: follow recorder samples every scan, reports overflow; bias preload kept by init");
     puts("motion: calibrated centring recovers +/-12 mm using on/off thresholds; false reference probe is undone");
     puts("motion: 1000 mm/s reachable; left/right arcs reach correct centre and heading, clear walls, stop on obstacles/stale scans");
     puts("motion: post offset removes longitudinal drift using the correct fixture and forward profile");

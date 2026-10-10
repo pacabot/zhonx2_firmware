@@ -21,12 +21,14 @@ from robot_guard import identity, guarded_config
 SECTOR = 0x4000
 ADDRESS = 0x08004000
 COMMIT = 0x434f4d54
-SIZES = {5: 4700, 6: 4708, 7: 12492}
+SIZES = {5: 4700, 6: 4708, 7: 12492, 8: 12532}
 BUNDLE = slice(412, 1244)
 GEOMETRY = slice(4680, 4700)
+FOLLOW = 12492  # Schema 8: fw_follow_data_t after the schema 7 prefix.
+FOLLOW_SIZE = 40
 
 def layout(payload):
-    return (1120, 12460, 12480) if len(payload) == SIZES[7] else (412, 4680, 4700)
+    return (1120, 12460, 12480) if len(payload) in (SIZES[7], SIZES[8]) else (412, 4680, 4700)
 
 
 def records(raw):
@@ -57,7 +59,7 @@ def newest(items):
 def selected(raw):
     items = records(raw)
     if any(i['schema'] not in SIZES or len(i['payload']) != SIZES[i['schema']] for i in items):
-        raise ValueError('Supported snapshot formats: 5, 6 and 7 only; incompatible bank present')
+        raise ValueError('Supported snapshot formats: 5, 6, 7 and 8 only; incompatible bank present')
     # Match firmware load priority: newest supported schema, then sequence.
     schema = max((i['schema'] for i in items), default=0)
     return newest([i for i in items if i['schema'] == schema])
@@ -128,10 +130,22 @@ def validate(payload):
     geometry((n*100, w*100, inner*1000, pitch*1000))
     if not 100 <= post <= 250:
         raise ValueError('Invalid configured post position')
-    if len(payload) in (4708, 12492):
+    if len(payload) in (4708, 12492, 12532):
         raw, mv = struct.unpack_from('<2I', payload, battery)
         if not ((raw == mv == 0) or (256 <= raw <= 4080 and 6000 <= mv <= 8500)):
             raise ValueError('Invalid battery reference')
+    if len(payload) == SIZES[8]:
+        f = struct.unpack_from('<6Ii3I', payload, FOLLOW)
+        if f[0] not in (0, 1):
+            raise ValueError('Invalid follow validity flag')
+        if f[0]:
+            geometry(f[2:6])
+            if common and common != f[2:6]:
+                raise ValueError('Inconsistent geometry across calibrations')
+            # Same bounds as fw_follow_valid() in firmware/core/fw_cal_follow.c.
+            if not (4 <= f[1] <= 16 and -300 <= f[6] <= 300 and f[7] <= 60 and
+                    6 <= f[8] <= 16 and f[9] >= 4*f[8]):
+                raise ValueError('Invalid follow calibration')
 
 
 def archive(raw, entry):
@@ -166,6 +180,15 @@ def plan(current, saved):
             merged[tv:tv+8] = reference
         elif any(reference):
             raise ValueError('Target snapshot v5: save settings with current firmware before restoring battery calibration')
+    if target['schema'] >= 8:
+        if source['schema'] >= 8:
+            merged[FOLLOW:FOLLOW+FOLLOW_SIZE] = source['payload'][FOLLOW:FOLLOW+FOLLOW_SIZE]
+        elif merged[FOLLOW+8:FOLLOW+24] != merged[tb+8:tb+24]:
+            # An older archive has no wheel bias: keep the robot's own only
+            # while it belongs to the restored wall geometry.
+            merged[FOLLOW:FOLLOW+FOLLOW_SIZE] = bytes(FOLLOW_SIZE)
+    elif source['schema'] >= 8 and struct.unpack_from('<I', source['payload'], FOLLOW)[0]:
+        raise ValueError('Target snapshot v7 or older: save settings with current firmware before restoring the wall follow calibration')
     validate(merged)
     # Preserve the snapshot actually loaded by the firmware, even with mixed schemas.
     bank = 1-target['bank']

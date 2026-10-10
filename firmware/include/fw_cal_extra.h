@@ -29,8 +29,15 @@ typedef struct {
 } fw_corner_data_t;
 int fw_rotation_valid(const fw_rotation_data_t *);
 int fw_corner_valid(const fw_corner_data_t *);
+/* Rotation measures 120 mm/s only, both directions: the slower slots repeat
+ * that profile. Edges measure 40 and 220 mm/s; the 120 mm/s slot is their
+ * linear interpolation. The stored layout keeps its three slots per table. */
 int fw_rotation_run(const fw_cal_extra_io_t *,const fw_cal_geometry_t *,fw_rotation_data_t *);
 int fw_corner_run(const fw_cal_io_t *,const fw_cal_geometry_t *,unsigned side,uint32_t post_um,fw_corner_data_t *);
+/* Non-zero when the slower rotation slots are copies of the 120 mm/s profile. */
+int fw_rotation_single(const fw_rotation_data_t *);
+/* Non-zero when this orientation's 120 mm/s slot is the 40/220 interpolation. */
+int fw_corner_interpolated(const fw_corner_data_t *,unsigned facing_out);
 /* Returns zero unless a valid measured profile covers the requested speed. */
 uint32_t fw_rotation_quarter(const fw_rotation_data_t *,unsigned speed,unsigned direction);
 int fw_corner_offset(const fw_corner_data_t *,unsigned facing_out,unsigned speed,unsigned sensor,int opening,int32_t *offset);

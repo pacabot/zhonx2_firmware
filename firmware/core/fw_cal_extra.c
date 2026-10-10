@@ -8,6 +8,14 @@
 #define EDGES 64u
 static const unsigned rotation_speeds[FW_CAL_SPEEDS]={40,80,120};
 static const unsigned corner_speeds[FW_CAL_SPEEDS]={40,120,220};
+/* Measured subset. Rotation: the 2026-09-27 profiles at 40/80/120 mm/s differ
+ * by less than their own spread, so only the speed of turns, fast curves and
+ * the straight-line yaw scale is measured. Edges: raw and filtered offsets are
+ * linear in speed (sensor and filter delays), so both extremes are measured. */
+#define ROTATION_MEASURED (FW_CAL_SPEEDS-1)
+#define CORNER_MIDDLE 1
+static const unsigned corner_measured[2]={0,FW_CAL_SPEEDS-1};
+_Static_assert(FW_CAL_SPEEDS==3,"speed tables assume three stored slots");
 static uint32_t absolute(int32_t n) { return (uint32_t)(n<0?-(int64_t)n:n); }
 static uint32_t difference(uint32_t a,uint32_t b) { return a>b?a-b:b-a; }
 static uint32_t minimum(uint32_t a,uint32_t b) { return a<b?a:b; }
@@ -157,12 +165,12 @@ int fw_rotation_run(const fw_cal_extra_io_t *io,const fw_cal_geometry_t *g,fw_ro
 {
     if (!io || !io->spin || !out || !fw_cal_geometry_valid(g)) return FW_CAL_GEOMETRY;
     fw_rotation_data_t result={0}; result.geometry=*g;
-    for (unsigned v=0;v<FW_CAL_SPEEDS;++v) for (unsigned dir=0;dir<2;++dir) {
+    unsigned speed=rotation_speeds[ROTATION_MEASURED];
+    for (unsigned dir=0;dir<2;++dir) {
         uint8_t raw;
         if (io->base.read(io->base.context,F10|1u|32u,&raw)) return FW_CAL_MOTION;
         if (raw&(F10|1u|32u)) return FW_CAL_WALLS;
         int r=fw_cal_reference(&io->base,g,0); if (r) return r;
-        unsigned speed=rotation_speeds[v];
         char label[24]; snprintf(label,sizeof label,"%s %u MM/S",dir?"CCW":"CW",speed);
         if (io->base.status) io->base.status(io->base.context,label,0);
         rotation_scan_t scan;
@@ -183,14 +191,26 @@ int fw_rotation_run(const fw_cal_extra_io_t *io,const fw_cal_geometry_t *g,fw_ro
             if (converged) break;
         }
         if (!converged) return FW_CAL_UNSTABLE;
-        fw_rotation_point_t *p=&result.point[v]; p->speed=speed;
+        fw_rotation_point_t *p=&result.point[ROTATION_MEASURED]; p->speed=speed;
         p->quarter_um[dir]=quarter; p->spread_um[dir]=spread;
         p->quarter_error_mdeg[dir]=error; p->quarter_checks[dir]=checks;
     }
     int r=fw_cal_reference(&io->base,g,0); if (r) return r;
+    for (unsigned v=0;v<ROTATION_MEASURED;++v) {
+        result.point[v]=result.point[ROTATION_MEASURED]; result.point[v].speed=rotation_speeds[v];
+    }
     result.valid=1;
     if (!fw_rotation_valid(&result)) return FW_CAL_UNSTABLE;
     *out=result; return 0;
+}
+int fw_rotation_single(const fw_rotation_data_t *d)
+{
+    if (!fw_rotation_valid(d)) return 0;
+    for (unsigned v=0;v<ROTATION_MEASURED;++v) {
+        fw_rotation_point_t p=d->point[v]; p.speed=d->point[ROTATION_MEASURED].speed;
+        if (memcmp(&p,&d->point[ROTATION_MEASURED],sizeof p)) return 0;
+    }
+    return 1;
 }
 typedef struct {
     uint32_t origin,mask,bit[2],candidate[2],raw_edge[2],filtered_edge[2];
@@ -218,6 +238,28 @@ static void corner_observe(void *context,int32_t travel,uint8_t raw,uint8_t filt
         }
     }
 }
+static int32_t lerp(int32_t x,int32_t y,unsigned a,unsigned b,unsigned speed)
+{ return x+(int32_t)((int64_t)(y-x)*(speed-a)/(b-a)); }
+/* Same arithmetic as fw_corner_offset(): the derived slot lies on the 40/220 line. */
+static void derive_middle(fw_corner_point_t *m,const fw_corner_point_t *a,const fw_corner_point_t *b)
+{
+    memset(m,0,sizeof *m);
+    m->speed=corner_speeds[CORNER_MIDDLE]; m->mask=a->mask&b->mask;
+    for (unsigned s=0;s<2;++s) if (m->mask&(1u<<s)) {
+        m->raw_open_um[s]=lerp(a->raw_open_um[s],b->raw_open_um[s],a->speed,b->speed,m->speed);
+        m->raw_close_um[s]=lerp(a->raw_close_um[s],b->raw_close_um[s],a->speed,b->speed,m->speed);
+        m->open_um[s]=lerp(a->open_um[s],b->open_um[s],a->speed,b->speed,m->speed);
+        m->close_um[s]=lerp(a->close_um[s],b->close_um[s],a->speed,b->speed,m->speed);
+        m->spread_um[s]=maximum(a->spread_um[s],b->spread_um[s]);
+    }
+}
+int fw_corner_interpolated(const fw_corner_data_t *d,unsigned facing)
+{
+    if (!fw_corner_valid(d) || facing>1) return 0;
+    fw_corner_point_t m;
+    derive_middle(&m,&d->point[facing][0],&d->point[facing][FW_CAL_SPEEDS-1]);
+    return !memcmp(&m,&d->point[facing][CORNER_MIDDLE],sizeof m);
+}
 int fw_corner_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side,uint32_t post,fw_corner_data_t *out)
 {
     if (!io || !out || side>1 || !fw_cal_geometry_valid(g) ||
@@ -228,62 +270,76 @@ int fw_corner_run(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned side
     if (io->read(io->context,F10|1u|32u,&raw)) return FW_CAL_MOTION;
     if (raw&(F10|bit[1])) return FW_CAL_WALLS;
     if (!(raw&(side?32u:1u))) return FW_CAL_WALLS; /* Mirror two-wall fixtures. */
-    for (unsigned facing=0;facing<2;++facing) for (unsigned v=0;v<FW_CAL_SPEEDS;++v) {
+    for (unsigned facing=0;facing<2;++facing) {
         unsigned sensor_side=facing?1-side:side;
         bit[0]=sensor_side?2u:16u; bit[1]=sensor_side?1u:32u;
-        fw_corner_point_t *p=&result.point[facing][v]; p->speed=corner_speeds[v];
-        uint32_t low[2][4],high[2][4]={{0}};
-        for (unsigned s=0;s<2;++s) for (unsigned k=0;k<4;++k) low[s][k]=UINT32_MAX;
-        for (unsigned repeat=0;repeat<REPEATS;++repeat) {
-            int r=fw_cal_reference(io,g,side); if (r) return r;
-            if (facing && io->turn(io->context,180)) return FW_CAL_MOTION;
-            if (io->read(io->context,(uint8_t)bit[1],&raw)) return FW_CAL_MOTION;
-            if (raw&bit[1]) return FW_CAL_WALLS;
-            uint32_t mask=(raw&bit[0])?2u:3u;
-            if (repeat && mask!=p->mask) return FW_CAL_UNSTABLE;
-            p->mask=mask;
-            for (unsigned direction=0;direction<2;++direction) {
-                if (io->read(io->context,(uint8_t)(bit[1]|((mask&1)?bit[0]:0)),&raw)) return FW_CAL_MOTION;
-                corner_scan_t scan={.origin=direction?end:centre,.mask=mask,
-                    .bit={bit[0],bit[1]},.opening=!direction,.facing_out=(int)facing};
-                for (unsigned s=0;s<2;++s) {
-                    scan.previous[s]=scan.filter_previous[s]=!!(raw&bit[s]);
-                    if ((mask&(1u<<s)) && scan.previous[s]!=(direction?1:0)) return FW_CAL_RANGE;
+        /* One complete two-wall reference per orientation. Between repeats a
+         * front-wall reseat restores the longitudinal zero and the yaw; the
+         * reversed orientation turns back to the wall for it. */
+        int r=fw_cal_reference(io,g,side); if (r) return r;
+        if (facing && io->turn(io->context,180)) return FW_CAL_MOTION;
+        int anchored=1;
+        for (unsigned m=0;m<2;++m) {
+            unsigned v=corner_measured[m];
+            fw_corner_point_t *p=&result.point[facing][v]; p->speed=corner_speeds[v];
+            uint32_t low[2][4],high[2][4]={{0}};
+            for (unsigned s=0;s<2;++s) for (unsigned k=0;k<4;++k) low[s][k]=UINT32_MAX;
+            for (unsigned repeat=0;repeat<REPEATS;++repeat) {
+                if (!anchored) {
+                    if (facing && io->turn(io->context,-180)) return FW_CAL_MOTION;
+                    r=fw_cal_reseat(io,g); if (r) return r;
+                    if (facing && io->turn(io->context,180)) return FW_CAL_MOTION;
                 }
-                char label[24];
-                snprintf(label,sizeof label,"%c %s %s %u %u/3",sensor_side?'R':'L',direction?"CLOSE":"OPEN",
-                         (direction!=facing)?"FWD":"BACK",(unsigned)p->speed,repeat+1);
-                if (io->status) io->status(io->context,label,0);
-                int32_t travel=(int32_t)(end-centre);
-                if (!direction) travel=-travel;
-                if (facing) travel=-travel;
-                if (io->move(io->context,travel,p->speed,corner_observe,&scan)) return FW_CAL_MOTION;
-                if (scan.bad) return FW_CAL_UNSTABLE;
-                /* Require cruise at the trigger: the calibration speed must be real. */
-                uint32_t ramp=(p->speed*p->speed-40u*40u)*1000u/1600u+2000u;
-                for (unsigned s=0;s<2;++s) if (mask&(1u<<s)) {
-                    if (!scan.raw_seen[s] || !scan.filter_seen[s]) return FW_CAL_RANGE;
-                    uint32_t values[]={scan.raw_edge[s],scan.filtered_edge[s]};
-                    for (unsigned k=0;k<2;++k) {
-                        if (values[k]<centre+ramp || values[k]>end-ramp) return FW_CAL_RANGE;
-                        low[s][direction*2+k]=minimum(low[s][direction*2+k],values[k]);
-                        high[s][direction*2+k]=maximum(high[s][direction*2+k],values[k]);
+                anchored=0;
+                if (io->read(io->context,(uint8_t)bit[1],&raw)) return FW_CAL_MOTION;
+                if (raw&bit[1]) return FW_CAL_WALLS;
+                uint32_t mask=(raw&bit[0])?2u:3u;
+                if (repeat && mask!=p->mask) return FW_CAL_UNSTABLE;
+                p->mask=mask;
+                for (unsigned direction=0;direction<2;++direction) {
+                    if (io->read(io->context,(uint8_t)(bit[1]|((mask&1)?bit[0]:0)),&raw)) return FW_CAL_MOTION;
+                    corner_scan_t scan={.origin=direction?end:centre,.mask=mask,
+                        .bit={bit[0],bit[1]},.opening=!direction,.facing_out=(int)facing};
+                    for (unsigned s=0;s<2;++s) {
+                        scan.previous[s]=scan.filter_previous[s]=!!(raw&bit[s]);
+                        if ((mask&(1u<<s)) && scan.previous[s]!=(direction?1:0)) return FW_CAL_RANGE;
                     }
-                    if (direction) {
-                        p->raw_close_um[s]+=(int32_t)values[0]-(int32_t)post;
-                        p->close_um[s]+=(int32_t)values[1]-(int32_t)post;
-                    } else {
-                        p->raw_open_um[s]+=(int32_t)values[0]-(int32_t)post;
-                        p->open_um[s]+=(int32_t)values[1]-(int32_t)post;
+                    char label[24];
+                    snprintf(label,sizeof label,"%c %s %s %u %u/3",sensor_side?'R':'L',direction?"CLOSE":"OPEN",
+                             (direction!=facing)?"FWD":"BACK",(unsigned)p->speed,repeat+1);
+                    if (io->status) io->status(io->context,label,0);
+                    int32_t travel=(int32_t)(end-centre);
+                    if (!direction) travel=-travel;
+                    if (facing) travel=-travel;
+                    if (io->move(io->context,travel,p->speed,corner_observe,&scan)) return FW_CAL_MOTION;
+                    if (scan.bad) return FW_CAL_UNSTABLE;
+                    /* Require cruise at the trigger: the calibration speed must be real. */
+                    uint32_t ramp=(p->speed*p->speed-40u*40u)*1000u/1600u+2000u;
+                    for (unsigned s=0;s<2;++s) if (mask&(1u<<s)) {
+                        if (!scan.raw_seen[s] || !scan.filter_seen[s]) return FW_CAL_RANGE;
+                        uint32_t values[]={scan.raw_edge[s],scan.filtered_edge[s]};
+                        for (unsigned k=0;k<2;++k) {
+                            if (values[k]<centre+ramp || values[k]>end-ramp) return FW_CAL_RANGE;
+                            low[s][direction*2+k]=minimum(low[s][direction*2+k],values[k]);
+                            high[s][direction*2+k]=maximum(high[s][direction*2+k],values[k]);
+                        }
+                        if (direction) {
+                            p->raw_close_um[s]+=(int32_t)values[0]-(int32_t)post;
+                            p->close_um[s]+=(int32_t)values[1]-(int32_t)post;
+                        } else {
+                            p->raw_open_um[s]+=(int32_t)values[0]-(int32_t)post;
+                            p->open_um[s]+=(int32_t)values[1]-(int32_t)post;
+                        }
                     }
                 }
             }
-            if (facing && io->turn(io->context,-180)) return FW_CAL_MOTION;
+            for (unsigned s=0;s<2;++s) if (p->mask&(1u<<s)) {
+                p->raw_open_um[s]/=3; p->raw_close_um[s]/=3; p->open_um[s]/=3; p->close_um[s]/=3;
+                for (unsigned k=0;k<4;++k) p->spread_um[s]=maximum(p->spread_um[s],high[s][k]-low[s][k]);
+            }
         }
-        for (unsigned s=0;s<2;++s) if (p->mask&(1u<<s)) {
-            p->raw_open_um[s]/=3; p->raw_close_um[s]/=3; p->open_um[s]/=3; p->close_um[s]/=3;
-            for (unsigned k=0;k<4;++k) p->spread_um[s]=maximum(p->spread_um[s],high[s][k]-low[s][k]);
-        }
+        if (facing && io->turn(io->context,-180)) return FW_CAL_MOTION;
+        derive_middle(&result.point[facing][CORNER_MIDDLE],&result.point[facing][0],&result.point[facing][FW_CAL_SPEEDS-1]);
     }
     int r=fw_cal_reference(io,g,side); if (r) return r;
     result.valid=1;

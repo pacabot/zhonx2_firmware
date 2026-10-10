@@ -28,6 +28,7 @@
 
 #include "misc.h"
 #include "fw_motion.h"
+#include "fw_link.h"
 #include "fw_layout.h"
 extern void SystemInit(void);    /*!< Setup the microcontroller system(CMSIS) */
 
@@ -175,4 +176,5 @@ void SysTick_Handler(void)
 {
     os_context.system_ticks++;
     fw_motion_tick(os_context.system_ticks);
+    fw_link_tick(os_context.system_ticks);
 }

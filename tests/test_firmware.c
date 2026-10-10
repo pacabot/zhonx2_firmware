@@ -334,6 +334,34 @@ static void automatic_origin_test(void)
     puts("origin: 96 grids, 6/9/16 cells, all headings, corners and middle of every edge; no cropping or false walls");
 }
 
+/* Eight cells from a controller reset, offset toward the left wall: largest
+ * excursion right of centre once the left threshold is crossed, um. A
+ * calibrated bias is preloaded with an error, as Wall follow leaves it. */
+static double one_sided_start(int calibrated,double offset_um,double h0,unsigned speed,int mismatch,int32_t bias_error)
+{
+    fw_cal_data_t d={.valid=1,.geometry={47000,94000,167000,179000},.side={{84500,85500,0},{81500,83500,1000}}};
+    wall_control_t a;wall_control_reset(&a);a.lag_scans=speed>1000?2:3;a.bias_calibrated=(uint8_t)calibrated;
+    if(calibrated)a.yaw_bias_mrad_m=(int32_t)lround(mismatch*10000/83.5)+bias_error;
+    double lateral=83500-offset_um,heading=h0,remainder=0,distance=speed*10.0,overshoot=0;
+    int left=1,right=0,crossed=0;uint8_t delayed[3];
+    for(unsigned i=0;i<3;++i)delayed[i]=0x3f&~0x21&~0x10;
+    for(unsigned tick=0;tick*distance<8*179000.0;++tick) {
+        if(lateral<=84500)left=1;else if(lateral>=85500)left=0;
+        if(167000-lateral<=81500)right=1;else if(167000-lateral>=83500)right=0;
+        uint8_t sensors=0x3f&~0x21;
+        if(left)sensors&=~0x10;
+        if(right)sensors&=~0x02;
+        uint8_t sensed=delayed[tick%a.lag_scans];delayed[tick%a.lag_scans]=sensors;
+        int yaw=(int)remainder;remainder-=yaw;
+        double change=2.0*wall_control_position(&a,sensed,&d,(int32_t)distance,yaw)*distance/83500;
+        remainder+=change;heading+=change+mismatch*0.01*distance/83.5;lateral+=distance*heading/1000;
+        assert(lateral>47000 && lateral<120000);
+        if(lateral>=84500)crossed=1;
+        if(crossed && lateral-83500>overshoot)overshoot=lateral-83500;
+    }
+    assert(crossed);
+    return overshoot;
+}
 static void wall_test(void)
 {
     wall_control_t a,b; wall_control_reset(&a); wall_control_reset(&b);
@@ -386,14 +414,100 @@ static void wall_test(void)
         assert(abs((int)lateral-83500)<5000 && abs((int)heading)<50);
         assert(abs(a.yaw_bias_mrad_m-(int)(sign*(int)mismatch*10000/83.5))<30);
     }
+    /* One-sided evidence: distance only, reset by stops and door edges. */
     wall_control_reset(&a);
-    for(unsigned i=0;i<200;++i)wall_control_position_timed(&a,0x0f,&measured,0,0,10);
-    assert(!a.near_ms[0]);
-    for(unsigned i=0;i<50;++i)wall_control_position_timed(&a,0x0f,&measured,2000,0,10);
-    assert(a.near_ms[0]==500 && a.near_um[0]==100000);
-    wall_control_position_timed(&a,0x3f,&measured,2000,0,10);
-    assert(!a.near_ms[0] && !a.near_um[0]);
+    for(unsigned i=0;i<200;++i)wall_control_position(&a,0x0f,&measured,0,0);
+    assert(!a.persist_um && a.optical_side==1 && a.anchor_estimated);
+    for(unsigned i=0;i<50;++i)wall_control_position(&a,0x0f,&measured,2000,0);
+    assert(a.persist_um==100000);
+    wall_control_position(&a,0x3f,&measured,2000,0);
+    assert(!a.persist_um && !a.optical_side);
     puts("control: 20 m at 200/1000 mm/s, delayed binary sensors, +/-1% wheel mismatch, initial offset and yaw slip");
+    /* Straight from a controller reset (pivot, curve exit) with an unknown
+     * heading error and offset: both sides of the line, 4 cells, run ramps.
+     * Without, then with a calibrated yaw bias (wheel heading trusted at the
+     * first crossing). */
+    for(int calibrated=0;calibrated<=1;++calibrated)
+    for(unsigned speed=220;speed<=1000;speed+=speed==220?380:400) {
+        double worst=0,sum=0;unsigned runs=0;
+        for(int h0=-40;h0<=40;h0+=20)for(int d0=-5;d0<=5;d0+=5) {
+            wall_control_reset(&a);unsigned latency=3;a.lag_scans=(uint8_t)latency;a.bias_calibrated=(uint8_t)calibrated;
+            double lateral=83500+d0*1000,heading=h0,remainder=0,v=40,s=0,accel=600+2.0*speed,late=0;
+            int left=0,right=0;uint8_t delayed[3]={0x0c,0x0c,0x0c};
+            for(unsigned tick=0;s<716000;++tick) {
+                double target=fmin(speed,sqrt(1600+2*accel*(716000-s)/1000));
+                v=fmin(target,v+accel*.01);double distance=v*10;
+                if(lateral<=84500)left=1;else if(lateral>=85500)left=0;
+                if(167000-lateral<=81500)right=1;else if(167000-lateral>=83500)right=0;
+                uint8_t sensors=0x3f&~0x21;
+                if(left)sensors&=~0x10;
+                if(right)sensors&=~0x02;
+                uint8_t sensed=delayed[tick%latency];delayed[tick%latency]=sensors;
+                int yaw=(int)remainder;remainder-=yaw;
+                double change=2.0*wall_control_position(&a,sensed,&measured,(int32_t)distance,yaw)*distance/83500;
+                remainder+=change;heading+=change;lateral+=distance*heading/1000;s+=distance;
+                assert(lateral>47000 && lateral<120000);
+                if(s>=250000 && fabs(lateral-84500)>late)late=fabs(lateral-84500);
+            }
+            if(late>worst)worst=late;
+            sum+=late;++runs;
+        }
+        printf("reset recovery %u mm/s%s: max |e| after 25 cm mean %.1f, worst %.1f mm\n",speed,
+            calibrated?", calibrated bias":"",sum/runs/1000,worst/1000);
+        assert(worst<12000 && sum/runs<6000);
+    }
+    /* Out-and-back passes as in exploration: each 180-degree pivot removes the
+     * estimated heading, so estimate errors carry over. Thresholds 5 mm off
+     * centre and 1 % wheel mismatch made the follower reach the walls. */
+    fw_cal_data_t off_centre={.valid=1,.geometry={47000,94000,167000,179000},
+        .side={{78500,79500,0},{88500,89500,0}}};
+    double worst_passes=0;
+    for(uint32_t seed=1;seed<=5;++seed) {
+        double lateral=83500,heading=0;int32_t bias=0,estimate=0;int left=0,right=0;uint32_t random=seed;
+        for(unsigned pass=0;pass<24;++pass) {
+            unsigned speed=pass<8?220:pass<16?600:1000,latency=3;
+            wall_control_reset(&a);a.yaw_bias_mrad_m=bias;a.lag_scans=(uint8_t)latency;
+            double remainder=0,v=40,s=0,accel=600+2.0*speed;uint8_t delayed[3]={0x0c,0x0c,0x0c};
+            for(unsigned tick=0;s<716000;++tick) {
+                double target=fmin(speed,sqrt(1600+2*accel*(716000-s)/1000));
+                v=fmin(target,v+accel*.01);double distance=v*10;
+                if(lateral<=78500)left=1;else if(lateral>=79500)left=0;
+                if(167000-lateral<=88500)right=1;else if(167000-lateral>=89500)right=0;
+                uint8_t sensors=0x3f&~0x21;
+                if(left)sensors&=~0x10;
+                if(right)sensors&=~0x02;
+                uint8_t sensed=delayed[tick%latency];delayed[tick%latency]=sensors;
+                int yaw=(int)remainder;remainder-=yaw;
+                double change=2.0*wall_control_position(&a,sensed,&off_centre,(int32_t)distance,yaw)*distance/83500;
+                remainder+=change;heading+=change+0.01*distance/83.5;lateral+=distance*heading/1000;s+=distance;
+                assert(lateral>47000 && lateral<120000);
+                if(fabs(lateral-83500)>worst_passes)worst_passes=fabs(lateral-83500);
+            }
+            bias=a.yaw_bias_mrad_m;estimate=a.heading_mrad;
+            random=random*1103515245u+12345u;
+            lateral=167000-lateral;heading+=-estimate+9*(((random>>8)&0xffff)/32768.0-1.0);
+        }
+    }
+    printf("out-and-back: 5 x 24 passes 220/600/1000 mm/s, thresholds 5 mm off centre, wheels +1%%: worst %.1f mm from centre\n",worst_passes/1000);
+    assert(worst_passes<30000);
+    /* Too close to a wall after a pivot (the longitudinal error of the last
+     * straight): the follower turns away harder the longer it stays on the
+     * same side, then must not cross the corridor with that heading. */
+    double worst_calibrated=0;
+    for(unsigned speed=220;speed<=1500;speed=speed==220?600:speed==600?1500:1501)
+    for(int h0=-15;h0<=15;h0+=15)for(int mismatch=-1;mismatch<=1;++mismatch)for(int error=-20;error<=20;error+=20) {
+        double o=one_sided_start(1,30000,h0,speed,mismatch,error);
+        if(o>worst_calibrated)worst_calibrated=o;
+    }
+    for(unsigned speed=220;speed<=1500;speed=speed==220?600:speed==600?1500:1501) {
+        double before=one_sided_start(0,30000,0,speed,0,0),after=one_sided_start(1,30000,0,speed,0,0);
+        printf("one-sided start 30 mm, %u mm/s: overshoot %.1f mm without, %.1f mm with calibrated bias\n",speed,before/1000,after/1000);
+        assert(after<before*0.6);
+    }
+    /* Worst: 1500 mm/s, pivot +15 mrad, wheels +1 % calibrated 20 mrad/m low,
+     * 17 mm; the same robot without the wheel heading reaches the far wall. */
+    printf("one-sided start 30 mm, pivot +/-15 mrad, wheels +/-1%% calibrated within 20 mrad/m: worst overshoot %.1f mm\n",worst_calibrated/1000);
+    assert(worst_calibrated<20000);
 
 }
 static void exit_and_clock_test(void)
@@ -407,7 +521,7 @@ static void exit_and_clock_test(void)
         for(unsigned i=0;i<10;++i) {
             double yaw=2.0*c.output*3000/83500;heading+=yaw;remainder+=yaw;
             int measured=(int)remainder;remainder-=measured;
-            wall_control_position_timed(&c,0x3f,&d,3000,measured,10);
+            wall_control_position(&c,0x3f,&d,3000,measured);
         }
         assert(fabs(heading)<15 && c.exit_um==59500);
         int before=c.heading_mrad;wall_control_heading_reference(&c,80);assert(c.heading_mrad-before==45);

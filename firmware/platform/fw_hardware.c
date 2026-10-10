@@ -4,6 +4,9 @@
 #include "fw_motion.h"
 #include "fw_buttons.h"
 #include "fw_battery.h"
+#include "fw_bt.h"
+#include "fw_link.h"
+#include "fw_sound.h"
 #include "hal/hal_os.h"
 #include "app/app_def.h"
 #include "config/config.h"
@@ -22,6 +25,30 @@ static int press(void)
         __WFI();
     }
     return 1;
+}
+/* Beeper test: the three tones around the buzzer resonance, then the tunes. */
+static const unsigned tone_hz[]={2000,2700,3500};
+static const char *const beeper_names[]={"2000 Hz","2700 Hz","3500 Hz","Victory","Failure","Connect"};
+static void beeper(unsigned mode)
+{
+    if(mode<3)hal_beeper_beep(app_context.beeper,(long)tone_hz[mode],120);
+    else fw_sound_effect((const unsigned[]){FW_SOUND_VICTORY,FW_SOUND_FAILURE,FW_SOUND_CONNECT}[mode-3]);
+}
+static void bluetooth(unsigned page)
+{
+    fw_bt_status_t b;fw_bt_status(&b);fw_link_status_t l;fw_link_status(&l);char s[24];
+    if(!page) {
+        snprintf(s,sizeof s,"HM-18 %s",b.state);text(0,16,s);
+        text(0,28,!b.connected?"NOT CONNECTED":l.session?"ARIANE SESSION":"CONNECTED");
+        if(b.address[0])snprintf(s,sizeof s,"%.16s",b.address);
+        else snprintf(s,sizeof s,"%u baud",b.baud);
+        text(0,40,s);
+    } else {
+        snprintf(s,sizeof s,"RX %lu TX %lu",(unsigned long)b.rx_bytes,(unsigned long)b.tx_bytes);text(0,16,s);
+        snprintf(s,sizeof s,"FRAMES %lu",(unsigned long)l.frames_rx);text(0,28,s);
+        snprintf(s,sizeof s,"LOST %lu CRC %lu",(unsigned long)(b.tx_dropped+l.telemetry_dropped),(unsigned long)l.crc_errors);text(0,40,s);
+    }
+    fw_ui_hint("OK: PAGE");
 }
 static void release(void)
 { while(fw_select_pressed() && !fw_cancel_pressed()) __WFI(); }
@@ -46,22 +73,24 @@ static void telemeters(int filtered)
 void fw_hardware_test(unsigned test)
 {
     unsigned mode=0,last=hal_os_get_systicks()-100;
-    int beeper_state=HAL_BEEPER_STATE_OFF;
+    /* The test sounds even when muted, at the saved volume otherwise. */
+    unsigned char volume=zhonxSettings.beeper_enabled;
     fw_motion_stop();release();
-    if(test==2) {hal_beeper_get_state(app_context.beeper,&beeper_state);hal_beeper_set_state(app_context.beeper,HAL_BEEPER_STATE_ON);}
+    if(test==2 && !volume)fw_sound_set_level(FW_SOUND_HIGH);
     while(!fw_cancel_pressed()) {
         if(test!=5 && press()) {
             ++mode;
             if(test==6)fw_menu_battery_setup();
-            if(test==2)hal_beeper_beep(app_context.beeper,(const long[]){800,1200,1800}[(mode-1)%3],120);
+            if(test==2)beeper((mode-1)%6);
             release();last=hal_os_get_systicks()-100;
         }
         if((unsigned)(hal_os_get_systicks()-last)>=100) {
             last=hal_os_get_systicks();char s[24];
             if(test==1)telemeters(mode%2);
             else {
-                frame(test==2?"BEEPER":test==3?"LEDS":test==4?"DISPLAY":test==5?"BUTTONS":"BATTERY ADC");
-                if(test==2) {snprintf(s,sizeof s,"%u Hz",(const unsigned[]){800,1200,1800}[mode?((mode-1)%3):0]);text(0,24,s);fw_ui_hint("OK: NEXT TONE");}
+                frame(test==2?"BEEPER":test==3?"LEDS":test==4?"DISPLAY":test==5?"BUTTONS":test==7?"BLUETOOTH":"BATTERY ADC");
+                if(test==2) {text(0,24,beeper_names[mode?(mode-1)%6:0]);fw_ui_hint("OK: NEXT SOUND");}
+                if(test==7)bluetooth(mode%2);
                 if(test==3) {
                     hal_led_set_state(app_context.led,HAL_LED_COLOR_RED,mode%3==1);
                     hal_led_set_state(app_context.led,HAL_LED_COLOR_ORANGE,mode%3==2);
@@ -99,7 +128,7 @@ void fw_hardware_test(unsigned test)
         }
         __WFI();
     }
-    if(test==2)hal_beeper_set_state(app_context.beeper,beeper_state);
+    if(test==2)zhonxSettings.beeper_enabled=volume;
     if(test==3)hal_led_reset(app_context.led);
     fw_motion_stop();
 }

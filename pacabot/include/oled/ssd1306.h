@@ -53,6 +53,7 @@ void ssd1306InvertPixel(unsigned char x, unsigned char y);
 unsigned char ssd1306GetPixel(unsigned char x, unsigned char y);
 void ssd1306ClearScreen(void);
 void ssd1306Refresh(void);
+void ssd1306DisplayAllOn(int on);
 void ssd1306DrawTextBox(unsigned x,unsigned y,unsigned width,unsigned height,
                        const char *text,const FONT_DEF *font);
 void ssd1306DrawString(unsigned int x, unsigned int y, const char *text, const FONT_DEF *font);

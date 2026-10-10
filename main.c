@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "app/menu_colin.h"
 #include "fw_menu.h"
+#include "fw_link.h"
 //extern int display_main_menu(void);
 extern int menu_colin(menuItem menu);
 extern menuItem menu_c;
@@ -91,6 +92,8 @@ int app_initialization(void)
     zhonxSettings.wall_know_cost=1;
     zhonxSettings.cell_cost=5;
     zhonxSettings.start_orientation = 0;
+    /* Sound at full volume unless the saved settings say otherwise. */
+    zhonxSettings.beeper_enabled = 1;
     fw_app_init();
     rv = hal_os_init();
     if (rv != HAL_OS_SUCCESS)
@@ -176,6 +179,13 @@ int app_initialization(void)
     }
 
     rv = step_motors_init();
+    if (rv != 0)
+    {
+        return rv;
+    }
+
+    /* Ariane link on the HM-18 BLE module (USART1), after every peripheral. */
+    fw_link_init();
 
     return rv;
 }

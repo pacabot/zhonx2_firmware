@@ -94,6 +94,8 @@ static step_motor_handle step_motor[MAX_CHANNELS];
 static volatile unsigned long pair_limit[2];
 static volatile int pair_owned;
 static volatile fw_step_clock_t pair_clock[2];
+/* Signed STEP toggle events since boot, never reset (Ariane telemetry). */
+volatile long hal_step_motor_odometer[2];
 
 
 int hal_step_motor_init(void)
@@ -622,6 +624,7 @@ void TIM2_IRQHandler(void)
     STEP_MOTOR1_TIM->SR = ~TIM_FLAG_CC2;
 
     step_motor[0].steps++;
+    hal_step_motor_odometer[0] += step_motor[0].direction == DIRECTION_FWD ? 1 : -1;
     if (pair_owned) {
         if ((unsigned long)step_motor[0].steps >= pair_limit[0]) {
             step_motor[0].timer->CR1 &= ~TIM_CR1_CEN;
@@ -670,6 +673,7 @@ void TIM3_IRQHandler(void)
     STEP_MOTOR2_TIM->SR = ~TIM_FLAG_CC2;
 
     step_motor[1].steps++;
+    hal_step_motor_odometer[1] += step_motor[1].direction == DIRECTION_FWD ? 1 : -1;
     if (pair_owned) {
         if ((unsigned long)step_motor[1].steps >= pair_limit[1]) {
             step_motor[1].timer->CR1 &= ~TIM_CR1_CEN;

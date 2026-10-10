@@ -27,16 +27,10 @@
 
 #define BEEPER_TIMER    TIM4
 
-/* APB2 bus frequency (in Hz) */
-#define APB2_FREQ 42000000
-/* Beeper Timer base frequency (in Hz) */
-#define TIMER_FREQ 128000
-/* Beeper frequency (in Hz) */
-#define BEEPER_FREQ 16000
-/* Timer prescaler (PSC register) */
-#define TIMER_PRESCALER (((APB2_FREQ) / (TIMER_FREQ)) - 1)
-/* Timer period (ARR register) */
-#define TIMER_PERIOD (((TIMER_FREQ) / (BEEPER_FREQ)) - 1)
+/* TIM4 counts at 1 MHz: APB1 timer clock (2 x PCLK1 = 84 MHz) / 84. */
+#define TIMER_FREQ 1000000
+/* Initial period, overwritten by every tone. */
+#define TIMER_PERIOD 999
 
 #define TIM_CH3_PIN     	GPIO_Pin_8
 #define TIM_CH3_PIN_SOURCE  GPIO_PinSource8
@@ -74,8 +68,10 @@ int hal_beeper_init(void)
     GPIO_Configuration();
 
     /* Time base configuration */
+    RCC_ClocksTypeDef clocks;
+    RCC_GetClocksFreq(&clocks);
     TIM_TimeBaseStructure.TIM_Period = TIMER_PERIOD;
-    TIM_TimeBaseStructure.TIM_Prescaler = TIMER_PRESCALER;
+    TIM_TimeBaseStructure.TIM_Prescaler = (uint16_t)(2 * clocks.PCLK1_Frequency / TIMER_FREQ - 1);
     TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
     TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
     TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
@@ -101,10 +97,12 @@ int hal_beeper_open(HAL_BEEPER_HANDLE *handle, void *params)
 
     if (beeper.isInitialized == false)
     {
-        TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_Toggle;
+        /* PWM: the output is high (Q1 on, current in the buzzer) during
+         * the first CCR3 counts of each period, see hal_beeper_tone(). */
+        TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
         TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
         TIM_OCInitStructure.TIM_Pulse = 0;
-        TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_Low;
+        TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
 
         TIM_OC3Init(BEEPER_TIMER, &TIM_OCInitStructure);
         TIM_OC3PreloadConfig(BEEPER_TIMER, TIM_OCPreload_Enable);
@@ -112,7 +110,8 @@ int hal_beeper_open(HAL_BEEPER_HANDLE *handle, void *params)
         TIM_ARRPreloadConfig(BEEPER_TIMER, ENABLE);
         beeper.isInitialized = true;
         BEEPER_TIMER->CCER &= ~TIM_CCER_CC3E;
-        zhonxSettings.beeper_enabled = true;
+        /* zhonxSettings.beeper_enabled is the saved volume level (fw_sound.h):
+         * main() sets the default before the settings are loaded. */
     }
     *handle = (HAL_BEEPER_HANDLE)&beeper;
 #endif
@@ -130,7 +129,7 @@ int hal_beeper_get_state(HAL_BEEPER_HANDLE handle, int *state)
 {
     UNUSED(handle);
 
-    if (zhonxSettings.beeper_enabled == true)
+    if (zhonxSettings.beeper_enabled != 0)
     {
         *state = HAL_BEEPER_STATE_ON;
     }
@@ -154,10 +153,26 @@ int hal_beeper_set_state(HAL_BEEPER_HANDLE handle, int state)
             zhonxSettings.beeper_enabled = false;
             break;
         case HAL_BEEPER_STATE_ON:
-            zhonxSettings.beeper_enabled = true;
+            /* Keep a lower volume level, unmute at full volume. */
+            if (zhonxSettings.beeper_enabled == 0)
+                zhonxSettings.beeper_enabled = 1;
             break;
     }
     return HAL_BEEPER_E_SUCCESS;
+}
+
+
+/* Duty cycle per volume code (fw_sound.h): a 50 % square wave drives the
+ * magnetic buzzer hardest; 12 % and 4 % lower its fundamental by about
+ * 9 dB and 18 dB. */
+static unsigned duty_permille(void)
+{
+    switch (zhonxSettings.beeper_enabled)
+    {
+        case 2: return 120;
+        case 3: return 40;
+        default: return 500;
+    }
 }
 
 
@@ -171,10 +186,11 @@ int hal_beeper_tone(HAL_BEEPER_HANDLE handle, long freq)
         TIM_Cmd(BEEPER_TIMER, DISABLE); h->freq = 0;
         return HAL_BEEPER_E_SUCCESS;
     }
-    if (freq > TIMER_FREQ) freq = TIMER_FREQ;
-    unsigned long period = TIMER_FREQ / freq - 1;
-    if (period > 0xffff) period = 0xffff;
-    TIM_SetAutoreload(BEEPER_TIMER, period);
+    if (freq > TIMER_FREQ / 20) freq = TIMER_FREQ / 20;
+    unsigned long period = TIMER_FREQ / freq;
+    if (period > 0x10000) period = 0x10000;
+    TIM_SetAutoreload(BEEPER_TIMER, period - 1);
+    TIM_SetCompare3(BEEPER_TIMER, period * duty_permille() / 1000);
     h->freq = freq;
     BEEPER_TIMER->CCER |= TIM_CCER_CC3E;
     TIM_Cmd(BEEPER_TIMER, ENABLE);

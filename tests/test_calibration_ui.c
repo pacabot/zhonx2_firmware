@@ -14,6 +14,7 @@ GPIO_TypeDef test_gpioc;
 void fw_ui_menu_refresh(void) {ssd1306Refresh();}
 int fw_cal_nose_tenth_mm,fw_cal_width_tenth_mm,fw_cal_inner_mm=167,fw_cal_pitch_mm=179,fw_cal_post_mm=173;
 static unsigned pages,toggle,now,mode,io_moves;
+#define SECOND_CORNER_REPORT 63u
 static unsigned diagram_side,nav_event;
 static unsigned char first_page[1024],second_page[1024];
 static void save_image(const char *name)
@@ -31,6 +32,13 @@ int fw_app_rotation_commit(const fw_rotation_data_t *d) { (void)d;assert(0);retu
 int fw_app_corner_commit(const fw_corner_data_t *d) { (void)d;assert(0);return -1; }
 int fw_motion_calibration_spin(int32_t um,unsigned s) { (void)um;(void)s;assert(0);return -1; }
 int fw_motion_calibration_traverse(int32_t um,unsigned s) { (void)um;(void)s;assert(0);return -1; }
+static fw_follow_data_t follow;
+const fw_follow_data_t *fw_app_follow(void) { return &follow; }
+int fw_app_follow_commit(const fw_follow_data_t *d) { (void)d;assert(0);return -1; }
+void fw_motion_follow_record(int enable) { (void)enable;assert(0); }
+int fw_motion_follow_sample(fw_follow_sample_t *x) { (void)x;assert(0);return -1; }
+int fw_motion_straight_to(unsigned cells,unsigned speed,int wall) { (void)cells;(void)speed;(void)wall;assert(0);return -1; }
+int fw_motion_turn(int degrees,unsigned speed) { (void)degrees;(void)speed;assert(0);return -1; }
 static const fw_cal_data_t data={.valid=1,.repetitions=3,.geometry={40000,90000,167000,179000},
   .front={{76000,80000,200},{130000,136000,400}},.side={{78500,79500,0},{88500,90500,1000}}};
 const fw_cal_data_t *fw_app_calibration(void) { return &data; }
@@ -94,7 +102,7 @@ void fw_test_idle(void)
         return;
     }
     if (!toggle) {
-        if(pages==93) {
+        if(pages==SECOND_CORNER_REPORT) {
             unsigned char actual[1024];memcpy(actual,buffer,1024);
             ssd1306ClearScreen();fw_display_text(0,32,"Right: MISSING");
             for(unsigned y=32;y<44;++y)for(unsigned x=0;x<120;++x)
@@ -116,7 +124,8 @@ int main(void)
     for (unsigned i=0;i<3;++i) rotation.point[i]=(fw_rotation_point_t){
         .speed=40+40*i,.quarter_um={66000,65000},.spread_um={1200,800},
         .quarter_error_mdeg={1200,0},.quarter_checks={8,0}};
-    assert(!fw_rotation_report() && pages==20);
+    /* Identical profiles: one measured speed, so a Speeds page and 120 mm/s only. */
+    assert(!fw_rotation_report() && pages==13);
     for (unsigned s=0;s<2;++s) {
         corner[s]=(fw_corner_data_t){.valid=1,.side=s,.post_um=173000,.geometry=data.geometry};
         for(unsigned f=0;f<2;++f) for(unsigned i=0;i<3;++i)
@@ -124,11 +133,15 @@ int main(void)
                 .raw_open_um={-12000,12500},.raw_close_um={-10000,11200},
                 .open_um={-13000,13000},.close_um={-10500,10000},.spread_um={1000,2000}};
     }
-    assert(!fw_corner_report() && pages==93);
+    /* Identical slots: the 120 mm/s slot reads as interpolated and is not paged. */
+    assert(!fw_corner_report() && pages==SECOND_CORNER_REPORT);
     corner[1].valid=0;
-    assert(!fw_corner_report() && pages==130);
+    assert(!fw_corner_report() && pages==89);
     corner[1].valid=1;
-    puts("OLED calibration: 93 readable wall, rotation and corner report pages rendered with the real driver");
+    follow=(fw_follow_data_t){.valid=1,.cells=5,.geometry=data.geometry,.yaw_bias_mrad_m=-37,
+        .spread_mrad_m=6,.passes=15,.crossings=110};
+    assert(fw_follow_valid(&follow) && !fw_follow_report() && pages==91);
+    puts("OLED calibration: 65 readable wall, rotation, corner and follow report pages rendered with the real driver");
     mode=4;test_gpioc.IDR=0xffff;assert(!fw_calibration_report() && nav_event==9);
     test_gpioc.IDR=0xffff;
     fw_cal_nose_tenth_mm=400;fw_cal_width_tenth_mm=900;
@@ -136,6 +149,7 @@ int main(void)
     test_gpioc.IDR=0xffff; assert(fw_rotation_menu()==-1);
     test_gpioc.IDR=0xffff; diagram_side=1; assert(fw_corner_left_menu()==-1);
     test_gpioc.IDR=0xffff; diagram_side=2; assert(fw_corner_right_menu()==-1);
+    test_gpioc.IDR=0xffff; diagram_side=3; assert(fw_follow_menu()==-1); /* Corridor, both walls. */
     mode=2;test_gpioc.IDR=0xffff;now=0;
     assert(fw_calibrate_menu()==-1 && io_moves==2); /* It did request reverse after contact. */
     mode=3;test_gpioc.IDR=0xffff;now=0;io_moves=0;

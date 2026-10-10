@@ -113,6 +113,12 @@ int fw_cal_reference(const fw_cal_io_t *io,const fw_cal_geometry_t *g,unsigned s
     r=seat(io,g,g->inner_um-g->nose_um,0); if (r) return r;
     return move(io,-(int32_t)(g->inner_um/2-g->nose_um))?FW_CAL_MOTION:0;
 }
+int fw_cal_reseat(const fw_cal_io_t *io,const fw_cal_geometry_t *g)
+{
+    if (!io || !fw_cal_geometry_valid(g)) return FW_CAL_GEOMETRY;
+    int r=seat(io,g,g->inner_um/2,1); if (r) return r;
+    return move(io,-(int32_t)(g->inner_um/2-g->nose_um))?FW_CAL_MOTION:0;
+}
 static int side_point(const fw_cal_io_t *io,const fw_cal_geometry_t *g,
                       unsigned side,uint32_t *position,uint32_t distance,int *detected,int *axis_known)
 {

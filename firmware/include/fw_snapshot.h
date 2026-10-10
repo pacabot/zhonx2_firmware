@@ -2,10 +2,11 @@
 #define FW_SNAPSHOT_H
 #include "fw_library.h"
 #include "fw_cal_extra.h"
+#include "fw_cal_follow.h"
 #include "fw_battery.h"
 #include "config/config.h"
 #include <stddef.h>
-#define FW_SNAPSHOT_SCHEMA 7u
+#define FW_SNAPSHOT_SCHEMA 8u
 typedef struct {fw_cal_data_t wall;fw_rotation_data_t rotation;fw_corner_data_t corner[2];} calibration_bundle_t;
 typedef struct {
     robot_settings settings;nm_map_t map;
@@ -15,7 +16,9 @@ typedef struct {
     snapshot_base_t base;calibration_bundle_t measurements;fw_library_t library;
     uint32_t learned;int32_t nose,width,inner,pitch,post;fw_battery_reference_t battery;
     uint32_t maze_size;
+    fw_follow_data_t follow; /* Schema 8; schema 7 is the prefix up to here. */
 } snapshot_t;
+#define SNAPSHOT_V7_SIZE offsetof(snapshot_t,follow)
 /* Frozen schema 1..6 ABI. Never substitute the variable-size current maze. */
 typedef struct {nm_cell_t cell[81];} legacy_map_t;
 typedef struct {uint8_t direction[81];uint16_t length;uint32_t cost;} legacy_route_t;

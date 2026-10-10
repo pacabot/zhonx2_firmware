@@ -68,7 +68,7 @@ unsigned fw_run_acceleration(unsigned speed) {return 600+2*speed;}
 void fw_ui_run_setup(unsigned n,unsigned speed,unsigned accel,int aligned)
 {assert(ready && aligned && n>=1 && n<=3 && accel==600+2*speed);}
 int fw_app_trial(unsigned n,unsigned speed)
-{assert((n==(const unsigned[]){3,1,2}[slow] && speed==(const unsigned[]){650,140,250}[slow]));++slow;return 0;}
+{assert((n==(const unsigned[]){3,1,2}[slow] && speed==(const unsigned[]){650,240,250}[slow]));++slow;return 0;}
 int fw_app_run(void) {assert(0);return 0;}
 int fw_app_run_curves(void) {assert(0);return 0;}
 unsigned fw_app_maze_count(void) {return ready;}
@@ -85,6 +85,8 @@ UNUSED_ACTION(fw_corner_right_menu)
 UNUSED_ACTION(fw_calibration_report)
 UNUSED_ACTION(fw_rotation_report)
 UNUSED_ACTION(fw_corner_report)
+UNUSED_ACTION(fw_follow_menu)
+UNUSED_ACTION(fw_follow_report)
 int main(void)
 {
     test_gpioc.IDR=0xffff;

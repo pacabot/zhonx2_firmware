@@ -250,4 +250,7 @@ unsigned long hal_step_motor_pair_remaining(unsigned int wheel);
 unsigned long hal_step_motor_pair_count(unsigned int wheel);
 void hal_step_motor_pair_extend(unsigned long pulses);
 void hal_step_motor_pair_release(void);
+/* Signed STEP toggle events since boot per wheel (0 right, 1 left), two per
+ * microstep pulse: divide by 2 * STEPS_PER_MM for millimetres. */
+extern volatile long hal_step_motor_odometer[2];
 #endif /* __HAL_STEP_MOTOR_H__ */

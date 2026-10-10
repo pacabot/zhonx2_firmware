@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "fw_calibration.h"
 #include "fw_cal_extra.h"
+#include "fw_cal_follow.h"
 #include "fw_library.h"
 void fw_app_init(void);
 int fw_app_discover(void);
@@ -15,6 +16,8 @@ int fw_app_has_map(void);
 int fw_app_at_start(void);
 int fw_app_prepare_run(void);
 int fw_app_trial(unsigned number,unsigned speed);
+/* Ariane EXPLORE speed for the next exploration only, 0 = the setting. */
+void fw_app_set_search_override(unsigned speed);
 unsigned fw_app_maze_count(void);
 const fw_saved_maze_t *fw_app_maze(unsigned index);
 int fw_app_maze_load(unsigned index);
@@ -43,5 +46,9 @@ int fw_rotation_report(void);
 int fw_corner_left_menu(void);
 int fw_corner_right_menu(void);
 int fw_corner_report(void);
+const fw_follow_data_t *fw_app_follow(void);
+int fw_app_follow_commit(const fw_follow_data_t *);
+int fw_follow_menu(void);
+int fw_follow_report(void);
 extern int fw_cal_post_mm;
 #endif

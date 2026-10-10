@@ -36,4 +36,8 @@ int fw_cal_run(const fw_cal_io_t *, const fw_cal_geometry_t *, fw_cal_data_t *);
 /* Establish both coordinates by seating on the selected side, then the front.
  * side: 0=left, 1=right; the caller verifies the required walls before movement. */
 int fw_cal_reference(const fw_cal_io_t *, const fw_cal_geometry_t *, unsigned side);
+/* From the cell centre, facing the front wall, with the position already known:
+ * fast approach, short contact, return to the centre. Restores the longitudinal
+ * zero and the yaw between measurements without the full two-wall reference. */
+int fw_cal_reseat(const fw_cal_io_t *, const fw_cal_geometry_t *);
 #endif

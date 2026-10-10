@@ -59,6 +59,14 @@ SECTIONS
         _ebss = . ; 
     } > ram
     
+    /* CCM, never loaded nor zeroed: Ariane telemetry ring (fw_link.c).
+     * Before the stack so that _end (heap start) stays in the main SRAM. */
+    .ccm_noinit (NOLOAD) :
+    {
+        . = ALIGN(4);
+        *(.ccm_noinit .ccm_noinit.*)
+    } > ram1
+
     /* stack section */
     .co_stack (NOLOAD):
     {

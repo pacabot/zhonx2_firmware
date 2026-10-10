@@ -422,6 +422,13 @@ void ssd1306Refresh(void)
 	}
 }
 
+/* Every pixel lit (0xA5) or back to the frame buffer (0xA4), without touching
+ * the buffer: the light signal of the Ariane link (fw_link.c). */
+void ssd1306DisplayAllOn(int on)
+{
+	CMD(on ? SSD1306_DISPLAYALLON : SSD1306_DISPLAYALLON_RESUME);
+}
+
 /**************************************************************************/
 /*!
     @brief  Draws a string using the supplied font data.

@@ -4,6 +4,8 @@
 #include "fw_battery.h"
 #include "fw_motion.h"
 #include "fw_path.h"
+#include "fw_link.h"
+#include "fw_sound.h"
 #include <stdio.h>
 #include "fw_buttons.h"
 #include "hal/hal_os.h"
@@ -15,7 +17,7 @@ typedef struct { const char *a,*b; unsigned icon; } card_t;
 enum { KEY_NONE, KEY_UP, KEY_DOWN, KEY_OK, KEY_BACK };
 static unsigned read_key(void)
 {
-    if(fw_cancel_pressed()) return KEY_BACK;
+    if(fw_cancel_button()) return KEY_BACK;
     if(!(GPIOC->IDR&FW_UP_PIN)) return KEY_UP;
     if(!(GPIOC->IDR&FW_DOWN_PIN)) return KEY_DOWN;
     return fw_select_pressed()?KEY_OK:KEY_NONE;
@@ -23,6 +25,14 @@ static unsigned read_key(void)
 static unsigned held_key;
 static uint32_t key_since,key_repeat;
 static int key_blocked;
+/* Every accepted key: its sound, and a fresh start for the next activity
+ * (a remote STOP received meanwhile no longer applies). */
+static unsigned accepted(unsigned k)
+{
+    fw_link_stop_flag=0;
+    fw_sound_effect(k==KEY_OK?FW_SOUND_SELECT:k==KEY_BACK?FW_SOUND_BACK:FW_SOUND_CLICK);
+    return k;
+}
 static void block_key(void) {held_key=read_key();key_blocked=held_key!=0;key_since=key_repeat=hal_os_get_systicks();}
 static unsigned key(void)
 {
@@ -31,8 +41,8 @@ static unsigned key(void)
     if(key_blocked)return 0;
     if(k!=held_key) {held_key=k;key_since=now;key_repeat=0;return 0;}
     if(now-key_since<20)return 0;
-    if(!key_repeat) {key_repeat=now;return k;}
-    if((k==KEY_UP || k==KEY_DOWN) && now-key_since>=400 && now-key_repeat>=100) {key_repeat=now;return k;}
+    if(!key_repeat) {key_repeat=now;return accepted(k);}
+    if((k==KEY_UP || k==KEY_DOWN) && now-key_since>=400 && now-key_repeat>=100) {key_repeat=now;return accepted(k);}
     return 0;
 }
 /* Menu-only screensaver. The wake-up key is consumed, never an action. */
@@ -43,7 +53,7 @@ static int idle_wait(uint32_t *activity)
     if((uint32_t)(now-*activity)<30000)return 0;
     uint32_t started=now,drawn=now;
     fw_ui_idle_start(now);fw_ui_idle(0);
-    while(!read_key() && !fw_motion_busy()) {
+    while(!read_key() && !fw_motion_busy() && !fw_link_job_pending()) {
         now=hal_os_get_systicks();
         /* Smooth idle animation, battery sampled without a status overlay. */
         if((uint32_t)(now-drawn)>=33) {fw_ui_idle((uint32_t)(now-started));drawn=now;}
@@ -66,10 +76,18 @@ static int choose(const char *title,const card_t *items,unsigned count)
     }
     fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
     uint32_t refresh=hal_os_get_systicks(),activity=refresh;
+    fw_link_menu_idle(1);
     for(;;) {
         if(idle_wait(&activity))fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
+        if(fw_link_job_pending()) {
+            /* Ariane command (MOVE, EXPLORE, RUN...): runs here, the menu stays put. */
+            fw_link_menu_idle(0);fw_link_job_run();fw_link_menu_idle(1);
+            block_key();fw_ui_card(title,items[i].a,items[i].b,items[i].icon,i,count);
+            activity=hal_os_get_systicks();
+        }
         if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
-        unsigned k=key();if(k==KEY_BACK) return -1;if(k==KEY_OK) return (int)i;
+        unsigned k=key();
+        if(k==KEY_BACK || k==KEY_OK) {fw_link_menu_idle(0);return k==KEY_OK?(int)i:-1;}
         if(k==KEY_UP || k==KEY_DOWN) {
             i=(i+count+(k==KEY_UP?-1:1))%count;
             if(slot<10) history[slot].selected=i;
@@ -91,7 +109,8 @@ static int confirm(const char *title)
 }
 static void runs(void)
 {
-    unsigned proposed[3]={120,300,(unsigned)fw_run_speed};
+    /* Run 1 starts from the exploration speed. */
+    unsigned proposed[3]={(unsigned)fw_search_speed,300,(unsigned)fw_run_speed};
     const card_t items[]={{"Run 1","Straight",FW_ICON_RUN},{"Run 2","Curves",FW_ICON_RUN},{"Run 3","Curves",FW_ICON_RUN}};
     int next=-1;
     while(fw_app_ready()) {
@@ -163,28 +182,32 @@ static void calibration_menu(void)
 {
     const card_t items[]={{"Walls","Calibrate",FW_ICON_WALL},{"Rotation","Calibrate",FW_ICON_TURN},
         {"Left edge","Calibrate",FW_ICON_EDGE_LEFT},{"Right edge","Calibrate",FW_ICON_EDGE_RIGHT},
-        {"Wall report","",FW_ICON_REPORT},{"Turn report","",FW_ICON_REPORT},{"Edge report","",FW_ICON_REPORT}};
+        {"Wall follow","Calibrate",FW_ICON_WALL},
+        {"Wall report","",FW_ICON_REPORT},{"Turn report","",FW_ICON_REPORT},{"Edge report","",FW_ICON_REPORT},
+        {"Follow report","",FW_ICON_REPORT}};
     int (*const action[])(void)={fw_calibrate_menu,fw_rotation_menu,fw_corner_left_menu,fw_corner_right_menu,
-        fw_calibration_report,fw_rotation_report,fw_corner_report};
-    for(;;) {int n=choose("CALIBRATION",items,7);if(n<0)return;(void)action[n]();}
+        fw_follow_menu,fw_calibration_report,fw_rotation_report,fw_corner_report,fw_follow_report};
+    for(;;) {int n=choose("CALIBRATION",items,9);if(n<0)return;(void)action[n]();}
 }
 static void settings_menu(void)
 {
     const card_t items[]={{"Axle / nose","Geometry",FW_ICON_SETTINGS},{"Robot width","Geometry",FW_ICON_SETTINGS},
         {"Cell inside","Geometry",FW_ICON_SETTINGS},{"Cell pitch","Geometry",FW_ICON_SETTINGS},
         {"Post center","Geometry",FW_ICON_SETTINGS},{"Explore","Speed",FW_ICON_SETTINGS},
-        {"Fast run","Speed",FW_ICON_SETTINGS},{"Maze size","Cells",FW_ICON_SETTINGS}};
+        {"Fast run","Speed",FW_ICON_SETTINGS},{"Maze size","Cells",FW_ICON_SETTINGS},{"Sound","Volume",FW_ICON_SETTINGS}};
+    static int sound_level;
     int *const values[]={&fw_cal_nose_tenth_mm,&fw_cal_width_tenth_mm,&fw_cal_inner_mm,&fw_cal_pitch_mm,&fw_cal_post_mm,
-        &fw_search_speed,&fw_run_speed,&fw_maze_size};
-    const int minimum[]={100,400,140,141,100,20,20,6},maximum[]={750,1400,190,210,250,300,FW_RUN_MAX_SPEED,16};
+        &fw_search_speed,&fw_run_speed,&fw_maze_size,&sound_level};
+    const int minimum[]={100,400,140,141,100,20,20,6,FW_SOUND_OFF},maximum[]={750,1400,190,210,250,FW_RUN_MAX_SPEED,FW_RUN_MAX_SPEED,16,FW_SOUND_HIGH};
     for(;;) {
-        int n=choose("SETTINGS",items,8);if(n<0)return;
+        int n=choose("SETTINGS",items,9);if(n<0)return;
+        sound_level=(int)fw_sound_level();
         int old=*values[n],v=old;fw_ui_setting(n,v);
         uint32_t refresh=hal_os_get_systicks(),activity=refresh;
         for(;;) {
             if(idle_wait(&activity))fw_ui_setting(n,v);
             if((uint32_t)(hal_os_get_systicks()-refresh)>=1000) {fw_ui_menu_refresh();refresh=hal_os_get_systicks();}
-            unsigned k=key();if(k==KEY_BACK)break;
+            unsigned k=key();if(k==KEY_BACK) {if(n==8)fw_sound_set_level((unsigned)old);break;}
             if(k==KEY_OK) {
                 if(n<5) {
                     fw_cal_geometry_t g={fw_cal_nose_tenth_mm*100u,fw_cal_width_tenth_mm*100u,
@@ -197,7 +220,11 @@ static void settings_menu(void)
                         notice("Invalid","geometry");fw_ui_setting(n,v);continue;
                     }
                 }
-                *values[n]=v;if(fw_app_settings_save()) {*values[n]=old;notice("Save failed","Try again");}
+                *values[n]=v;if(n==8)fw_sound_set_level((unsigned)v);
+                if(fw_app_settings_save()) {
+                    *values[n]=old;if(n==8)fw_sound_set_level((unsigned)old);
+                    notice("Save failed","Try again");
+                }
                 break;
             }
             if(n==7) {
@@ -207,9 +234,11 @@ static void settings_menu(void)
                 __WFI();continue;
             }
             int step=n==1 || n==5 || n==6?10:1;
-            if(n==6 && (v>300 || (v==300 && k==KEY_UP)))step=50;
+            if((n==5 || n==6) && (v>300 || (v==300 && k==KEY_UP)))step=50;
             if(k==KEY_UP && v<maximum[n]) {v+=step;if(v>maximum[n])v=maximum[n];}
             if(k==KEY_DOWN && v>minimum[n]) {v-=step;if(v<minimum[n])v=minimum[n];}
+            /* The volume applies at once, so each step is heard; Back restores it. */
+            if(n==8 && k) {fw_sound_set_level((unsigned)v);fw_sound_effect(FW_SOUND_SELECT);}
             if(k)fw_ui_setting(n,v);
             __WFI();
         }
@@ -244,12 +273,12 @@ static void hardware_menu(void)
 {
     const card_t items[]={{"Motors","Lift robot",FW_ICON_TEST},{"Telemeters","Live view",FW_ICON_TEST},
         {"Beeper","",FW_ICON_TEST},{"LEDs","",FW_ICON_TEST},{"Display","",FW_ICON_TEST},
-        {"Buttons","Live view",FW_ICON_TEST},{"Battery","ADC",FW_ICON_TEST}};
+        {"Buttons","Live view",FW_ICON_TEST},{"Battery","ADC",FW_ICON_TEST},{"Bluetooth","HM-18",FW_ICON_TEST}};
     const card_t motors[]={{"Left wheel","Forward",FW_ICON_TEST},{"Left wheel","Reverse",FW_ICON_TEST},
         {"Right wheel","Forward",FW_ICON_TEST},{"Right wheel","Reverse",FW_ICON_TEST},
         {"Both wheels","Forward",FW_ICON_TEST},{"Both wheels","Reverse",FW_ICON_TEST}};
     for(;;) {
-        int n=choose("HARDWARE TESTS",items,7);if(n<0)return;
+        int n=choose("HARDWARE TESTS",items,8);if(n<0)return;
         if(n) fw_hardware_test((unsigned)n);
         else for(;;) {int m=choose("MOTORS / LIFT ROBOT",motors,6);if(m<0)break;fw_hardware_motor((unsigned)m);}
     }

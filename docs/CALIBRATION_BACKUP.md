@@ -25,22 +25,25 @@ pas leur précision physique.
 
 ## Ce qui est restauré
 
-- Calibration murs et capteurs, rotation aux trois vitesses, angles gauche/droit.
+- Calibration murs et capteurs, rotation (trois emplacements de vitesse, un seul mesuré depuis cette version), angles gauche/droit.
 - Dimensions et position du poteau associées à ces mesures.
 - Référence ADC/tension batterie, si le format la contient.
+- Biais de roues de la calibration `Wall follow` (snapshot v8).
 - Les absences de calibration restent des absences ; aucune mesure n’est inventée.
 
 Les réglages de vitesse, le départ, le labyrinthe actif et la bibliothèque de
 labyrinthes restent ceux du robot au moment de la restauration. Le firmware et
 le bootloader sont conservés.
 
-La restauration accepte les snapshots **v5, v6 et v7**, après contrôle des CRC et des
+La restauration accepte les snapshots **v5, v6, v7 et v8**, après contrôle des CRC et des
 bornes de validité du firmware. Elle exige un snapshot actuel valide pour pouvoir
 conserver les réglages et labyrinthes. Elle conserve le format du snapshot cible :
-une référence batterie v6/v7 non nulle ne peut pas être injectée dans une cible v5.
-Dans ce cas, démarrer le firmware actuel et sauvegarder ses réglages pour créer
-un snapshot v7, puis relancer la restauration. Une source v5 laisse intacte la
-référence batterie d’une cible v6/v7.
+une référence batterie v6/v7/v8 non nulle ne peut pas être injectée dans une cible v5,
+ni un biais de roues dans une cible v7 ou antérieure. Dans ce cas, démarrer le
+firmware actuel et sauvegarder ses réglages pour créer un snapshot v8, puis
+relancer la restauration. Une source v5 laisse intacte la référence batterie d’une
+cible v6/v7/v8. Une source sans biais de roues (v7 ou antérieure) laisse celui de la
+cible tant qu'il a été mesuré avec la géométrie restaurée ; sinon il est effacé.
 
 ## Écriture transactionnelle
 
@@ -50,7 +53,7 @@ et l’écriture ont lieu pendant le même arrêt du processeur, pour empêcher 
 sauvegarde concurrente du firmware.
 
 Seul le secteur de données inactif (16 Kio, secteur 1 ou 2) est effacé. Environ
-4,7 Kio (v5/v6) ou 12,5 Kio (v7) sont programmés. Le contenu est vérifié avant l’écriture du marqueur de
+4,7 Kio (v5/v6) ou 12,5 Kio (v7/v8) sont programmés. Le contenu est vérifié avant l’écriture du marqueur de
 validation, puis les deux banques sont relues : la banque précédente doit être
 inchangée. Le robot redémarre ensuite pour charger les calibrations restaurées.
 Cette vérification fait partie de la restauration et ne se désactive pas.

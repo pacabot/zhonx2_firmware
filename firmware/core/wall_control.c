@@ -54,33 +54,39 @@ int wall_control_calibrated(wall_control_t *c,uint8_t s,const fw_cal_data_t *d)
 }
 
 static int32_t limit(int32_t x,int32_t bound) {return x>bound?bound:x<-bound?-bound:x;}
+static int32_t post_reference(const wall_control_t *c,int32_t heading,int32_t estimate)
+{
+    return c->exit_um?limit(heading-estimate,60)*3/4:limit(heading-estimate,40)/2;
+}
 void wall_control_heading_reference(wall_control_t *c,int32_t heading)
 {
     /* Two independent post observations provide a bounded yaw reference. */
-    c->heading_mrad += c->exit_um?limit(heading-c->heading_mrad,60)*3/4:limit(heading-c->heading_mrad,40)/2;
+    c->heading_mrad+=post_reference(c,heading,c->heading_mrad);
+    c->wheel_heading_mrad+=post_reference(c,heading,c->wheel_heading_mrad);
 }
 void wall_control_exit(wall_control_t *c,const fw_cal_data_t *d,uint8_t sensors,int32_t heading,uint32_t distance)
 {
     c->initialized=1;c->sensors=sensors;c->lateral_um=(int32_t)d->geometry.inner_um/2;
     c->heading_mrad=limit(heading,200);c->exit_um=distance;
+    c->wheel_heading_mrad=c->heading_mrad;c->unanchored=1;c->unanchored_um=0;
     /* Correct the residual turn angle immediately, before the next IR scan. */
     c->output=limit(-2*c->heading_mrad,120);
 }
 int wall_control_position(wall_control_t *c,uint8_t s,const fw_cal_data_t *d,
                           int32_t forward,int32_t yaw)
 {
-    return wall_control_position_timed(c,s,d,forward,yaw,10);
-}
-int wall_control_position_timed(wall_control_t *c,uint8_t s,const fw_cal_data_t *d,
-                                int32_t forward,int32_t yaw,uint32_t elapsed)
-{
     if(!d || !d->valid)return wall_control_step(c,s);
     int32_t centre=(int32_t)d->geometry.inner_um/2;
     int first=!c->initialized;
-    if(first) {c->lateral_um=centre;c->initialized=1;c->sensors=s;}
+    if(first) {
+        c->lateral_um=centre;c->initialized=1;c->sensors=s;
+        c->wheel_heading_mrad=c->heading_mrad;c->unanchored=1;c->unanchored_um=0;
+    }
     c->bias_fraction+=forward*c->yaw_bias_mrad_m;
     int32_t bias=c->bias_fraction/1000000;c->bias_fraction-=bias*1000000;
     c->heading_mrad=limit(c->heading_mrad+yaw+bias,200);
+    c->wheel_heading_mrad=limit(c->wheel_heading_mrad+yaw+bias,200);
+    if(c->unanchored && forward>0 && c->unanchored_um<5000000)c->unanchored_um+=(uint32_t)forward;
     if(c->reference_side) {
         c->reference_distance+=forward;c->reference_yaw+=yaw;
         if(c->reference_distance>5000000)c->reference_side=0;
@@ -158,43 +164,59 @@ int wall_control_position_timed(wall_control_t *c,uint8_t s,const fw_cal_data_t 
             if(reference)observed=(int32_t)d->geometry.inner_um-observed;
             observed+=lag;
             /* Two optical positions plus the intervening wheel yaw determine
-             * heading independently of the assumed starting lateral position. */
-            if(c->optical_side && c->optical_distance>=15000) {
+             * heading independently of the assumed starting lateral position.
+             * An estimated anchor (below) is only trusted over 100 mm. */
+            if(c->unanchored && c->bias_calibrated) {
+                /* First crossing since the reset (start, pivot, curve exit):
+                 * the offset was unknown, not the heading, which the pivot or
+                 * the curve had just corrected. Staying on one side was an
+                 * offset that the innovations took for a heading error; keep
+                 * the heading the wheels turned, or the robot crosses the
+                 * corridor with it (sim: 30 mm start, 22-28 -> 9-12 mm).
+                 * Only a calibrated bias makes the wheel heading usable; the
+                 * part a bias error could explain stays with the estimate. */
+                int32_t gap=c->wheel_heading_mrad-c->heading_mrad;
+                int32_t doubt=(int32_t)((int64_t)c->unanchored_um*WALL_BIAS_DOUBT_MRAD_M/1000000);
+                gap=gap>doubt?gap-doubt:gap< -doubt?gap+doubt:0;
+                c->heading_mrad=limit(c->heading_mrad+gap,200);
+            } else if(c->optical_side && c->optical_distance>=(c->anchor_estimated?100000:15000)) {
                 int32_t heading=(int32_t)(((int64_t)(observed-c->optical_position)*1000-
                     c->optical_integral)/c->optical_distance)+c->optical_yaw;
-                c->heading_mrad+=limit(heading-c->heading_mrad,60);
+                c->heading_mrad+=limit(heading-c->heading_mrad,c->anchor_estimated?30:60);
                 c->heading_mrad=limit(c->heading_mrad,200);
             }
             c->optical_side=(uint8_t)(reference+1);c->optical_position=observed;
-            c->optical_distance=c->optical_yaw=0;c->optical_integral=0;
-            c->lateral_um+=limit(observed-c->lateral_um,3000);
+            c->optical_distance=c->optical_yaw=0;c->optical_integral=0;c->anchor_estimated=0;
+            c->lateral_um+=limit(observed-c->lateral_um,3000);c->persist_um=0;c->unanchored=0;
+        } else if(!c->optical_side && !((s^c->sensors)&wallbit)) {
+            /* After a reset, a curve exit, a door edge or a reference change,
+             * anchor the next crossing on the bounded estimate: its first
+             * crossing then corrects the heading instead of waiting for a
+             * second one. The one-sided evidence restarts with it. */
+            c->optical_side=(uint8_t)(reference+1);c->optical_position=c->lateral_um;
+            c->optical_distance=c->optical_yaw=0;c->optical_integral=0;c->anchor_estimated=1;
+            c->persist_um=0;
         }
-        desired_heading=(near?20:-20)*(reference?-1:1);
+        /* A constant reading on either side of the line raises the return
+         * heading from 20 to 30 mrad: binary sensors cannot tell an offset
+         * from a heading error, staying on one side reveals one of them.
+         * Door edges, reference changes and stops reset the evidence. */
+        if(first || forward<=0 || ((s^c->sensors)&wallbit))c->persist_um=0;
+        else if(c->persist_um<1000000)c->persist_um+=(uint32_t)forward;
+        uint32_t band=d->side[reference].far_um-d->side[reference].near_um+d->side[reference].spread_um;
+        int extra=(int)(c->persist_um*10/(100000+30*band));if(extra>10)extra=10;
+        desired_heading=(near?20+extra:-20-extra)*(reference?-1:1);
     }
-    else c->reference_side=c->optical_side=0;
-    /* Integrate a persistent near reading as extra steering, never as a speed
-     * cap or a separate recovery manoeuvre. Door edges reset the evidence. */
-    if(elapsed>50)elapsed=50;
-    for(unsigned side=0;side<2;++side) {
-        unsigned bit=side?0x02:0x10,wallbit=side?0x01:0x20;
-        if(first || forward<=0 || (s&(bit|wallbit)) || ((s^c->sensors)&wallbit))
-            c->near_ms[side]=c->near_um[side]=0;
-        else {
-            if(c->near_ms[side]<10000)c->near_ms[side]+=elapsed;
-            if(c->near_um[side]<1000000)c->near_um[side]+=(uint32_t)forward;
-        }
-        if(reference==(int)side && nearest<=5000 && c->near_ms[side]>100 && (s&(side?0x10:0x02))) {
-            uint32_t band=d->side[side].far_um-d->side[side].near_um+d->side[side].spread_um;
-            int extra=(int)(c->near_um[side]*10/(100000+30*band));if(extra>10)extra=10;
-            desired_heading=(20+extra)*(side?-1:1);
-        }
-    }
+    else {c->reference_side=c->optical_side=0;c->persist_um=0;}
     c->sensors=s;
-    /* Keep angular loop gain compatible with the three-scan sensor latency
-     * when each scan covers a larger distance. */
-    int gain=forward>4000?1:2;
-    int desired=limit((desired_heading-c->heading_mrad)*gain,120);
-    c->output+=limit(desired-c->output,c->exit_um?16:8);
+    /* Heading comes from the step counts of this scan: with stepper wheels a
+     * constant gain is a constant spatial response (track/4 = 21 mm). The
+     * correction slew is per millimetre above 220 mm/s; a per-scan bound gave
+     * a 7x slower loop at 1500 mm/s, which kept 13-25 mm oscillations alive. */
+    int desired=limit((desired_heading-c->heading_mrad)*2,120);
+    int32_t slew=c->exit_um?16:8;
+    if(forward>2200)slew=slew*forward/2200;
+    c->output+=limit(desired-c->output,slew);
     if(forward>0)c->exit_um=(uint32_t)forward>=c->exit_um?0:c->exit_um-(uint32_t)forward;
     return c->output;
 }

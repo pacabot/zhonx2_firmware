@@ -2,6 +2,7 @@
 #include "fw_menu.h"
 #include "fw_buttons.h"
 #include "app/app_def.h"
+#include "config/config.h"
 #include "oled/ssd1306.h"
 #include <assert.h>
 #include "fw_display.h"
@@ -33,7 +34,7 @@ int hal_sensor_snapshot_read(hal_sensor_snapshot *s)
 {*s=(hal_sensor_snapshot){.timestamp=now,.sequence=now,.raw=SENSOR_R5_POS|SENSOR_L10_POS,.filtered=0x3f};return 1;}
 int hal_beeper_get_state(HAL_BEEPER_HANDLE h,int *s) {(void)h;*s=beeper_state;return 0;}
 int hal_beeper_set_state(HAL_BEEPER_HANDLE h,int s) {(void)h;beeper_state=s;return 0;}
-int hal_beeper_beep(HAL_BEEPER_HANDLE h,long freq,long ms) {(void)h;assert(freq>=800 && freq<=1800 && ms==120);return HAL_Delay(ms);}
+int hal_beeper_beep(HAL_BEEPER_HANDLE h,long freq,long ms) {(void)h;assert(freq>=2000 && freq<=3500 && ms==120);return HAL_Delay(ms);}
 int hal_led_set_state(HAL_LED_HANDLE h,unsigned char color,unsigned char state) {(void)h;(void)color;led_state=state;return 0;}
 int hal_led_reset(HAL_LED_HANDLE h) {(void)h;led_state=0;return 0;}
 void fw_ui_card(const char *t,const char *a,const char *b,unsigned icon,unsigned i,unsigned n)
@@ -58,8 +59,12 @@ int main(void)
     reset();press_until=500;escape_at=700;fw_hardware_motor(0);assert(starts==1 && started>=500 && !active);
     reset();escape_at=90;stuck=1;fw_hardware_motor(2);assert(starts==1 && now==90 && !active);
     reset();escape_at=4000;stuck=1;fw_hardware_motor(2);assert(starts==1 && !active);
-    for(unsigned test=6;test>0;--test) {
-        reset();beeper_state=0;fw_hardware_test(test);assert(!active && !beeper_state && !led_state);
+    for(unsigned test=7;test>0;--test) {
+        /* Muted and medium volume both come back unchanged after the beeper test. */
+        for(unsigned char volume=0;volume<3;volume+=2) {
+            reset();beeper_state=0;zhonxSettings.beeper_enabled=volume;fw_hardware_test(test);
+            assert(!active && !beeper_state && !led_state && zhonxSettings.beeper_enabled==volume);
+        }
     }
-    puts("hardware: six motor directions, no held-key repeat, Escape/timeout cleanup, live tests and beeper setting restored");
+    puts("hardware: six motor directions, no held-key repeat, Escape/timeout cleanup, live tests, Bluetooth page and volume restored");
 }

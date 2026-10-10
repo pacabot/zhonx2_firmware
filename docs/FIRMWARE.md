@@ -258,8 +258,22 @@ de basculement STEP par impulsion ; le pilote historique compensait déjà ce fa
 2 dans ses déplacements, sa macro de conversion est conservée. Le nouveau pilote
 fait cette conversion explicitement. Les GPIO moteurs sont initialisés complètement.
 
-Vitesses initiales : exploration 220 mm/s, course 260 mm/s, plage 20–300 mm/s ;
-rotation sur place 120 mm/s par roue. Géométrie reprise du projet (roues 24,45 mm,
+Vitesses initiales : exploration 220 mm/s, course 260 mm/s, plage 20–1 500 mm/s
+pour les deux (exploration au-delà de 220 mm/s : voir MAZE_NAVIGATION.md).
+Les lignes droites de navigation accélèrent et freinent selon la loi des runs,
+`600 + 2 × vitesse` (1 040 mm/s² à 220 mm/s, 3 600 à 1 500) ; recul sur obstacle
+et calibrations gardent 800 mm/s².
+Les rotations sur place suivent la vitesse de déplacement du mouvement auquel
+elles appartiennent (`fw_motion_turn_speed`) : vitesse de roue égale à la vitesse
+de déplacement, bornée entre 120 mm/s (profil de rotation mesuré, jamais plus
+lent qu'avant) et 300 mm/s (plafond des courbes de run), avec la loi
+d'accélération des runs `600 + 2 × vitesse` (840 à 1 200 mm/s²). Exploration à
+220 mm/s : 90° en 0,44 s au lieu de 0,62 s, 180° en 0,74 s au lieu de 1,17 s ;
+à partir de 300 mm/s : 0,41 s et 0,63 s. Run 1 pivote à sa vitesse de run, le
+retour (hors chronomètre) à la vitesse d'exploration, l'orientation vers le
+premier passage avant un run à 120 mm/s, les rotations
+des montages de calibration restent à 80 mm/s et 800 mm/s². Le budget de pas
+reste celui du profil mesuré à 120 mm/s. Géométrie reprise du projet (roues 24,45 mm,
 entraxe 83,5 mm). Gains, hystérésis, vitesse et freinage nécessitent des mesures sur
 robot : un test logiciel ne démontre ni absence de perte de pas, ni diminution des
 oscillations sur le sol réel. Le robot n'a pas d'estimation métrique des distances
@@ -450,7 +464,16 @@ annule l'angle de montage fixe et le seuil propre au capteur. Si plusieurs
 intervalles rendent la période ambiguë ou si aucun repère n'est exploitable,
 la calibration est refusée.
 
-Pour chacune des vitesses **40, 80 et 120 mm/s par roue**, dans les deux sens :
+Une seule vitesse est mesurée, **120 mm/s par roue**, dans les deux sens.
+C'est la vitesse des virages, de l'échelle de lacet en ligne droite et des
+courbes rapides ; les rotations sur place plus rapides (jusqu'à 300 mm/s par
+roue) réutilisent ce profil, comme les courbes. Les profils du 27 septembre 2026 mesurés à 40, 80 et 120 mm/s
+tenaient dans 0,08 mm, en dessous de leur propre dispersion de 0,2 à 0,6 mm :
+les emplacements 40 et 80 du snapshot reçoivent une copie du profil 120, et le
+rapport l'indique (`Speeds` : `same profile`). Le format v7 est inchangé ; une
+ancienne sauvegarde à trois vitesses mesurées reste lue et affichée en entier.
+
+Pour chaque sens :
 
 1. Appuis et recentrage ; cinq tours nominaux pour estimer la période en course
    de roue. L'entraxe effectif vaut `course par tour / pi`.
@@ -461,12 +484,13 @@ Pour chacune des vitesses **40, 80 et 120 mm/s par roue**, dans les deux sens :
    leurs centres fournissent aussi un contrôle optique à 90°. Un écart supérieur
    à 2° rejette la mesure. Sinon le rapport indique explicitement
    `90: PERIOD / 4 ONLY` : seule la division de la période est disponible.
-4. Sauvegarde après réussite des six profils ; rapport `Rotation report` :
+4. Sauvegarde après réussite des deux sens ; rapport `Rotation report` :
    entraxe effectif, course pour 90°, dispersion des périodes et contrôle à 90°.
 
 La correction est appliquée aux virages normaux (120 mm/s par roue) et aux
-rotations de référence (80 mm/s), séparément CW/CCW. L'API interpole entre profils
-mesurés, sans extrapolation. Un demi-tour utilise deux fois le budget du quart de
+rotations de référence (80 mm/s), séparément CW/CCW. L'API interpole entre les
+trois emplacements, sans extrapolation ; avec une seule vitesse mesurée elle
+renvoie donc ce profil sur toute la plage 40–120 mm/s. Un demi-tour utilise deux fois le budget du quart de
 tour ; son effet de glissement propre n'est pas calibré indépendamment.
 
 Il s'agit d'un **entraxe effectif**, incluant les effets reproductibles de roulement,
@@ -506,13 +530,26 @@ montage réel diffère ; elle est enregistrée avec chaque résultat.
 
 - Appui sur le mur latéral choisi, recul au centre, rotation vers le mur frontal,
   appui frontal, puis recul au centre : les deux zéros sont établis.
-- Trois aller/retours à chacune des vitesses **40, 120 et 220 mm/s**. Le robot
+- Trois aller/retours à chacune des vitesses **40 et 220 mm/s**. Le robot
   dépasse le poteau jusqu'à 100 mm derrière son centre. Les fronts doivent se
   produire sur le plateau de vitesse, pas pendant accélération ou freinage.
+  L'emplacement **120 mm/s** du snapshot reçoit l'interpolation linéaire des deux
+  mesures, avec le même calcul que `fw_corner_offset()` : les décalages mesurés
+  le 27 septembre 2026 étaient linéaires en vitesse à 0,6 mm près, pente de 5 à
+  8 ms pour les fronts bruts et de 25 ms pour les fronts filtrés. Le rapport
+  `Speeds` indique `120: interp.` ; une ancienne sauvegarde mesurée à trois
+  vitesses affiche `120: measured` et conserve toutes ses pages.
 - Première orientation : recul jusqu'à l'ouverture puis avance jusqu'à la
   fermeture. Après retournement de 180°, la même géométrie mesure une **ouverture
   en marche avant** et une fermeture en marche arrière avec le capteur opposé.
-  Chaque répétition reprend les appuis de référence.
+- Les appuis de référence sur les deux murs ne sont faits qu'**une fois par
+  orientation**. Entre deux répétitions, le robot refait seulement un appui
+  frontal à position connue (approche à 80 mm/s, contact à 30 mm/s) puis revient
+  au centre ; en orientation retournée il se retourne pour cet appui puis se
+  retourne à nouveau, comme la procédure d'origine le faisait déjà. Cet appui
+  restaure le zéro longitudinal et le lacet, qui sont ce que mesure le front du
+  poteau ; la position latérale n'est pas réappuyée. Simulation : 18 rotations
+  et 66 déplacements par montage au lieu de 56 et 112.
 - Acquisition des seuils 5 et 10 cm du côté concerné. Le 10 cm est obligatoire ;
   le 5 cm est omis s'il ne voit pas le mur à la position centrale.
 - Rapport `Corner report` : côté physique L/R, capteur, sens d'ouverture, vitesse,
@@ -647,6 +684,7 @@ virages restent des rotations sur place suivies de lignes droites ; la carte
 | Rotation CW/CCW | Oui | Oui | Budget de pas des virages |
 | Intervalles latéraux 5 cm | Oui, nouveau | Oui, nouveau | Bornes de position pour le centrage |
 | Hystérésis F10 / offsets de poteau | Rapport | Rapport | Pas encore utilisés pour anticiper les virages |
+| Biais de roues (`Wall follow`) | Oui | Oui | Préchargé dans le suiveur à chaque départ |
 
 Le centrage construit un intervalle possible de distance axe–mur gauche à partir
 des deux observations binaires et des intervalles calibrés. Si cet intervalle
@@ -697,15 +735,96 @@ que le schéma 2, sans calibrations. **Aucune conclusion sur les calibrations ac
 ne peut donc être tirée de cette archive.** Aucun flash ni mouvement automatique
 n'a été exécuté pour cette révision ; le dump actuel nécessite une cible alimentée.
 
+### Suivi de murs et calibration `Wall follow` (2026-10-10)
+
+Le suiveur (`wall_control.c`) n'est pas un PID : un observateur intègre cap et
+position latérale depuis les pas et se recale aux basculements des seuils 5 cm ;
+une consigne de ±20 mrad fait onduler le robot autour du seuil le plus proche du
+centre ; le cap suit la consigne avec un gain de 2 ‰/mrad (réponse de 21 mm de
+trajet avec la voie de 83,4 mm). Trois corrections, validées en simulation
+(capteurs binaires avec hystérésis, 2 à 3 scans de retard, écart de roues) :
+
+- La variation de la correction (8 ‰, 16 ‰ en sortie de courbe) est bornée par
+  scan jusqu'à 220 mm/s, puis proportionnellement au trajet du scan ; la division
+  du gain par deux au-dessus de 400 mm/s est supprimée. À 1 500 mm/s, après un
+  écart de 12 mm, l'oscillation passe de 25 à 6 mm crête à crête.
+- Après une remise à zéro, le premier croisement corrige le cap (ancre estimée,
+  100 mm minimum, 30 mrad au plus), et rester d'un même côté du seuil, quel qu'il
+  soit, renforce le retour de 20 à 30 mrad. Départ de ligne droite avec ±40 mrad
+  et ±5 mm inconnus : écart maximal après 25 cm 9 à 11 mm au lieu de 12 à 13 mm
+  (sans écart de roues). Allers-retours avec demi-tours, seuils à 5 mm du centre
+  et roues à 1 % : 10 mm au pire au lieu d'un contact au mur dès la 5e passe.
+- La compensation des pivots par le cap estimé est conservée : la supprimer
+  dégrade fortement les allers-retours en simulation.
+- Trop près d'un mur après une remise à zéro, rester du même côté du seuil fait
+  déjà braquer de plus en plus : l'observateur, qui croit le robot sur le seuil,
+  lit chaque millimètre sans croisement comme une erreur de cap (environ
+  +0,25 mrad/mm). Au croisement le cap réel atteint 50 à 140 mrad alors que
+  l'estimation en garde 25 : le robot traversait le couloir avec. Avec un biais
+  calibré, le premier croisement reprend donc le cap des pas depuis la remise à
+  zéro (moins 20 mrad/m de doute sur le biais). Départ à 30 mm du centre :
+  dépassement de l'autre côté 22 à 28 mm → 9 à 12 mm ; avec 1 % de roues,
+  biais faux de 20 mrad/m et pivot à ±15 mrad, 17 mm au pire au lieu d'un
+  contact au mur opposé. Sans calibration (biais inconnu) ou pendant la
+  calibration `Wall follow`, l'ancien comportement est gardé : le cap des pas
+  dériverait de 120 mrad/m à 1 % de roues.
+
+La calibration `Calibration` → `Wall follow` mesure le biais de roues, terme
+intégral du suiveur, qui sans elle est réappris de zéro à chaque exploration et
+à chaque run. Montage : couloir droit fermé des deux côtés et aux deux bouts ;
+le robot est posé dans une case d'extrémité, face au couloir. Haut/Bas règlent
+le nombre de cases (4 à 16, 5 par défaut, puis la dernière valeur), OK démarre.
+
+- Le robot fait 16 passes d'une extrémité à l'autre, comme en exploration
+  (8 à 220 mm/s, 8 à 600 mm/s), avec un demi-tour sur place après chacune ; il
+  finit dans la case de départ, dans le sens de départ (environ 50 s).
+- Chaque basculement d'un seuil 5 cm fixe la position latérale ; entre deux
+  basculements, les pas donnent la trajectoire. Un écart de diamètre courbe cette
+  trajectoire en parabole (29 mm sur 70 cm pour 1 %). Une courbure commune à
+  toutes les passes est ajustée par moindres carrés, avec une position et un cap
+  de départ inconnus par passe et l'hystérésis de chaque capteur. En simulation,
+  le biais est retrouvé à 3 mrad/m près entre −1 % et +1 % de roues.
+- Un couloir qui n'est pas droit courbe toutes les passes de la même façon,
+  avec un signe opposé au retour : sa flèche est ajustée à part dès que chaque
+  sens a deux passes exploitables. Avant, 3 mm de flèche sur 70 cm donnaient une
+  dispersion de 45 mrad/m et un biais faux d'un tiers, 4 mm un refus
+  `UNSTABLE MEASUREMENTS` ; désormais biais à 3 mrad/m près et flèche à 0,3 mm.
+- Il faut au moins 6 passes exploitables (4 croisements sur 30 cm) et une
+  dispersion entre passes d'au plus 60 mrad/m, sinon rien n'est enregistré
+  (patinage, marche entre deux éléments de mur, seuils trop loin du centre).
+  La dispersion et les moyennes par vitesse sont pondérées par l'information de
+  chaque passe sur la courbure, comme l'ajustement : une passe à peu de
+  croisements rapprochés (souvent à 600 mm/s) donne une courbure lâche. Non
+  pondérée, ±1,5 mm de bruit de seuil donnait 62 à 96 mrad/m et un refus alors
+  que le biais était juste à 3 mrad/m près (pondérée : 8 au plus). Premier essai
+  sur le robot (2026-10-10, non pondéré) : biais +86, dispersion 87, 220 mm/s
+  +83, 600 mm/s +152, flèche 0,8 mm : le même tableau.
+- Le rapport `Follow report` donne le biais (mrad/m, positif = dérive vers la
+  droite), l'écart de diamètre équivalent, la dérive sans correction sur 1 m,
+  la dispersion, le nombre de passes et la longueur du couloir. Après une
+  mesure, enregistrée ou refusée, deux pages `Follow fit` ajoutent les passes
+  retenues par sens, le biais moyen des passes à 220 et à 600 mm/s (un écart
+  signale du patinage) et la flèche du couloir (`Bend L/R`, sens du virage à
+  l'aller). Elles ne sont pas conservées en flash.
+
+Le résultat est enregistré dans le snapshot v8 (le v7 suivi de 40 octets ; un
+snapshot v7 se charge sans biais) et effacé si la géométrie change. Pendant la
+calibration, la valeur déjà enregistrée reste chargée : l'ajustement ne dépend
+pas de l'apprentissage du suiveur. Un essai sur le robot reste nécessaire : la
+simulation ne connaît ni le patinage ni les défauts réels des murs.
+
 ### Accélération des calibrations et icônes
 
 Les vitesses de mise en position sont définies dans `fw_calibration.h` :
 repositionnement 80 mm/s, contact 30 mm/s, mesure frontale 20 mm/s, rotation
-de référence 80 mm/s par roue. Les profils mesurés restent 40/80/120 mm/s
-pour la rotation et 40/120/220 mm/s pour les angles : ils décrivent les vitesses
-réelles utilisées par les déplacements. Les trois répétitions, les contrôles
-de dispersion, la surveillance capteurs et l'arrêt utilisateur sont conservés.
-Les sauvegardes de calibration existantes restent compatibles.
+de référence 80 mm/s par roue. Les tables de vitesses gardent trois emplacements
+(40/80/120 mm/s pour la rotation, 40/120/220 mm/s pour les angles) mais seules
+120 mm/s pour la rotation et 40 + 220 mm/s pour les angles sont mesurées ; les
+autres emplacements sont une copie ou une interpolation, signalées au rapport.
+Les trois répétitions, les contrôles de dispersion, la surveillance capteurs et
+l'arrêt utilisateur sont conservés. Les sauvegardes existantes restent
+compatibles et lisibles. Durées simulées, moteurs seuls : rotation 74 s au lieu
+de 312 s, chaque montage d'angle 136 s au lieu de 289 s.
 
 Le cas de test des seuils latéraux décalés passe de 78 à 42 rotations de mise
 en position, avec les mêmes intervalles détectés. Ce résultat est simulé ;

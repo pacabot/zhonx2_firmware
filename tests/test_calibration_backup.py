@@ -36,6 +36,11 @@ def payload(schema=6, right=False):
     return p
 
 
+def follow(p, bias=-37, valid=1):
+    struct.pack_into('<6Ii3I', p, cal.FOLLOW, valid, 5, 47000, 94000, 167000, 179000, bias, 6, 15, 110)
+    return p
+
+
 def flash(a, b=None):
     raw = bytearray(b'\xff'*0x8000)
     raw[:len(a)] = a
@@ -107,6 +112,33 @@ class CalibrationBackupTest(unittest.TestCase):
                 report=cal.decode(flash(final))
                 self.assertTrue(report['wall']['valid'])
                 self.assertEqual(report['battery_reference']['pack_mv'],8400)
+
+    def test_schema8_wall_follow_restore(self):
+        target = follow(payload(8, right=True), bias=12)
+        # v8 archive: its wheel bias replaces the robot's.
+        _, _, final = cal.plan(flash(bank(8, 9, target)), flash(bank(8, 1, follow(payload(8)))))
+        merged = final[32:]
+        self.assertEqual(len(merged), cal.SIZES[8])
+        self.assertEqual(struct.unpack_from('<i', merged, cal.FOLLOW+24)[0], -37)
+        report = cal.decode(flash(final))
+        self.assertEqual(report['follow']['yaw_bias_mrad_m'], -37)
+        self.assertAlmostEqual(report['follow']['drift_mm_per_m'], -18.5)
+        # Older archive: the robot keeps its bias while the geometry matches.
+        _, _, final = cal.plan(flash(bank(8, 9, target)), flash(bank(7, 1, payload(7))))
+        self.assertEqual(struct.unpack_from('<i', final[32:], cal.FOLLOW+24)[0], 12)
+        moved = payload(7)  # Same calibrations measured with a 46 mm nose.
+        struct.pack_into('<I', moved, 1120+8, 46000)
+        struct.pack_into('<4I', moved, 1120+72+4, 46000, 94000, 167000, 179000)
+        struct.pack_into('<4I', moved, 1120+200+12, 46000, 94000, 167000, 179000)
+        struct.pack_into('<5i', moved, 12460, 460, 940, 167, 179, 173)
+        _, _, final = cal.plan(flash(bank(8, 9, target)), flash(bank(7, 1, moved)))
+        self.assertEqual(final[32+cal.FOLLOW:32+cal.FOLLOW+cal.FOLLOW_SIZE], bytes(cal.FOLLOW_SIZE))
+        # A wheel bias cannot be written into a snapshot that has no room for it.
+        with self.assertRaisesRegex(ValueError, 'Target snapshot v7'):
+            cal.plan(flash(bank(7, 9, payload(7))), flash(bank(8, 1, follow(payload(8)))))
+        for bad in (dict(bias=301), dict(valid=2)):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                cal.plan(flash(bank(8, 9, target)), flash(bank(8, 1, follow(payload(8), **bad))))
 
     def test_reject_bad_crc_or_unsupported_schema(self):
         good = flash(bank(6, 1, payload()))

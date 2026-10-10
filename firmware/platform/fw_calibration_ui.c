@@ -255,8 +255,11 @@ static int spin_robot(void *context,int32_t um,unsigned speed,fw_cal_observer ob
     if (fw_motion_calibration_spin(um,speed)) { io_error="SPIN REJECTED"; return -1; }
     return wait_move(observer,data);
 }
+/* Extra pages of a calibration that measured something before failing. */
+static void (*error_details)(void);
 static int calibration_error(int error)
 {
+    void (*details)(void)=error_details;error_details=0;
     int motion_fault=fw_motion_fault();
     fw_motion_stop();
     if (!cancelled()) {
@@ -272,7 +275,9 @@ static int calibration_error(int error)
         p=page("Last stage");rest=fw_text_line(last_stage,p->row[0],15);
         fw_text_line(rest,p->row[1],15);
         snprintf(text,sizeof text,"F5:%u F10:%u",!(last_scan.raw&SENSOR_F5_POS),!(last_scan.raw&SENSOR_F10_POS));
-        snprintf(p->row[2],16,"%.15s",text);show_report();
+        snprintf(p->row[2],16,"%.15s",text);
+        if(details)details();
+        show_report();
     }
     return -1;
 }
@@ -280,7 +285,15 @@ int fw_rotation_report(void)
 {
     const fw_rotation_data_t *d=fw_app_rotation();report_count=0;
     if(!fw_rotation_valid(d)) {message("Rotation","MISSING: run rotation calibration");return -1;}
+    int single=fw_rotation_single(d);
+    if(single) {
+        report_page *r=page("Speeds");
+        snprintf(r->row[0],16,"Measured: %lu",(unsigned long)d->point[FW_CAL_SPEEDS-1].speed);
+        snprintf(r->row[1],16,"%lu/%lu mm/s:",(unsigned long)d->point[0].speed,(unsigned long)d->point[1].speed);
+        snprintf(r->row[2],16,"same profile");
+    }
     for(unsigned i=0;i<FW_CAL_SPEEDS;++i)for(unsigned dir=0;dir<2;++dir) {
+        if(single && i+1<FW_CAL_SPEEDS)continue;
         const fw_rotation_point_t *p=&d->point[i];char title[12];
         snprintf(title,sizeof title,"%s%lu mm/s",dir?"CCW":"CW",(unsigned long)p->speed);
         report_page *r=page(title);
@@ -318,11 +331,26 @@ static int corner_report(int selected)
         for(unsigned f=0;f<2;++f)for(unsigned v=0;v<FW_CAL_SPEEDS;++v)
             missing5+=!(fw_app_corner(side)->point[f][v].mask&1);
     snprintf(r->row[2],16,"%s",!valid[0]||!valid[1]?"INCOMPLETE":missing5?"5cm MISSING":"Both fixtures");
+    /* The middle speed slot is measured by older data, interpolated by the
+     * current procedure; its pages are shown only when measured. */
+    int interpolated[2];
+    r=page("Speeds");
+    for(unsigned side=0;side<2;++side) {
+        interpolated[side]=valid[side] && fw_corner_interpolated(fw_app_corner(side),0) && fw_corner_interpolated(fw_app_corner(side),1);
+        if(!valid[side])snprintf(r->row[1+side],16,"%c: MISSING",side?'R':'L');
+        else snprintf(r->row[1+side],16,"%c %lu: %s",side?'R':'L',(unsigned long)fw_app_corner(side)->point[0][1].speed,interpolated[side]?"interp.":"measured");
+    }
+    if(!valid[0] && !valid[1])snprintf(r->row[0],16,"No fixture");
+    else {
+        const fw_corner_data_t *any=fw_app_corner(valid[0]?0:1);
+        snprintf(r->row[0],16,"Meas. %lu + %lu",(unsigned long)any->point[0][0].speed,(unsigned long)any->point[0][FW_CAL_SPEEDS-1].speed);
+    }
     for(unsigned fixture=0;fixture<2;++fixture) {
         if((selected>=0 && fixture!=(unsigned)selected) || !valid[fixture])continue;
         const fw_corner_data_t *d=fw_app_corner(fixture);
         for(unsigned facing=0;facing<2;++facing)for(unsigned v=0;v<FW_CAL_SPEEDS;++v)
             for(unsigned sensor=0;sensor<2;++sensor) {
+                if(interpolated[fixture] && v==1)continue;
                 const fw_corner_point_t *p=&d->point[facing][v];
                 for(unsigned filtered=0;filtered<2;++filtered) {
                     r=page(fixture?"Right setup":"Left setup");
@@ -361,3 +389,129 @@ static int corner_menu(unsigned side)
 }
 int fw_corner_left_menu(void) { return corner_menu(0); }
 int fw_corner_right_menu(void) { return corner_menu(1); }
+
+/* Wall follow: straight corridor walled on both sides and closed at both
+ * ends, robot in an end cell facing along it. Up/Down set its length. */
+static int corridor(unsigned *cells)
+{
+    io_error=0;snprintf(last_stage,sizeof last_stage,"CHECK CORRIDOR");
+    memset(&last_scan,0,sizeof last_scan);
+    for(;;) {
+        char text[16];unsigned x=14,y=16;
+        ssd1306ClearScreen();line(0,"Wall follow");
+        ssd1306FillRect(x,y,21,2);ssd1306FillRect(x,y,2,46);ssd1306FillRect(x+19,y,2,46);
+        ssd1306DrawRect(x+5,y+4,11,11);
+        ssd1306FillRect(x+3,y+8,2,5);ssd1306FillRect(x+16,y+8,2,5);
+        ssd1306DrawLine(x+10,y+6,x+10,y+13);
+        ssd1306DrawLine(x+7,y+10,x+10,y+13);ssd1306DrawLine(x+10,y+13,x+13,y+10);
+        ssd1306DrawLine(x+10,y+19,x+10,59);ssd1306DrawLine(x+7,55,x+10,59);ssd1306DrawLine(x+10,59,x+13,55);
+        snprintf(text,sizeof text,"%u cells",*cells);fw_display_text(57,17,text);
+        fw_display_text(57,28,"walled");fw_display_text(57,39,"closed");
+        fw_display_text(57,52,"UP/DN OK");fw_ui_menu_refresh();
+        unsigned key=0;
+        while(!key) {
+            if(cancelled())return -1;
+            if(fw_select_pressed())key=1;
+            else if(!(GPIOC->IDR&FW_UP_PIN))key=2;
+            else if(!(GPIOC->IDR&FW_DOWN_PIN))key=3;
+            else __WFI();
+        }
+        while(fw_select_pressed() || !(GPIOC->IDR&FW_UP_PIN) || !(GPIOC->IDR&FW_DOWN_PIN)) {
+            if(cancelled())return -1;
+            __WFI();
+        }
+        if(key==1)return 0;
+        if(key==2 && *cells<FW_FOLLOW_MAX_CELLS)++*cells;
+        if(key==3 && *cells>FW_FOLLOW_MIN_CELLS)--*cells;
+    }
+}
+/* One exploration straight from end cell to end cell, recording each scan. */
+static int follow_pass(void *context,unsigned cells,unsigned speed,fw_follow_observer observer,void *data)
+{
+    (void)context;
+    if(cancelled())return -1;
+    fw_motion_follow_record(1);
+    if(fw_motion_straight_to(cells-1,speed,1)) {fw_motion_follow_record(0);io_error="MOVE REJECTED";return -1;}
+    uint32_t start=hal_os_get_systicks();int result=0,r;
+    fw_follow_sample_t x;
+    for(;;) {
+        hal_sensor_snapshot scan;
+        while((r=fw_motion_follow_sample(&x))>0)observer(data,&x);
+        if(r<0) {io_error="SAMPLES LOST";result=-1;break;}
+        if(!fw_motion_busy())break;
+        if(!healthy(&scan)) {result=-1;break;}
+        if((uint32_t)(hal_os_get_systicks()-start)>20000) {io_error="MOVE TIMEOUT";result=-1;break;}
+        __WFI();
+    }
+    /* The scan that ended the move. */
+    while(!result && (r=fw_motion_follow_sample(&x))>0)observer(data,&x);
+    if(!result && r<0) {io_error="SAMPLES LOST";result=-1;}
+    if(!result && fw_motion_fault()) {io_error="MOTION FAULT";result=-1;}
+    fw_motion_follow_record(0);
+    if(result)fw_motion_stop();
+    return result;
+}
+static int follow_turn(void *context,unsigned speed)
+{
+    (void)context;
+    if(cancelled())return -1;
+    if(fw_motion_turn(180,speed)) {io_error="TURN REJECTED";return -1;}
+    return wait_move(0,0);
+}
+/* The last run, saved or rejected: per-direction passes, per-speed bias and
+ * the corridor bend tell slip from a corridor that is not straight. */
+static void follow_details(void)
+{
+    const fw_follow_diag_t *g=fw_follow_last();
+    if(!g->out && !g->back)return;
+    int32_t bend=g->bend_um<0?-g->bend_um:g->bend_um;if(bend>99999)bend=99999;
+    report_page *p=page("Follow fit");
+    snprintf(p->row[0],16,"Bias %+ldmrad/m",(long)g->yaw_bias_mrad_m);
+    snprintf(p->row[1],16,"Spread %lu",(unsigned long)g->spread_mrad_m);
+    snprintf(p->row[2],16,"Out %lu Back %lu",(unsigned long)g->out,(unsigned long)g->back);
+    p=page("Follow fit");
+    snprintf(p->row[0],16,"220mm/s %+ld",(long)g->speed_mrad_m[0]);
+    snprintf(p->row[1],16,"600mm/s %+ld",(long)g->speed_mrad_m[1]);
+    snprintf(p->row[2],16,"Bend %c %ld.%ldmm",g->bend_um<0?'R':'L',(long)(bend/1000),(long)(bend%1000/100));
+}
+int fw_follow_report(void)
+{
+    const fw_follow_data_t *d=fw_app_follow();report_count=0;
+    if(!fw_follow_valid(d)) {message("Wall follow","MISSING: run wall follow");return -1;}
+    /* Diameter difference = bias x track; open-loop drift over 1 m = bias / 2. */
+    const fw_rotation_data_t *r=fw_app_rotation();
+    int64_t track=fw_rotation_valid(r)?(int64_t)r->point[FW_CAL_SPEEDS-1].quarter_um[0]*4000000/3141593:83500;
+    /* fw_follow_valid() bounds the bias to +/-300 mrad/m. */
+    int b=(int)d->yaw_bias_mrad_m;unsigned magnitude=(unsigned)(b<0?-b:b);
+    if(magnitude>999)magnitude=999;
+    unsigned hundredths=(unsigned)((uint64_t)magnitude*(uint64_t)track/100000u);
+    if(hundredths>999)hundredths=999;
+    report_page *p=page("Wall follow");
+    snprintf(p->row[0],16,"Bias %c%umrad/m",b<0?'-':'+',magnitude);
+    snprintf(p->row[1],16,"Wheels %u.%02u%%",hundredths/100,hundredths%100);
+    snprintf(p->row[2],16,"Drift %c %umm/m",b<0?'L':'R',magnitude/2);
+    p=page("Wall follow");
+    snprintf(p->row[0],16,"Spread %lu",(unsigned long)d->spread_mrad_m);
+    snprintf(p->row[1],16,"Passes %lu/%u",(unsigned long)d->passes,FW_FOLLOW_PASSES);
+    snprintf(p->row[2],16,"Corridor %lu",(unsigned long)d->cells);
+    follow_details();
+    return show_report();
+}
+int fw_follow_menu(void)
+{
+    if (fw_motion_busy()) return -1;
+    const fw_cal_data_t *walls=fw_app_calibration();
+    if (!fw_cal_valid(walls)) { message("Wall follow","RUN WALLS FIRST"); return -1; }
+    if (!fw_rotation_valid(fw_app_rotation()) || memcmp(&walls->geometry,&fw_app_rotation()->geometry,sizeof walls->geometry)) {
+        message("Wall follow","RUN ROTATION FIRST"); return -1;
+    }
+    unsigned cells=fw_follow_valid(fw_app_follow())?fw_app_follow()->cells:FW_FOLLOW_DEFAULT_CELLS;
+    fw_motion_init();
+    if (corridor(&cells)) return -1;
+    const fw_follow_io_t io={{"Wall follow",move_robot,turn_robot,read_settled,status},follow_pass,follow_turn};
+    fw_follow_data_t result;
+    int error=fw_follow_run(&io,walls,cells,&result); fw_motion_stop();
+    if (error) {error_details=follow_details;return calibration_error(error);}
+    if (fw_app_follow_commit(&result)) { message("Wall follow","FLASH SAVE FAILED"); return -1; }
+    return fw_follow_report();
+}

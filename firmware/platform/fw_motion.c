@@ -64,11 +64,53 @@ static int32_t front_pair_window(void)
     return room<0?0:room<30000?room:30000;
 }
 static fw_rotation_data_t rotation_profile;
-static float velocity, cruise;
+static float velocity, cruise, move_accel;
 static wall_control_t wall;
+static int32_t follow_bias;
+static int follow_calibrated;
+/* Calibration recorder: filled once per scan in SysTick, drained in the foreground. */
+#define FOLLOW_RING 32u
+static volatile int follow_recording,follow_lost;
+static volatile unsigned follow_head,follow_tail;
+static fw_follow_sample_t follow_ring[FOLLOW_RING];
+static float follow_yaw;
+void fw_motion_follow_record(int enable)
+{
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    follow_recording=enable;follow_head=follow_tail=0;follow_lost=0;
+    __set_PRIMASK(mask);
+}
+int fw_motion_follow_sample(fw_follow_sample_t *x)
+{
+    if(follow_lost)return -1;
+    if(follow_tail==follow_head)return 0;
+    *x=follow_ring[follow_tail%FOLLOW_RING];++follow_tail;return 1;
+}
+static void follow_push(int32_t travel,float yaw_mrad,int32_t forward,uint8_t sensors)
+{
+    if(!follow_recording)return;
+    if(follow_head-follow_tail>=FOLLOW_RING) {follow_lost=1;return;}
+    follow_ring[follow_head%FOLLOW_RING]=(fw_follow_sample_t){travel,(int32_t)lroundf(yaw_mrad*1000.0f),
+        (uint32_t)((int64_t)wall.lag_scans*(forward>0?forward:0)),sensors};
+    ++follow_head;
+}
+void fw_motion_follow_bias(int32_t bias,int calibrated)
+{
+    if(active)return;
+    follow_bias=bias;follow_calibrated=!!calibrated;
+    wall.yaw_bias_mrad_m=bias;wall.bias_calibrated=(uint8_t)(follow_calibrated && !follow_recording);
+}
+/* Restart the follower with a yaw bias. The wheel heading is trusted only on
+ * a calibrated bias, never while the Wall follow calibration measures it. */
+static void wall_restart(int32_t bias)
+{
+    wall_control_reset(&wall);wall.yaw_bias_mrad_m=bias;
+    wall.bias_calibrated=(uint8_t)(follow_calibrated && !follow_recording);
+}
 unsigned fw_motion_speed(void) {return active?(unsigned)velocity:0;}
 int32_t fw_motion_lateral_um(void) {return wall.lateral_um;}
 int32_t fw_motion_heading_mrad(void) {return wall.heading_mrad;}
+int32_t fw_motion_yaw_bias(void) {return wall.yaw_bias_mrad_m;}
 void fw_motion_corner_profiles(const fw_corner_data_t *left,const fw_corner_data_t *right)
 {
     if(active)return;
@@ -151,9 +193,9 @@ void fw_motion_wall_profile(const fw_cal_data_t *d)
     if(active) return;
     if(fw_cal_valid(d)) wall_profile=*d;
     else memset(&wall_profile,0,sizeof wall_profile);
-    wall_control_reset(&wall);
+    wall_restart(follow_bias);
 }
-static uint32_t last_scan, last_scan_time, started;
+static uint32_t last_scan, started;
 static const float max_accel = 800.0f; /* mm/s^2 */
 static const float end_speed = 40.0f; /* Avoid the former 5 mm/s crawl at every cell. */
 void fw_motion_rotation_profile(const fw_rotation_data_t *data)
@@ -181,10 +223,17 @@ int32_t fw_motion_travelled_um(void)
 void fw_motion_init(void)
 {
     fw_motion_stop(); fault=0; wall_arrival=0; velocity=0; last_scan=0;
-    wall_control_reset(&wall);
+    wall_restart(follow_bias);
 }
 int fw_motion_busy(void) { return active; }
 int fw_motion_fault(void) { return fault; }
+int fw_motion_kind(void)
+{
+    if(!active)return FW_MOTION_IDLE;
+    if(path_active || (straight && !calibration))return FW_MOTION_STRAIGHT;
+    if(curve_phase)return FW_MOTION_CURVE;
+    return calibration?FW_MOTION_CALIB:FW_MOTION_TURN;
+}
 int fw_motion_wall_arrival(void) { return wall_arrival; }
 uint32_t fw_motion_remaining(void)
 {
@@ -203,7 +252,7 @@ void fw_motion_stop(void)
     velocity=0;
     TIM_Cmd(TIM5,ENABLE);
 }
-static int start(long right, long left, unsigned speed, int is_straight, int accept_wall, int calibrating)
+static int start_ramp(long right, long left, unsigned speed, float accel, int is_straight, int accept_wall, int calibrating)
 {
     hal_sensor_snapshot scan;
     if (active || fault || !hal_sensor_snapshot_read(&scan) ||
@@ -212,12 +261,12 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     TIM_Cmd(TIM5,DISABLE); /* New controller exclusively owns speed corrections. */
     straight=is_straight; allow_wall=accept_wall; wall_arrival=0;
     front_reference_valid=0;front_pair_error=0;
-    calibration=calibrating;
+    calibration=calibrating;move_accel=accel;
     cruise=(float)speed; velocity=fminf(calibration==1?5.0f:end_speed,cruise);
     started=hal_os_get_systicks();
-    int32_t bias=wall.yaw_bias_mrad_m;wall_control_reset(&wall);wall.yaw_bias_mrad_m=bias;
-    side_raw_previous=scan.raw;memset(side_stable,0,sizeof side_stable);last_scan=scan.sequence;last_scan_time=scan.timestamp;previous_sensors=scan.filtered;previous_raw=scan.raw;post_raw_previous=scan.raw;memset(post_pending,0,sizeof post_pending);
-    previous_count[0]=previous_count[1]=0;longitudinal_um=0;yaw_fraction=0;
+    wall_restart(wall.yaw_bias_mrad_m);
+    side_raw_previous=scan.raw;memset(side_stable,0,sizeof side_stable);last_scan=scan.sequence;previous_sensors=scan.filtered;previous_raw=scan.raw;post_raw_previous=scan.raw;memset(post_pending,0,sizeof post_pending);
+    previous_count[0]=previous_count[1]=0;longitudinal_um=0;yaw_fraction=0;follow_yaw=0;
     for(unsigned i=0;i<2;++i)for(unsigned j=0;j<2;++j)last_post[i][j]=-100;
     travel_ticks=(uint32_t)(right<0?-right:right);travel_sign=right<0?-1:1;
     goal_um=(uint32_t)lroundf(travel_ticks*1000.0f/TICKS_PER_MM);
@@ -227,6 +276,10 @@ static int start(long right, long left, unsigned speed, int is_straight, int acc
     active=1;
     __set_PRIMASK(mask);
     return 0;
+}
+static int start(long right, long left, unsigned speed, int is_straight, int accept_wall, int calibrating)
+{
+    return start_ramp(right,left,speed,max_accel,is_straight,accept_wall,calibrating);
 }
 int fw_motion_obstacle_backoff(uint32_t um)
 {
@@ -306,7 +359,7 @@ int fw_motion_straight_to(unsigned cells, unsigned speed, int accept_wall)
 {
     if (!cells || cells>16 || speed<20 || speed>FW_RUN_MAX_SPEED) return -1;
     long pulses=lroundf((float)cells*(float)cell_pitch_um*0.001f*TICKS_PER_MM);
-    return start(pulses,pulses,speed,1,accept_wall,0);
+    return start_ramp(pulses,pulses,speed,(float)fw_run_acceleration(speed),1,accept_wall,0);
 }
 int fw_motion_extend(unsigned cells,int accept_wall)
 {
@@ -386,21 +439,34 @@ static void curve_tick(const hal_sensor_snapshot *scan)
     hal_step_motor_pair_rate((unsigned long)(base*curve_ratio[0]*(1-trim)),
                              (unsigned long)(base*curve_ratio[1]*(1+trim)));
 }
-static int turn(int degrees,int calibrating)
+uint32_t fw_motion_brake_um(unsigned speed,unsigned cruise)
+{
+    float v=(float)speed;
+    return v>end_speed?(uint32_t)lroundf((v*v-end_speed*end_speed)*500.0f/(float)fw_run_acceleration(cruise)):0;
+}
+unsigned fw_motion_turn_speed(unsigned travel)
+{
+    return travel<FW_TURN_MIN_SPEED?FW_TURN_MIN_SPEED:travel>FW_TURN_MAX_SPEED?FW_TURN_MAX_SPEED:travel;
+}
+static int turn(int degrees,unsigned travel,int calibrating)
 {
     if (degrees!=90 && degrees!=-90 && degrees!=180 && degrees!=-180) return -1;
-    unsigned speed=calibrating?FW_CAL_TURN_SPEED:120;
-    uint32_t quarter=fw_rotation_quarter(&rotation_profile,speed,degrees<0);
+    unsigned speed=calibrating?FW_CAL_TURN_SPEED:fw_motion_turn_speed(travel);
+    /* Only 120 mm/s is measured: the 40..120 profiles agreed within their
+     * spread, so faster turns reuse it as the curves already do. */
+    uint32_t quarter=fw_rotation_quarter(&rotation_profile,speed>120?120:speed,degrees<0);
     float angle=(float)degrees*(float)M_PI/180.0f;
     if(!calibrating && straight && wall_profile.valid)angle-=wall.heading_mrad*0.001f;
     float distance=quarter?(float)quarter*0.001f*fabsf(angle)/((float)M_PI/2.0f):
         fabsf(angle)*((float)WHEELS_DISTANCE/2.0f);
     long ticks=lroundf(distance*TICKS_PER_MM);
+    /* Calibration fixtures keep their measured 800 mm/s^2 ramps. */
+    float accel=calibrating?max_accel:(float)fw_run_acceleration(speed);
     /* Motor zero is the right wheel. Clockwise: right backwards, left forwards. */
-    return start(degrees>0 ? -ticks : ticks, degrees>0 ? ticks : -ticks,speed,0,0,0);
+    return start_ramp(degrees>0 ? -ticks : ticks, degrees>0 ? ticks : -ticks,speed,accel,0,0,0);
 }
-int fw_motion_turn(int degrees) { return turn(degrees,0); }
-int fw_motion_calibration_turn(int degrees) { return turn(degrees,1); }
+int fw_motion_turn(int degrees,unsigned travel) { return turn(degrees,travel,0); }
+int fw_motion_calibration_turn(int degrees) { return turn(degrees,0,1); }
 int fw_motion_calibration_move(int32_t um,unsigned speed)
 {
     if (!um || um<-180000 || um>180000 || speed<5 || speed>30) return -1;
@@ -515,7 +581,6 @@ void fw_motion_tick(uint32_t now)
     front_tick(&scan);if(!active)return;
     remaining=fw_motion_remaining(); /* Include this scan's frontal position reference. */
     if (scan.sequence!=last_scan) {
-        uint32_t elapsed=scan.timestamp-last_scan_time;last_scan_time=scan.timestamp;
         last_scan=scan.sequence;
         if(straight) {
             uint32_t count[2]={hal_step_motor_pair_count(0),hal_step_motor_pair_count(1)};
@@ -523,11 +588,14 @@ void fw_motion_tick(uint32_t now)
             previous_count[0]=count[0];previous_count[1]=count[1];
             uint32_t q=rotation_profile.valid?rotation_profile.point[2].quarter_um[0]:0;
             float track=q?q*4.0f/3.14159265359f:(float)WHEELS_DISTANCE*1000.0f;
-            yaw_fraction+=(dl-dr)*1000000.0f/(TICKS_PER_MM*track);
+            float step_yaw=(dl-dr)*1000000.0f/(TICKS_PER_MM*track);
+            yaw_fraction+=step_yaw;follow_yaw+=step_yaw;
             int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
             int32_t forward=(int32_t)lroundf((dl+dr)*500.0f/TICKS_PER_MM);
             post_observation(&scan,raw_distance_um());
-            wall_control_position_timed(&wall,control_sensors(&scan),&wall_profile,forward,yaw,elapsed);
+            uint8_t sensors=control_sensors(&scan);
+            wall_control_position(&wall,sensors,&wall_profile,forward,yaw);
+            follow_push(raw_distance_um(),follow_yaw,forward,sensors);
         }
     }
     float distance=(float)remaining/TICKS_PER_MM;
@@ -539,7 +607,7 @@ void fw_motion_tick(uint32_t now)
     }
     /* Braking-distance envelope with bounded acceleration; no proportional
      * asymptotic tail and no speed-dependent discontinuity near the endpoint. */
-    float accel=calibration==1?100.0f:max_accel;
+    float accel=calibration==1?100.0f:move_accel;
     float floor=fminf(calibration==1?5.0f:end_speed,cruise);
     float target=fminf(cruise,sqrtf(floor*floor+2.0f*accel*distance));
     float change=target-velocity, step=accel*0.001f;
@@ -581,6 +649,12 @@ int fw_motion_path(const nm_map_t *map,nm_pose_t pose,const nm_route_t *route,un
     }
     __set_PRIMASK(mask);return result;
 }
+int fw_motion_path_segment(int *turn,uint32_t *length_um)
+{
+    if(!path_active || !path.count)return -1;
+    *turn=path.segment[path_index].turn;*length_um=(uint32_t)path.segment[path_index].length;
+    return (int)path_index;
+}
 nm_pose_t fw_motion_path_pose(void)
 {
     if(!path.count || (!path_active && !fault))return path.end;
@@ -602,7 +676,7 @@ static void path_tick(const hal_sensor_snapshot *scan)
     float distance=(float)fw_motion_travelled_um();
     while(path_index+1<path.count && distance>=path.segment[path_index].start+path.segment[path_index].length) {
         ++path_index;front_reference_valid=0;
-        int32_t bias=wall.yaw_bias_mrad_m;wall_control_reset(&wall);wall.yaw_bias_mrad_m=bias;
+        wall_restart(wall.yaw_bias_mrad_m);
         side_raw_previous=scan->raw;memset(side_stable,0,sizeof side_stable);
         previous_raw=scan->raw;previous_sensors=scan->filtered;post_raw_previous=scan->raw;memset(post_pending,0,sizeof post_pending);
         for(unsigned a=0;a<2;++a)for(unsigned b=0;b<2;++b)last_post[a][b]=-100;
@@ -622,13 +696,12 @@ static void path_tick(const hal_sensor_snapshot *scan)
     if(straight && !wall.initialized) {
         wall_control_exit(&wall,&wall_profile,scan->filtered,
             (int32_t)lroundf(wrap_angle(path_heading-point.heading)*1000),path_index?cell_pitch_um/2:0);
-        previous_count[0]=count[0];previous_count[1]=count[1];last_scan=scan->sequence;last_scan_time=scan->timestamp;
+        previous_count[0]=count[0];previous_count[1]=count[1];last_scan=scan->sequence;
     }
     if(straight)front_tick(scan);
     else if(!(scan->raw&SENSOR_F5_POS)) {obstacle_travel=fw_motion_travelled_um();fault=2;fw_motion_stop();}
     if(!active)return;
     if(scan->sequence!=last_scan) {
-        uint32_t elapsed=scan->timestamp-last_scan_time;last_scan_time=scan->timestamp;
         last_scan=scan->sequence;
         int32_t r=(int32_t)(count[0]-previous_count[0]),l=(int32_t)(count[1]-previous_count[1]);
         previous_count[0]=count[0];previous_count[1]=count[1];
@@ -636,8 +709,8 @@ static void path_tick(const hal_sensor_snapshot *scan)
             int32_t before=wall.heading_mrad;
             yaw_fraction+=(l-r)*1000000.0f/(TICKS_PER_MM*track);
             int32_t yaw=(int32_t)lroundf(yaw_fraction);yaw_fraction-=yaw;
-            wall_control_position_timed(&wall,control_sensors(scan),&wall_profile,
-                (int32_t)lroundf((r+l)*500.0f/TICKS_PER_MM),yaw,elapsed);
+            wall_control_position(&wall,control_sensors(scan),&wall_profile,
+                (int32_t)lroundf((r+l)*500.0f/TICKS_PER_MM),yaw);
             /* Retain sub-mrad wheel yaw; only optical innovations adjust the
              * floating heading. Replacing it by rounded state accumulated drift. */
             path_heading+=(wall.heading_mrad-before-yaw)*.001f;
